@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>예산 산출 계산기</title>
+<!--
+  ▶ 8교시 예제 파일 ① 예산 산출 계산기
+  - 항목·단가·수량·횟수를 넣으면 산출근거 문장과 금액, 합계가 자동으로 나옵니다.
+  - "표로 복사"를 누르면 탭 구분 텍스트가 복사됩니다 → 한글에서 붙여넣기 → [표] → [문자열을 표로]
+  - 파일 하나로 동작합니다. 서버·AI·로그인 없음. 입력은 이 브라우저에만 저장됩니다.
+  - 수정 실습: 아래 "여기를 바꿔보세요" 표시가 있는 곳(제목·색·기본 재원 목록)을 고쳐 보세요.
+-->
+<style>
+  :root{
+    --navy:#1F3A5F;   /* ← 여기를 바꿔보세요: 대표 색 */
+    --accent:#2B6CB0;
+    --bg:#F6F8FB; --line:#D9E0E8; --soft:#EEF2F7; --ink:#1D2430; --mute:#5F6B7A;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.5}
+  header{background:var(--navy);color:#fff;padding:16px 20px}
+  header h1{margin:0;font-size:20px}header p{margin:4px 0 0;font-size:13px;opacity:.85}
+  main{max-width:1000px;margin:0 auto;padding:16px 20px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  .row{display:grid;grid-template-columns:1.2fr 1.6fr 1fr .7fr .7fr 1.6fr 1fr 36px;gap:6px;align-items:center;margin-bottom:6px}
+  .row.head{font-size:12px;color:var(--mute);font-weight:bold}
+  input,select{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;font-size:14px;font-family:inherit}
+  input[readonly]{background:var(--soft);color:var(--mute)}
+  .num{text-align:right}
+  button{padding:9px 14px;border:1px solid var(--line);background:#fff;border-radius:8px;font-size:14px;cursor:pointer;font-family:inherit}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button.del{padding:6px;color:#b00;border:none;background:none;font-size:16px}
+  .total{display:flex;justify-content:flex-end;gap:16px;align-items:center;font-size:16px;margin-top:8px}
+  .total b{font-size:20px;color:var(--navy)}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .tip{font-size:13px;color:var(--mute);margin-top:8px}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;transition:.3s}
+  .toast.on{opacity:1}
+  @media(max-width:760px){.row{grid-template-columns:1fr 1fr;} .row.head{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>예산 산출 계산기</h1>   <!-- ← 여기를 바꿔보세요: 제목 -->
+  <p>항목·단가·수량·횟수 → 산출근거와 합계. 복사해서 한글 표로.</p>
+</header>
+<main>
+  <div class="card">
+    <div class="row head"><div>재원·구분</div><div>항목</div><div>단가(원)</div><div>수량</div><div>횟수</div><div>산출근거</div><div>금액(원)</div><div></div></div>
+    <div id="rows"></div>
+    <div class="bar">
+      <button id="add">+ 항목 추가</button>
+      <button id="clear">모두 지우기</button>
+    </div>
+    <div class="total">합계 <b id="sum">0</b> 원</div>
+  </div>
+  <div class="card">
+    <div class="bar">
+      <button class="primary" id="copyTable">표로 복사 (한글 · 문자열을 표로)</button>
+      <button id="copyText">문장으로 복사</button>
+      <button id="copyJson">JSON으로 복사 (생성기용)</button>
+    </div>
+    <p class="tip">한글에서 붙여넣은 뒤 [입력] → [표] → [문자열을 표로] → 구분 기호 "탭"을 고르면 표가 됩니다. 산출근거 형식은 <b>단가 × 수량 × 횟수</b>로 고정되어 검산이 쉽습니다.</p>
+  </div>
+</main>
+<div class="toast" id="toast">복사되었습니다</div>
+<script>
+// ← 여기를 바꿔보세요: 기본 재원 목록
+const SOURCES = ['자살예방사업', '통합정신건강증진사업', '자살예방사업지원', '기타'];
+const KEY = 'budget.rows';
+const $rows = document.getElementById('rows');
+const fmt = n => Number(n || 0).toLocaleString('ko-KR');
+
+function load(){ try{ return JSON.parse(localStorage.getItem(KEY)) || null }catch(e){ return null } }
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(data())) }catch(e){} }
+function data(){
+  return [...$rows.children].map(r => ({
+    src: r.querySelector('.src').value, item: r.querySelector('.item').value,
+    price: +r.querySelector('.price').value || 0, qty: +r.querySelector('.qty').value || 0, times: +r.querySelector('.times').value || 0
+  }));
+}
+function line(d){
+  const r = document.createElement('div'); r.className = 'row';
+  r.innerHTML = `
+    <select class="src">${SOURCES.map(s => `<option ${d.src===s?'selected':''}>${s}</option>`).join('')}</select>
+    <input class="item" placeholder="예: 현수막 제작" value="${d.item||''}">
+    <input class="price num" type="number" min="0" placeholder="0" value="${d.price||''}">
+    <input class="qty num" type="number" min="0" placeholder="1" value="${d.qty||''}">
+    <input class="times num" type="number" min="0" placeholder="1" value="${d.times||''}">
+    <input class="basis" readonly>
+    <input class="amt num" readonly>
+    <button class="del" title="삭제">✕</button>`;
+  r.querySelector('.del').onclick = () => { r.remove(); recalc(); };
+  r.querySelectorAll('input,select').forEach(el => el.addEventListener('input', recalc));
+  $rows.appendChild(r);
+}
+function recalc(){
+  let sum = 0;
+  [...$rows.children].forEach(r => {
+    const p = +r.querySelector('.price').value || 0, q = +r.querySelector('.qty').value || 0, t = +r.querySelector('.times').value || 0;
+    const amt = p * q * t; sum += amt;
+    r.querySelector('.basis').value = (p||q||t) ? `${fmt(p)}원 × ${q} × ${t}회` : '';
+    r.querySelector('.amt').value = amt ? fmt(amt) : '';
+  });
+  document.getElementById('sum').textContent = fmt(sum);
+  save();
+}
+function toast(m){ const t = document.getElementById('toast'); t.textContent = m; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 1400); }
+function copy(text, m){ navigator.clipboard.writeText(text).then(() => toast(m)); }
+
+document.getElementById('add').onclick = () => { line({}); recalc(); };
+document.getElementById('clear').onclick = () => { $rows.innerHTML = ''; line({}); recalc(); };
+document.getElementById('copyTable').onclick = () => {
+  const rows = data().filter(d => d.item);
+  const t = ['구분\t항목\t산출근거\t금액(원)', ...rows.map(d => `${d.src}\t${d.item}\t${fmt(d.price)}원 × ${d.qty} × ${d.times}회\t${fmt(d.price*d.qty*d.times)}`),
+    `총 계\t\t\t${fmt(rows.reduce((a,d)=>a+d.price*d.qty*d.times,0))}`].join('\n');
+  copy(t, '표 형식으로 복사됨 — 한글에서 문자열을 표로');
+};
+document.getElementById('copyText').onclick = () => {
+  const rows = data().filter(d => d.item);
+  copy(rows.map(d => `- ${d.item} : ${fmt(d.price)}원 × ${d.qty} × ${d.times}회 = ${fmt(d.price*d.qty*d.times)}원 (${d.src})`).join('\n') +
+       `\n총 계 ${fmt(rows.reduce((a,d)=>a+d.price*d.qty*d.times,0))}원`, '문장으로 복사됨');
+};
+document.getElementById('copyJson').onclick = () => {
+  const rows = data().filter(d => d.item);
+  const byS = {}; rows.forEach(d => (byS[d.src] = byS[d.src] || []).push(d));
+  const out = [[{t:'구분',hdr:true},{t:'산출내역',hdr:true},{t:'단위(원)',hdr:true}]];
+  Object.entries(byS).forEach(([s, list]) => list.forEach((d, i) => {
+    const row = []; if (i === 0) row.push({t:s, rs:list.length});
+    row.push({t:`${d.item} : ${fmt(d.price)}원 × ${d.qty} × ${d.times}회`, al:'L'}, {t:fmt(d.price*d.qty*d.times)});
+    out.push(row);
+  }));
+  out.push([{t:'총',cs:2},{t:fmt(rows.reduce((a,d)=>a+d.price*d.qty*d.times,0))}]);
+  copy(JSON.stringify({type:'table', widths:[12000,23500,10697], row_h:1723, rows:out}, null, 1), 'JSON 복사됨 — 계획안 JSON의 blocks에 붙여넣기');
+};
+
+(load() || [{src:SOURCES[0], item:'현수막 제작', price:200000, qty:1, times:1}, {src:SOURCES[0], item:'참가자 기념품', price:5000, qty:200, times:1}]).forEach(line);
+recalc();
+</script>
+</body>
+</html>
