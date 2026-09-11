@@ -185,6 +185,14 @@
   }
   .calendar-cell.selected .calendar-dot{background:#fff;color:var(--accent);}
 
+  /* stats bar chart (CSS-only — no chart library / CDN) */
+  .barchart{display:flex;flex-direction:column;gap:10px;}
+  .barchart-row{display:grid;grid-template-columns:70px 1fr 36px;align-items:center;gap:10px;font-size:0.85rem;}
+  .barchart-label{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .barchart-track{background:var(--surface-alt);border-radius:4px;height:14px;overflow:hidden;}
+  .barchart-fill{background:var(--accent);height:100%;border-radius:4px;}
+  .barchart-value{text-align:right;color:var(--text-muted);font-variant-numeric:tabular-nums;}
+
   /* tables & tabs */
   .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;}
   .tab-btn{padding:6px 14px;border-radius:20px;border:1px solid var(--border-strong);background:var(--surface);font-size:0.85rem;}
@@ -256,6 +264,21 @@
   }
   @media (max-width:480px){
     .summary-grid{grid-template-columns:1fr;}
+  }
+
+  /* print (인쇄/PDF 저장) — hide chrome, keep just the record content */
+  @media print{
+    .topbar, .quick-btns, .tabs, #toastContainer, .modal-overlay, .lock-btn,
+    .page-header button, .row-actions, #calPrevBtn, #calNextBtn, #calTodayBtn,
+    .calendar-grid, #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
+    #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
+    #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, .example-banner{
+      display:none !important;
+    }
+    body{background:#fff;}
+    #appMain{padding:0;max-width:100%;}
+    .panel{border:none;box-shadow:none;padding:8px 0;}
+    textarea{border:none;padding:0;resize:none;}
   }
 </style>
 </head>
@@ -364,6 +387,7 @@
       <button class="nav-btn" data-view="followUps">🔔 <span class="nav-label">후속조치</span></button>
       <button class="nav-btn" data-view="schedule">📅 <span class="nav-label">일정</span></button>
       <button class="nav-btn" data-view="search">🔍 <span class="nav-label">검색</span></button>
+      <button class="nav-btn" data-view="stats">📊 <span class="nav-label">통계</span></button>
     </nav>
     <button class="lock-btn" id="lockNowBtn">🔐 <span class="nav-label">잠금</span></button>
   </div>
@@ -1219,6 +1243,137 @@ const Search = {
 };
 
 /* =========================================================================
+   STATS  — plain aggregation over in-memory State; no external charting
+   library (no CDN allowed), rendered as CSS bar charts in Views.stats().
+   ========================================================================= */
+const Stats = {
+  compute(){
+    const soaps = SoapModule.list();
+    const clients = Clients.list();
+    const followUps = FollowUps.list();
+
+    // last 6 months, oldest first, as 'YYYY-MM'
+    const months = [];
+    const cursor = new Date();
+    cursor.setDate(1);
+    for (let i = 5; i >= 0; i--){
+      const d = new Date(cursor.getFullYear(), cursor.getMonth() - i, 1);
+      months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+    }
+    const monthlyCounts = months.map(m => ({ month: m, count: soaps.filter(s => s.date.startsWith(m)).length }));
+
+    const managementLevelCounts = { intensive: 0, normal: 0, stable: 0 };
+    clients.forEach(c => { managementLevelCounts[c.managementLevel] = (managementLevelCounts[c.managementLevel] || 0) + 1; });
+
+    const contactTypeCounts = {};
+    soaps.forEach(s => { contactTypeCounts[s.contactType] = (contactTypeCounts[s.contactType] || 0) + 1; });
+
+    const completedFu = followUps.filter(f => f.status === 'completed').length;
+    const totalFu = followUps.length;
+
+    return {
+      totalClients: clients.length,
+      totalSoaps: soaps.length,
+      finalSoaps: soaps.filter(s => s.status === 'final').length,
+      draftSoaps: soaps.filter(s => s.status === 'draft').length,
+      monthlyCounts, managementLevelCounts, contactTypeCounts,
+      totalFu, completedFu,
+      fuCompletionRate: totalFu ? Math.round((completedFu / totalFu) * 100) : 0
+    };
+  }
+};
+
+/* =========================================================================
+   CSV EXPORT  — builds a CSV string client-side and triggers a normal
+   browser download. Nothing is sent anywhere; the file only ever touches
+   this device.
+   ========================================================================= */
+const CSV = {
+  escapeField(v){
+    if (v === null || v === undefined) v = '';
+    v = String(v);
+    if (/[",\n]/.test(v)) v = '"' + v.replace(/"/g, '""') + '"';
+    return v;
+  },
+  build(headers, rows){
+    const lines = [headers.map(CSV.escapeField).join(',')];
+    rows.forEach(r => lines.push(r.map(CSV.escapeField).join(',')));
+    return '﻿' + lines.join('\r\n'); // BOM so Excel opens Korean text as UTF-8
+  },
+  download(filename, content, mime){
+    const blob = new Blob([content], { type: mime || 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
+  exportClients(){
+    const headers = ['대상자ID', '별칭', '관리수준', '최근기록일', '미완료후속조치', '예정일정'];
+    const rows = Clients.list().map(c => [
+      c.id, c.alias || '', (CONSTANTS.MANAGEMENT_LEVELS[c.managementLevel] || {}).label || c.managementLevel,
+      Clients.lastRecordDate(c.id) || '', Clients.pendingFollowUpCount(c.id), Clients.upcomingScheduleCount(c.id)
+    ]);
+    this.download('clients_' + Utils.todayStr() + '.csv', this.build(headers, rows));
+  },
+  exportSoaps(list){
+    const headers = ['날짜', '대상자', '접촉유형', '상담영역', '상태', 'S', 'O', 'A', 'P', '예정일'];
+    const rows = list.map(s => [
+      s.date, s.clientId, s.contactType, (s.areas || []).join(';'), s.status === 'final' ? '완료' : '임시저장',
+      s.S || '', s.O || '', s.A || '', s.PText || '', s.pDate || ''
+    ]);
+    this.download('soap_records_' + Utils.todayStr() + '.csv', this.build(headers, rows));
+  }
+};
+
+/* =========================================================================
+   BACKUP / RESTORE  — exports every encrypted record plus the settings
+   needed to decrypt them (salt, iterations, verifier) as one JSON file, and
+   can restore that file back into IndexedDB. The exported file stays
+   encrypted; only someone with the original password can unlock it after
+   restoring. This never leaves the device except when the user saves or
+   moves the file themselves.
+   ========================================================================= */
+const Backup = {
+  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'seedClientIds'],
+
+  async exportAll(){
+    const data = { app: 'case_management_on', version: 1, exportedAt: new Date().toISOString(), settings: {} };
+    for (const k of this.SETTINGS_KEYS){ data.settings[k] = await Storage.getSetting(k); }
+    data.clients = await Storage.idbGetAll('clients');
+    data.soaps = await Storage.idbGetAll('soaps');
+    data.followUps = await Storage.idbGetAll('followUps');
+    data.schedules = await Storage.idbGetAll('schedules');
+    return data;
+  },
+
+  async downloadBackup(){
+    const data = await this.exportAll();
+    CSV.download('case_management_on_backup_' + Utils.todayStr() + '.json', JSON.stringify(data, null, 2), 'application/json');
+  },
+
+  async importFromFile(file){
+    const text = await file.text();
+    let data;
+    try{ data = JSON.parse(text); }catch(e){ throw new Error('INVALID_FILE'); }
+    if (!data || data.app !== 'case_management_on' || !data.settings || !data.settings.authSalt){
+      throw new Error('INVALID_FILE');
+    }
+    for (const store of ['clients', 'soaps', 'followUps', 'schedules']){
+      const existing = await Storage.idbGetAll(store);
+      for (const row of existing) await Storage.idbDelete(store, row.id);
+    }
+    for (const k of this.SETTINGS_KEYS){
+      if (k in data.settings) await Storage.setSetting(k, data.settings[k]);
+    }
+    for (const row of (data.clients || [])) await Storage.idbPut('clients', row);
+    for (const row of (data.soaps || [])) await Storage.idbPut('soaps', row);
+    for (const row of (data.followUps || [])) await Storage.idbPut('followUps', row);
+    for (const row of (data.schedules || [])) await Storage.idbPut('schedules', row);
+  }
+};
+
+/* =========================================================================
    NOTIFICATIONS  (Browser Notification API, best-effort, in-app only while
    the app tab is open — never sent anywhere over the network)
    ========================================================================= */
@@ -1363,6 +1518,7 @@ const UI = {
       case 'followUps': main.innerHTML = Views.followUps(); Views.bindFollowUps(); break;
       case 'schedule': main.innerHTML = Views.schedule(); Views.bindSchedule(); break;
       case 'search': main.innerHTML = Views.search(); Views.bindSearch(); break;
+      case 'stats': main.innerHTML = Views.stats(); Views.bindStats(); break;
       default: main.innerHTML = '<p>알 수 없는 화면입니다.</p>';
     }
   }
@@ -1543,6 +1699,14 @@ const Views = {
       '<button class="btn-quick" id="qbNewSchedule">＋ 일정 등록</button>' +
       '</div>';
 
+    html += '<div class="panel" style="margin-top:20px;"><div class="panel-title">데이터 관리</div>' +
+      '<p class="help-text" style="margin-bottom:10px;">암호화된 상태 그대로 전체 데이터를 파일로 내보내거나, 저장해둔 백업 파일에서 불러올 수 있습니다.</p>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+      '<button class="btn btn-sm" id="exportBackupBtn">⬇ 백업 파일 내보내기</button>' +
+      '<button class="btn btn-sm" id="importBackupBtn">⬆ 백업 파일 불러오기</button>' +
+      '<input type="file" id="importBackupInput" accept="application/json" class="hidden">' +
+      '</div></div>';
+
     return html;
   },
 
@@ -1585,13 +1749,36 @@ const Views = {
     document.getElementById('qbNewSoap').onclick = () => UI.navigate('soapEditor', {});
     document.getElementById('qbNewFollowUp').onclick = () => Views.openFollowUpModal();
     document.getElementById('qbNewSchedule').onclick = () => Views.openScheduleModal();
+
+    document.getElementById('exportBackupBtn').onclick = async () => {
+      try{ await Backup.downloadBackup(); toast('백업 파일을 저장했습니다.'); }
+      catch(e){ console.error(e); toast('백업 파일 생성에 실패했습니다.', 'error'); }
+    };
+    const importInput = document.getElementById('importBackupInput');
+    document.getElementById('importBackupBtn').onclick = () => importInput.click();
+    importInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      UI.confirm('백업 파일을 불러오면 현재 저장된 모든 데이터가 대체됩니다. 백업 당시 비밀번호로 다시 로그인해야 합니다. 계속할까요?', async () => {
+        try{
+          await Backup.importFromFile(file);
+          toast('복원이 완료되었습니다. 다시 로그인해 주세요.');
+          setTimeout(() => location.reload(), 800);
+        }catch(err){
+          console.error(err);
+          toast('백업 파일을 불러오지 못했습니다. 파일 형식을 확인해 주세요.', 'error');
+        }
+      });
+      importInput.value = '';
+    };
   },
 
   /* ---------------- CLIENTS ---------------- */
   clientsList(){
     const clients = Clients.list();
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">👤 대상자</h1>' +
-      '<button class="btn btn-primary" id="newClientBtn">＋ 새 대상자</button></div>';
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="exportClientsCsvBtn">⬇ CSV 내보내기</button>' +
+      '<button class="btn btn-primary" id="newClientBtn">＋ 새 대상자</button></div></div>';
     html += '<div class="panel">';
     if (clients.length === 0){
       html += '<div class="empty-msg">등록된 대상자가 없습니다. "＋ 새 대상자"로 추가해 보세요.</div>';
@@ -1614,6 +1801,7 @@ const Views = {
   },
   bindClientsList(){
     document.getElementById('newClientBtn').onclick = () => Views.openNewClientModal();
+    document.getElementById('exportClientsCsvBtn').onclick = () => CSV.exportClients();
     document.querySelectorAll('[data-client]').forEach(el => {
       el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.client });
     });
@@ -1626,7 +1814,8 @@ const Views = {
     const timeline = SoapModule.listByClient(id);
 
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + Utils.escapeHtml(c.id) + (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') + '</h1>' +
-      '<button class="btn btn-sm" id="backToClientsBtn">← 대상자 목록</button></div>';
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printClientBtn">🖨️ 인쇄</button>' +
+      '<button class="btn btn-sm" id="backToClientsBtn">← 대상자 목록</button></div></div>';
 
     html += '<div class="panel">' +
       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
@@ -1685,6 +1874,7 @@ const Views = {
   },
   bindClientDetail(id){
     document.getElementById('backToClientsBtn').onclick = () => UI.navigate('clients');
+    document.getElementById('printClientBtn').onclick = () => window.print();
     document.getElementById('mgmtLevelSelect').onchange = async (e) => {
       await Clients.setManagementLevel(id, e.target.value);
       toast('관리 수준이 변경되었습니다.');
@@ -1716,7 +1906,8 @@ const Views = {
     if (filter === 'final') items = items.filter(s => s.status === 'final');
 
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📝 SOAP 기록</h1>' +
-      '<button class="btn btn-primary" id="newSoapBtn">＋ 새 SOAP 기록</button></div>';
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="exportSoapsCsvBtn">⬇ CSV 내보내기</button>' +
+      '<button class="btn btn-primary" id="newSoapBtn">＋ 새 SOAP 기록</button></div></div>';
     html += '<div class="tabs">' +
       '<button class="tab-btn' + (filter === 'all' ? ' active' : '') + '" data-f="all">전체</button>' +
       '<button class="tab-btn' + (filter === 'draft' ? ' active' : '') + '" data-f="draft">임시저장</button>' +
@@ -1741,6 +1932,13 @@ const Views = {
   },
   bindSoapList(){
     document.getElementById('newSoapBtn').onclick = () => UI.navigate('soapEditor', {});
+    document.getElementById('exportSoapsCsvBtn').onclick = () => {
+      const filter = State.currentParams.filter || 'all';
+      let items = SoapModule.list();
+      if (filter === 'draft') items = items.filter(s => s.status === 'draft');
+      if (filter === 'final') items = items.filter(s => s.status === 'final');
+      CSV.exportSoaps(items);
+    };
     document.querySelectorAll('.tab-btn').forEach(el => { el.onclick = () => UI.navigate('soapList', { filter: el.dataset.f }); });
     document.querySelectorAll('[data-open-soap]').forEach(el => { el.onclick = () => UI.navigate('soapEditor', { soapId: el.dataset.openSoap }); });
   },
@@ -1804,7 +2002,10 @@ const Views = {
     if (soap.status === 'final' && soap.id){
       html += '<div class="panel"><div class="panel-title">SOAP 전체 복사</div>' +
         '<div class="soap-copy-block">' + Utils.nl2br(SoapModule.formatForCopy(soap)) + '</div>' +
-        '<button class="btn btn-sm" id="copyAllBtn" style="margin-top:10px;">📋 SOAP 전체 복사</button></div>';
+        '<div style="display:flex;gap:8px;margin-top:10px;">' +
+        '<button class="btn btn-sm" id="copyAllBtn">📋 SOAP 전체 복사</button>' +
+        '<button class="btn btn-sm" id="printSoapBtn">🖨️ 인쇄</button>' +
+        '</div></div>';
     }
 
     html += '<div style="display:flex;gap:10px;margin-bottom:30px;">' +
@@ -1869,6 +2070,8 @@ const Views = {
 
     const copyAllBtn = document.getElementById('copyAllBtn');
     if (copyAllBtn) copyAllBtn.onclick = () => copyToClipboard(SoapModule.formatForCopy(Views._readSoapForm()));
+    const printSoapBtn = document.getElementById('printSoapBtn');
+    if (printSoapBtn) printSoapBtn.onclick = () => window.print();
 
     document.getElementById('saveDraftBtn').onclick = async () => {
       try{
@@ -2137,19 +2340,63 @@ const Views = {
         keyword: document.getElementById('sfKeyword').value.trim()
       };
       const results = Search.run(filters);
+      Views._lastSearchResults = results;
       const box = document.getElementById('searchResults');
       if (results.length === 0){
         box.innerHTML = '<div class="empty-msg">검색 결과가 없습니다.</div>';
         return;
       }
-      box.innerHTML = '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담영역</th><th>내용</th></tr></thead><tbody>' +
+      box.innerHTML = '<div style="text-align:right;margin-bottom:8px;"><button class="btn btn-sm" id="exportSearchCsvBtn">⬇ CSV 내보내기</button></div>' +
+        '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담영역</th><th>내용</th></tr></thead><tbody>' +
         results.map(s => '<tr class="clickable-row" data-open-soap="' + s.id + '"><td>' + s.date + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td>' +
           '<td>' + Utils.escapeHtml(s.contactType) + '</td><td>' + (s.areas || []).join(', ') + '</td>' +
           '<td>' + Utils.truncate(Utils.escapeHtml(s.S || s.A || ''), 60) + '</td></tr>').join('') +
         '</tbody></table>';
       box.querySelectorAll('[data-open-soap]').forEach(el => { el.onclick = () => UI.navigate('soapEditor', { soapId: el.dataset.openSoap }); });
+      document.getElementById('exportSearchCsvBtn').onclick = () => CSV.exportSoaps(Views._lastSearchResults);
     };
   },
+
+  /* ---------------- STATS ---------------- */
+  stats(){
+    const s = Stats.compute();
+    let html = '<h1 class="page-title">📊 통계</h1>';
+
+    html += '<div class="summary-grid">' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + s.totalClients + '</div><div class="label">총 대상자</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + s.totalSoaps + '</div><div class="label">총 SOAP 기록</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + s.finalSoaps + '</div><div class="label">완료 SOAP</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + s.fuCompletionRate + '%</div><div class="label">후속조치 완료율</div></div>' +
+      '</div>';
+
+    html += '<div class="panel"><div class="panel-title">월별 상담 건수 (최근 6개월)</div>' +
+      Views.renderBarChart(s.monthlyCounts.map(m => ({ label: m.month.slice(5) + '월', value: m.count }))) + '</div>';
+
+    html += '<div class="panel"><div class="panel-title">관리수준별 대상자 분포</div>' +
+      Views.renderBarChart([
+        { label: '집중관리', value: s.managementLevelCounts.intensive || 0, color: 'var(--danger)' },
+        { label: '일반관리', value: s.managementLevelCounts.normal || 0, color: 'var(--warn)' },
+        { label: '안정관리', value: s.managementLevelCounts.stable || 0, color: 'var(--good)' }
+      ]) + '</div>';
+
+    const contactBars = Object.keys(s.contactTypeCounts).map(k => ({ label: k, value: s.contactTypeCounts[k] }));
+    html += '<div class="panel"><div class="panel-title">접촉유형별 SOAP 건수</div>' +
+      (contactBars.length ? Views.renderBarChart(contactBars) : '<div class="empty-msg">데이터가 없습니다.</div>') + '</div>';
+
+    html += '<div class="panel"><div class="panel-title">후속조치 현황</div>' +
+      '<p style="font-size:0.88rem;">전체 ' + s.totalFu + '건 중 완료 ' + s.completedFu + '건 (' + s.fuCompletionRate + '%)</p></div>';
+
+    return html;
+  },
+  renderBarChart(items){
+    const max = Math.max(1, ...items.map(i => i.value));
+    return '<div class="barchart">' + items.map(i =>
+      '<div class="barchart-row"><div class="barchart-label">' + Utils.escapeHtml(i.label) + '</div>' +
+      '<div class="barchart-track"><div class="barchart-fill" style="width:' + Math.round(i.value / max * 100) + '%;' + (i.color ? 'background:' + i.color + ';' : '') + '"></div></div>' +
+      '<div class="barchart-value">' + i.value + '</div></div>'
+    ).join('') + '</div>';
+  },
+  bindStats(){ /* stats page is read-only; nothing to bind */ },
 
   /* ---------------- Modals: quick add ---------------- */
   openNewClientModal(){
