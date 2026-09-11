@@ -90,32 +90,33 @@
   .error-msg{color:var(--danger);font-size:0.85rem;margin-top:6px;}
   .help-text{color:var(--text-faint);font-size:0.78rem;margin-top:4px;}
 
-  /* ---------- App shell (horizontal top navigation) ---------- */
-  #appShell{display:flex;flex-direction:column;min-height:100vh;}
+  /* ---------- App shell (vertical sidebar on desktop; becomes a horizontal
+     top bar only on narrow/mobile widths — see the media queries below) ---------- */
+  #appShell{display:flex;min-height:100vh;}
   .topbar{
-    width:100%;flex-shrink:0;background:var(--surface);border-bottom:1px solid var(--border);
-    display:flex;align-items:center;padding:0 18px;gap:4px;overflow-x:auto;
+    width:212px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;padding:18px 0;
   }
   .topbar-logo{
-    display:flex;flex-direction:column;justify-content:center;padding:12px 16px 12px 0;
-    border-right:1px solid var(--border);margin-right:6px;flex-shrink:0;
+    display:flex;flex-direction:column;padding:0 18px 16px 18px;
+    border-bottom:1px solid var(--border);margin-bottom:10px;
   }
-  .topbar-logo .title{font-weight:700;color:var(--accent);font-size:1.1rem;white-space:nowrap;}
-  .topbar-logo .subtitle{font-size:0.7rem;color:var(--text-muted);margin-top:1px;white-space:nowrap;}
-  #sideNav{display:flex;align-items:center;flex:1;overflow-x:auto;}
+  .topbar-logo .title{font-weight:700;color:var(--accent);font-size:1.15rem;}
+  .topbar-logo .subtitle{font-size:0.72rem;color:var(--text-muted);margin-top:2px;}
+  #sideNav{display:flex;flex-direction:column;flex:1;}
   .nav-btn{
-    display:flex;align-items:center;gap:8px;padding:14px 14px;border:none;background:none;
-    text-align:left;color:var(--text);font-size:0.93rem;white-space:nowrap;border-bottom:3px solid transparent;flex-shrink:0;
+    display:flex;align-items:center;gap:10px;padding:11px 18px;border:none;background:none;
+    text-align:left;color:var(--text);font-size:0.93rem;width:100%;border-left:3px solid transparent;
   }
   .nav-btn:hover{background:var(--surface-alt);}
-  .nav-btn.active{background:var(--accent-soft);border-bottom-color:var(--accent);color:var(--accent);font-weight:600;}
+  .nav-btn.active{background:var(--accent-soft);border-left-color:var(--accent);color:var(--accent);font-weight:600;}
   .lock-btn{
-    display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:6px;flex-shrink:0;margin-left:6px;
-    border:1px solid var(--border-strong);background:var(--surface);color:var(--text);white-space:nowrap;
+    display:flex;align-items:center;gap:8px;width:calc(100% - 24px);margin:0 12px;padding:9px 12px;border-radius:6px;
+    border:1px solid var(--border-strong);background:var(--surface);color:var(--text);
   }
   .lock-btn:hover{background:var(--danger-soft);border-color:var(--danger);color:var(--danger);}
 
-  #appMain{flex:1;min-width:0;padding:26px 32px;max-width:1100px;width:100%;margin:0 auto;box-sizing:border-box;}
+  #appMain{flex:1;min-width:0;padding:26px 32px;max-width:1100px;box-sizing:border-box;}
   .page-title{font-size:1.35rem;margin-bottom:18px;}
   .page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:18px;}
 
@@ -210,11 +211,24 @@
   .fatal-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;}
   .fatal-box{max-width:480px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;}
 
-  /* responsive */
+  /* responsive: below 820px the sidebar becomes a horizontal top bar */
   @media (max-width:820px){
-    .topbar{padding:0 10px;}
-    .topbar-logo{padding:10px 12px 10px 0;}
-    .nav-btn{padding:12px 10px;font-size:0.88rem;}
+    #appShell{flex-direction:column;}
+    .topbar{
+      width:100%;flex-direction:row;align-items:center;overflow-x:auto;
+      padding:6px 10px;border-right:none;border-bottom:1px solid var(--border);
+    }
+    .topbar-logo{
+      flex-direction:column;justify-content:center;border-bottom:none;border-right:1px solid var(--border);
+      margin-bottom:0;margin-right:6px;padding:8px 12px 8px 0;flex-shrink:0;
+    }
+    #sideNav{flex-direction:row;flex:1;overflow-x:auto;}
+    .nav-btn{
+      width:auto;white-space:nowrap;border-left:none;border-bottom:3px solid transparent;
+      padding:12px 10px;font-size:0.88rem;flex-shrink:0;
+    }
+    .nav-btn.active{border-left-color:transparent;border-bottom-color:var(--accent);}
+    .lock-btn{width:auto;margin:0 0 0 6px;flex-shrink:0;white-space:nowrap;}
     #appMain{padding:18px 14px;}
     .summary-grid{grid-template-columns:1fr 1fr;}
     .form-grid{grid-template-columns:1fr;}
@@ -321,7 +335,7 @@
 
 <!-- Main app shell -->
 <div id="appShell" class="hidden">
-  <header class="topbar">
+  <div class="topbar">
     <div class="topbar-logo">
       <div class="title">사례관리 ON</div>
       <div class="subtitle">사례관리 업무 보조</div>
@@ -335,7 +349,7 @@
       <button class="nav-btn" data-view="search">🔍 <span class="nav-label">검색</span></button>
     </nav>
     <button class="lock-btn" id="lockNowBtn">🔐 <span class="nav-label">잠금</span></button>
-  </header>
+  </div>
   <main id="appMain"></main>
 </div>
 
