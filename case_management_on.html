@@ -90,30 +90,32 @@
   .error-msg{color:var(--danger);font-size:0.85rem;margin-top:6px;}
   .help-text{color:var(--text-faint);font-size:0.78rem;margin-top:4px;}
 
-  /* ---------- App shell ---------- */
-  #appShell{display:flex;min-height:100vh;}
-  .sidebar{
-    width:212px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);
-    display:flex;flex-direction:column;padding:18px 0;
+  /* ---------- App shell (horizontal top navigation) ---------- */
+  #appShell{display:flex;flex-direction:column;min-height:100vh;}
+  .topbar{
+    width:100%;flex-shrink:0;background:var(--surface);border-bottom:1px solid var(--border);
+    display:flex;align-items:center;padding:0 18px;gap:4px;overflow-x:auto;
   }
-  .sidebar-logo{padding:0 18px 16px 18px;border-bottom:1px solid var(--border);margin-bottom:10px;}
-  .sidebar-logo .title{font-weight:700;color:var(--accent);font-size:1.15rem;}
-  .sidebar-logo .subtitle{font-size:0.72rem;color:var(--text-muted);margin-top:2px;}
+  .topbar-logo{
+    display:flex;flex-direction:column;justify-content:center;padding:12px 16px 12px 0;
+    border-right:1px solid var(--border);margin-right:6px;flex-shrink:0;
+  }
+  .topbar-logo .title{font-weight:700;color:var(--accent);font-size:1.1rem;white-space:nowrap;}
+  .topbar-logo .subtitle{font-size:0.7rem;color:var(--text-muted);margin-top:1px;white-space:nowrap;}
+  #sideNav{display:flex;align-items:center;flex:1;overflow-x:auto;}
   .nav-btn{
-    display:flex;align-items:center;gap:10px;padding:11px 18px;border:none;background:none;
-    text-align:left;color:var(--text);font-size:0.93rem;width:100%;border-left:3px solid transparent;
+    display:flex;align-items:center;gap:8px;padding:14px 14px;border:none;background:none;
+    text-align:left;color:var(--text);font-size:0.93rem;white-space:nowrap;border-bottom:3px solid transparent;flex-shrink:0;
   }
   .nav-btn:hover{background:var(--surface-alt);}
-  .nav-btn.active{background:var(--accent-soft);border-left-color:var(--accent);color:var(--accent);font-weight:600;}
-  .sidebar-spacer{flex:1;}
-  .sidebar-foot{padding:10px 18px;border-top:1px solid var(--border);}
+  .nav-btn.active{background:var(--accent-soft);border-bottom-color:var(--accent);color:var(--accent);font-weight:600;}
   .lock-btn{
-    display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;border-radius:6px;
-    border:1px solid var(--border-strong);background:var(--surface);color:var(--text);
+    display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:6px;flex-shrink:0;margin-left:6px;
+    border:1px solid var(--border-strong);background:var(--surface);color:var(--text);white-space:nowrap;
   }
   .lock-btn:hover{background:var(--danger-soft);border-color:var(--danger);color:var(--danger);}
 
-  #appMain{flex:1;min-width:0;padding:26px 32px;max-width:1100px;}
+  #appMain{flex:1;min-width:0;padding:26px 32px;max-width:1100px;width:100%;margin:0 auto;box-sizing:border-box;}
   .page-title{font-size:1.35rem;margin-bottom:18px;}
   .page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:18px;}
 
@@ -210,16 +212,16 @@
 
   /* responsive */
   @media (max-width:820px){
-    #appShell{flex-direction:column;}
-    .sidebar{width:100%;flex-direction:row;overflow-x:auto;padding:8px 0;align-items:center;}
-    .sidebar-logo{border-bottom:none;border-right:1px solid var(--border);margin-bottom:0;padding:0 14px;flex-shrink:0;}
-    .nav-btn{width:auto;white-space:nowrap;border-left:none;border-bottom:3px solid transparent;padding:10px 12px;}
-    .nav-btn.active{border-left-color:transparent;border-bottom-color:var(--accent);}
-    .sidebar-spacer{display:none;}
-    .sidebar-foot{border-top:none;border-left:1px solid var(--border);flex-shrink:0;}
+    .topbar{padding:0 10px;}
+    .topbar-logo{padding:10px 12px 10px 0;}
+    .nav-btn{padding:12px 10px;font-size:0.88rem;}
     #appMain{padding:18px 14px;}
     .summary-grid{grid-template-columns:1fr 1fr;}
     .form-grid{grid-template-columns:1fr;}
+  }
+  @media (max-width:560px){
+    .topbar-logo .subtitle{display:none;}
+    .nav-btn span.nav-label, .lock-btn span.nav-label{display:none;}
   }
   @media (max-width:480px){
     .summary-grid{grid-template-columns:1fr;}
@@ -319,24 +321,21 @@
 
 <!-- Main app shell -->
 <div id="appShell" class="hidden">
-  <div class="sidebar">
-    <div class="sidebar-logo">
+  <header class="topbar">
+    <div class="topbar-logo">
       <div class="title">사례관리 ON</div>
       <div class="subtitle">사례관리 업무 보조</div>
     </div>
     <nav id="sideNav">
-      <button class="nav-btn" data-view="dashboard">🏠 대시보드</button>
-      <button class="nav-btn" data-view="clients">👤 대상자</button>
-      <button class="nav-btn" data-view="soapList">📝 SOAP 기록</button>
-      <button class="nav-btn" data-view="followUps">🔔 후속조치</button>
-      <button class="nav-btn" data-view="schedule">📅 일정</button>
-      <button class="nav-btn" data-view="search">🔍 검색</button>
+      <button class="nav-btn" data-view="dashboard">🏠 <span class="nav-label">대시보드</span></button>
+      <button class="nav-btn" data-view="clients">👤 <span class="nav-label">대상자</span></button>
+      <button class="nav-btn" data-view="soapList">📝 <span class="nav-label">SOAP 기록</span></button>
+      <button class="nav-btn" data-view="followUps">🔔 <span class="nav-label">후속조치</span></button>
+      <button class="nav-btn" data-view="schedule">📅 <span class="nav-label">일정</span></button>
+      <button class="nav-btn" data-view="search">🔍 <span class="nav-label">검색</span></button>
     </nav>
-    <div class="sidebar-spacer"></div>
-    <div class="sidebar-foot">
-      <button class="lock-btn" id="lockNowBtn">🔐 잠금</button>
-    </div>
-  </div>
+    <button class="lock-btn" id="lockNowBtn">🔐 <span class="nav-label">잠금</span></button>
+  </header>
   <main id="appMain"></main>
 </div>
 
@@ -827,18 +826,52 @@ const Clients = {
    ========================================================================= */
 const SoapModule = {
   TOPIC_KEYWORDS: [
-    { key: 'sleep',   label: '수면 상태',       words: ['수면', '잠을', '잠이', '불면', '잠들'] },
-    { key: 'meal',    label: '식사 상태',       words: ['식사', '영양', '끼니', '식욕'] },
-    { key: 'hygiene', label: '위생 및 일상생활', words: ['위생', '청결', '일상생활', '활동량', '씻'] },
-    { key: 'med',     label: '복약 관련 내용',   words: ['복약', '약을', '약물 복용', '투약', '처방'] },
-    { key: 'mood',    label: '정서 상태',       words: ['우울', '불안', '스트레스', '정서', '기분'] },
-    { key: 'social',  label: '사회적 관계',     words: ['대인관계', '가족', '친구', '이웃', '관계'] },
-    { key: 'econ',    label: '경제적 상황',     words: ['경제', '생활비', '수급', '재정', '소득'] },
-    { key: 'housing', label: '주거 환경',       words: ['주거', '거주', '집 안', '이사'] },
-    { key: 'job',     label: '취업 관련 사항',   words: ['취업', '구직', '직장', '근로', '알바'] },
-    { key: 'program', label: '프로그램 참여',   words: ['프로그램', '참여', '교육', '모임'] }
+    { key: 'sleep',   label: '수면 상태',       words: ['수면', '잠을', '잠이', '불면', '잠들', '잔다고'],
+      declineClause: '수면시간 감소', improveClause: '수면 상태 개선' },
+    { key: 'meal',    label: '식사 상태',       words: ['식사', '영양', '끼니', '식욕'],
+      declineClause: '식사량 감소', improveClause: '식사 상태 개선' },
+    { key: 'hygiene', label: '일상생활 수행',   words: ['위생', '청결', '일상생활', '활동량', '씻'],
+      declineClause: '일상생활 수행 저하', improveClause: '일상생활 수행 개선' },
+    { key: 'med',     label: '복약 관련 내용',   words: ['복약', '약을', '약물 복용', '투약', '처방'],
+      declineClause: '복약 이행의 어려움', improveClause: '양호한 복약 이행' },
+    { key: 'mood',    label: '정서 상태',       words: ['우울', '불안', '스트레스', '정서', '기분'],
+      declineClause: '정서적 불안정', improveClause: '안정된 정서 상태' },
+    { key: 'social',  label: '사회적 관계',     words: ['대인관계', '가족', '보호자', '친구', '이웃', '관계', '연락'],
+      declineClause: '대인관계의 어려움', improveClause: '대인관계의 개선' },
+    { key: 'econ',    label: '경제적 상황',     words: ['경제', '생활비', '수급', '재정', '소득'],
+      declineClause: '경제적 어려움', improveClause: '경제 상황의 개선' },
+    { key: 'housing', label: '주거 환경',       words: ['주거', '거주', '집 안', '이사'],
+      declineClause: '주거 환경의 어려움', improveClause: '주거 환경의 개선' },
+    { key: 'job',     label: '취업 관련 사항',   words: ['취업', '구직', '직장', '근로', '알바'],
+      declineClause: '취업 관련 어려움', improveClause: '취업 관련 진전' },
+    { key: 'program', label: '프로그램 참여',   words: ['프로그램', '참여', '교육', '모임'],
+      declineClause: '프로그램 참여 저조', improveClause: '프로그램 참여 활발' }
   ],
   CHANGE_WORDS: ['이전보다', '최근', '증가', '감소', '악화', '호전', '좋아짐', '나빠짐', '변화', '늘어', '줄어'],
+  DECLINE_WORDS: ['감소', '줄어', '줄었', '줄임', '부족', '저하', '악화', '힘들어', '힘듦', '못하', '못 하', '안하', '안 하', '거부', '어려워', '어려움', '나빠짐', '불면', '못 자', '못자', '저조', '떨어'],
+  IMPROVE_WORDS: ['증가', '늘어', '늘었', '호전', '좋아짐', '좋아졌', '양호', '안정', '충분', '개선', '잘 자', '잘 지'],
+  INTENSIFIER_WORDS: ['현저히', '현저하게', '많이', '심하게', '상당히', '크게', '매우'],
+
+  // Looks only within the same sentence as each keyword occurrence — a simple
+  // proxy for "was this topic described as getting worse or better", without
+  // any real language understanding. Never used to infer risk or diagnosis.
+  splitSentences(text){
+    return text.split(/[.!?\n]+/).map(s => s.trim()).filter(Boolean);
+  },
+  topicDirection(topicWords, text){
+    let sawDecline = false, sawImprove = false, sawAny = false;
+    for (const sentence of this.splitSentences(text)){
+      if (!topicWords.some(w => sentence.includes(w))) continue;
+      sawAny = true;
+      if (this.DECLINE_WORDS.some(dw => sentence.includes(dw))) sawDecline = true;
+      if (this.IMPROVE_WORDS.some(iw => sentence.includes(iw))) sawImprove = true;
+    }
+    if (!sawAny) return 'neutral';
+    if (sawDecline && sawImprove) return 'mixed';
+    if (sawDecline) return 'decline';
+    if (sawImprove) return 'improve';
+    return 'neutral';
+  },
 
   list(){
     return Array.from(State.soaps.values()).sort((a, b) => (b.date + b.updatedAt).localeCompare(a.date + a.updatedAt));
@@ -870,10 +903,12 @@ const SoapModule = {
   },
 
   // ---- Rule-based "A" draft generator (no external AI, no network calls) ----
+  // Everything here is keyword/window matching over the exact S/O text the
+  // worker typed — it never fabricates facts, and never touches risk,
+  // diagnosis, medication compliance, or family dynamics beyond noting that
+  // related words appeared.
   generateADraft({ S, O, areas }){
     const combined = ((S || '') + '\n' + (O || ''));
-    const found = this.TOPIC_KEYWORDS.filter(t => t.words.some(w => combined.includes(w)));
-    const hasChange = this.CHANGE_WORDS.some(w => combined.includes(w));
     const hasAnyText = (S && S.trim()) || (O && O.trim());
 
     if (!hasAnyText){
@@ -883,27 +918,60 @@ const SoapModule = {
       };
     }
 
+    const found = this.TOPIC_KEYWORDS
+      .filter(t => t.words.some(w => combined.includes(w)))
+      .map(t => Object.assign({ direction: this.topicDirection(t.words, combined) }, t));
+    const hasChange = this.CHANGE_WORDS.some(w => combined.includes(w));
+    const hasIntensifier = this.INTENSIFIER_WORDS.some(w => combined.includes(w));
+
+    const declineTopics = found.filter(t => t.direction === 'decline' || t.direction === 'mixed');
+    const improveTopics = found.filter(t => t.direction === 'improve' || t.direction === 'mixed');
+    const neutralTopics = found.filter(t => t.direction === 'neutral');
+
     const sentences = [];
 
-    // ① 현재 상태 및 변화
-    if (found.length > 0){
-      let s1 = '상담 과정에서 ' + found.map(t => t.label).join(', ') + ' 관련 내용이 확인됨.';
-      if (hasChange) s1 += ' 이전 상담 대비 변화가 있는 것으로 파악되어 지속적으로 관찰할 필요가 있는 것으로 판단됨.';
-      sentences.push(s1);
-    } else {
-      sentences.push('금번 상담에서 확인된 S·O 내용을 바탕으로 특이 변화 사항은 뚜렷하게 나타나지 않는 것으로 보임.');
+    // ① 현재 상태 및 변화 — built from the specific topics/directions found,
+    // instead of a generic "관련 내용이 확인됨" for every case.
+    const s1parts = [];
+    if (declineTopics.length){
+      const list = declineTopics.map(t => t.declineClause).join(', ');
+      s1parts.push(list + ' 등이' + (hasIntensifier ? ' 현저하게' : '') + ' 확인되어 일상생활 유지에 부정적인 영향이 있을 수 있는 것으로 판단됨.');
     }
+    if (improveTopics.length){
+      const list = improveTopics.map(t => t.improveClause).join(', ');
+      s1parts.push(list + ' 등이 확인되어 전반적인 상태가 다소 안정된 것으로 파악됨.');
+    }
+    if (s1parts.length === 0){
+      if (neutralTopics.length){
+        s1parts.push('상담 과정에서 ' + neutralTopics.map(t => t.label).join(', ') + ' 관련 내용이 확인됨.');
+      } else {
+        s1parts.push('금번 상담에서 확인된 S·O 내용을 바탕으로 특이 변화 사항은 뚜렷하게 나타나지 않는 것으로 보임.');
+      }
+    } else if (hasChange){
+      s1parts.push('이전 상담 대비 변화가 있는 것으로 파악되어 지속적인 확인이 필요한 것으로 판단됨.');
+    }
+    // 사회적 관계(가족·보호자 연락 등)가 다른 어려움과 함께 언급된 경우, 자원 활용 상태를
+    // 계속 살펴볼 필요가 있다는 정도만 덧붙임 — 가족 역할을 단정하지 않음.
+    if (declineTopics.some(t => t.key === 'social') === false &&
+        found.some(t => t.key === 'social') && declineTopics.length > 0){
+      s1parts.push('가족(보호자)과의 연락 여부도 함께 확인되어, 관련 자원 활용 상태를 지속적으로 파악할 필요가 있는 것으로 사료됨.');
+    }
+    sentences.push(s1parts.join(' '));
 
     // ② 사례관리 의미
     const areaText = (areas && areas.length) ? areas.filter(a => a !== '기타').join(', ') : '';
-    if (areaText){
+    if (declineTopics.length >= 2){
+      sentences.push(declineTopics.map(t => t.label).join(', ') + ' 등 여러 영역에서 어려움이 함께 나타나고 있어, 사례관리 차원의 지속적인 개입이 필요한 것으로 사료됨.');
+    } else if (areaText){
       sentences.push(areaText + ' 영역과 관련하여 대상자의 일상생활 및 사회적 기능 유지를 위한 사례관리 지속이 필요한 것으로 사료됨.');
     } else {
       sentences.push('금번 확인된 내용은 대상자의 사례관리 지속 필요성을 뒷받침하는 것으로 사료됨.');
     }
 
     // ③ 필요한 개입 및 관찰
-    if (found.length > 0){
+    if (declineTopics.length){
+      sentences.push('특히 ' + declineTopics.map(t => t.label).join(', ') + '에 대한 우선적인 관찰과 확인이 필요한 것으로 판단됨.');
+    } else if (found.length){
       sentences.push('향후 상담에서 ' + found.map(t => t.label).join(', ') + '에 대해 지속적으로 관찰할 필요가 있는 것으로 판단됨.');
     } else {
       sentences.push('다음 상담 시까지 대상자의 전반적인 상태를 지속적으로 관찰할 필요가 있는 것으로 판단됨.');
@@ -1268,7 +1336,8 @@ const Views = {
     const todaySchedules = Schedules.today();
     const draftSoaps = SoapModule.list().filter(s => s.status === 'draft');
     const recentFinal = SoapModule.list().filter(s => s.status === 'final').slice(0, 5);
-    const upcomingCount = Schedules.plannedCount();
+    const today = Utils.todayStr();
+    const upcomingCount = Views.scheduleCombinedItems().filter(it => it.status === 'planned' && it.date >= today).length;
 
     const hasSeed = (State.seedClientIds || []).length > 0 && (State.seedClientIds || []).some(id => State.clients.has(id));
 
@@ -1768,16 +1837,31 @@ const Views = {
   },
 
   /* ---------------- SCHEDULE ---------------- */
+  // Combines Schedules with pending FollowUps (which carry a due date) into one
+  // date-sorted list, so a follow-up's due date also shows up under 일정.
+  scheduleCombinedItems(){
+    const scheduleItems = Schedules.list().map(s => ({
+      kind: 'schedule', id: s.id, clientId: s.clientId, date: s.date,
+      typeLabel: s.contactType, note: s.memo || '', status: s.status
+    }));
+    const followUpItems = FollowUps.list().filter(f => f.dueDate).map(f => ({
+      kind: 'followup', id: f.id, clientId: f.clientId, date: f.dueDate,
+      typeLabel: f.type, note: f.text || '', status: f.status === 'pending' ? 'planned' : 'completed'
+    }));
+    return scheduleItems.concat(followUpItems).sort((a, b) => a.date.localeCompare(b.date));
+  },
+
   schedule(){
     const filter = State.currentParams.filter || 'all';
     const today = Utils.todayStr();
-    let items = Schedules.list();
+    let items = Views.scheduleCombinedItems();
     if (filter === 'today') items = items.filter(s => s.date === today);
     if (filter === 'upcoming') items = items.filter(s => s.status === 'planned' && s.date >= today);
     if (filter === 'past') items = items.filter(s => s.date < today);
 
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📅 일정</h1>' +
       '<button class="btn btn-primary" id="newSchBtn">＋ 일정 등록</button></div>';
+    html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">후속조치의 예정일도 함께 표시됩니다.</p>';
     html += '<div class="tabs">' +
       ['all:전체', 'today:오늘', 'upcoming:예정', 'past:지난 일정'].map(pair => {
         const [key, label] = pair.split(':');
@@ -1788,14 +1872,18 @@ const Views = {
     if (items.length === 0){
       html += '<div class="empty-msg">해당 조건의 일정이 없습니다.</div>';
     } else {
-      html += '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>메모</th><th>상태</th><th></th></tr></thead><tbody>';
-      items.forEach(s => {
-        const c = Clients.get(s.clientId);
-        html += '<tr><td>' + s.date + '</td><td>' + Utils.escapeHtml(s.clientId) + (c && c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') + '</td>' +
-          '<td>' + Utils.escapeHtml(s.contactType) + '</td><td>' + Utils.escapeHtml(s.memo || '-') + '</td>' +
-          '<td>' + (s.status === 'planned' ? '<span class="badge badge-pending">예정</span>' : '<span class="badge badge-completed">완료</span>') + '</td>' +
-          '<td>' + (s.status === 'planned' ? '<button class="btn btn-sm" data-done-sch="' + s.id + '">완료</button>' : '') +
-          ' <button class="btn btn-sm btn-danger" data-del-sch="' + s.id + '">삭제</button></td></tr>';
+      html += '<table><thead><tr><th>날짜</th><th>구분</th><th>대상자</th><th>내용</th><th>상태</th><th></th></tr></thead><tbody>';
+      items.forEach(it => {
+        const c = Clients.get(it.clientId);
+        const kindBadge = it.kind === 'schedule' ? '<span class="tag">일정</span>' : '<span class="tag">후속조치</span>';
+        const doneAttr = it.kind === 'schedule' ? 'data-done-sch' : 'data-done-fu';
+        const delAttr = it.kind === 'schedule' ? 'data-del-sch' : 'data-del-fu2';
+        html += '<tr><td>' + it.date + '</td><td>' + kindBadge + '</td>' +
+          '<td>' + Utils.escapeHtml(it.clientId) + (c && c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') + '</td>' +
+          '<td>' + Utils.escapeHtml(it.typeLabel) + (it.note ? ' · ' + Utils.escapeHtml(it.note) : '') + '</td>' +
+          '<td>' + (it.status === 'planned' ? '<span class="badge badge-pending">예정</span>' : '<span class="badge badge-completed">완료</span>') + '</td>' +
+          '<td>' + (it.status === 'planned' ? '<button class="btn btn-sm" ' + doneAttr + '="' + it.id + '">완료</button>' : '') +
+          ' <button class="btn btn-sm btn-danger" ' + delAttr + '="' + it.id + '">삭제</button></td></tr>';
       });
       html += '</tbody></table>';
     }
@@ -1806,7 +1894,9 @@ const Views = {
     document.getElementById('newSchBtn').onclick = () => Views.openScheduleModal();
     document.querySelectorAll('.tab-btn').forEach(el => { el.onclick = () => UI.navigate('schedule', { filter: el.dataset.f }); });
     document.querySelectorAll('[data-done-sch]').forEach(el => { el.onclick = async () => { await Schedules.setStatus(el.dataset.doneSch, 'completed'); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
+    document.querySelectorAll('[data-done-fu]').forEach(el => { el.onclick = async () => { await FollowUps.complete(el.dataset.doneFu); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
     document.querySelectorAll('[data-del-sch]').forEach(el => { el.onclick = () => UI.confirm('이 일정을 삭제할까요?', async () => { await Schedules.remove(el.dataset.delSch); toast('삭제했습니다.'); UI.renderCurrentView(); }); });
+    document.querySelectorAll('[data-del-fu2]').forEach(el => { el.onclick = () => UI.confirm('이 후속조치를 삭제할까요?', async () => { await FollowUps.remove(el.dataset.delFu2); toast('삭제했습니다.'); UI.renderCurrentView(); }); });
   },
 
   /* ---------------- SEARCH ---------------- */
