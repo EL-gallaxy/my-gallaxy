@@ -1,0 +1,2103 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>사례관리 ON</title>
+<style>
+  :root{
+    --bg:#f3f3f1;
+    --surface:#ffffff;
+    --surface-alt:#faf9f7;
+    --border:#e1e0dc;
+    --border-strong:#cfcdc7;
+    --text:#2a2a27;
+    --text-muted:#75746e;
+    --text-faint:#a3a29c;
+    --accent:#42576a;
+    --accent-hover:#344654;
+    --accent-soft:#e8edf1;
+    --danger:#a8412d;
+    --danger-soft:#f6e6e2;
+    --warn:#b5772b;
+    --warn-soft:#f5ead8;
+    --good:#3f7a56;
+    --good-soft:#e2eee6;
+    --draft:#8a8983;
+    --draft-soft:#eeede9;
+    --radius:8px;
+    --shadow:0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    font-size:15px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic","Apple SD Gothic Neo",Segoe UI,Roboto,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    line-height:1.55;
+  }
+  button{font-family:inherit;font-size:0.95rem;cursor:pointer;}
+  input,select,textarea{font-family:inherit;font-size:0.95rem;}
+  h1,h2,h3,h4{margin:0 0 0.5em 0;font-weight:600;}
+  a{color:var(--accent);}
+  .hidden{display:none !important;}
+
+  /* ---------- Buttons ---------- */
+  .btn{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:8px 14px;border-radius:var(--radius);border:1px solid var(--border-strong);
+    background:var(--surface);color:var(--text);transition:background .12s,border-color .12s;
+  }
+  .btn:hover{background:var(--surface-alt);}
+  .btn-primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .btn-primary:hover{background:var(--accent-hover);border-color:var(--accent-hover);}
+  .btn-danger{background:var(--surface);color:var(--danger);border-color:var(--danger);}
+  .btn-danger:hover{background:var(--danger-soft);}
+  .btn-sm{padding:5px 10px;font-size:0.85rem;border-radius:6px;}
+  .btn-block{width:100%;justify-content:center;}
+  .btn-quick{
+    flex:1;min-width:160px;padding:16px;font-size:1rem;font-weight:600;
+    border-radius:10px;border:1px solid var(--border-strong);background:var(--surface);
+    display:flex;align-items:center;justify-content:center;gap:8px;
+  }
+  .btn-quick:hover{background:var(--accent-soft);border-color:var(--accent);}
+  .btn-link{background:none;border:none;color:var(--accent);padding:0;text-decoration:underline;}
+
+  /* ---------- Auth screens ---------- */
+  #authScreen{
+    min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;
+    padding:24px;
+  }
+  .auth-box{
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    box-shadow:var(--shadow);padding:36px 32px;max-width:480px;width:100%;
+  }
+  .auth-logo{text-align:center;margin-bottom:20px;}
+  .auth-logo .title{font-size:1.5rem;font-weight:700;color:var(--accent);}
+  .auth-logo .subtitle{font-size:0.85rem;color:var(--text-muted);margin-top:4px;}
+  .notice-box{
+    background:var(--warn-soft);border:1px solid var(--warn);border-radius:8px;
+    padding:14px 16px;font-size:0.87rem;color:#5b4520;margin-bottom:20px;white-space:pre-line;
+  }
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:0.85rem;color:var(--text-muted);margin-bottom:5px;}
+  .field input[type=text],.field input[type=password],.field input[type=date],.field input[type=number],.field select,.field textarea{
+    width:100%;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:#fff;color:var(--text);
+  }
+  .field textarea{resize:vertical;min-height:110px;}
+  .field-inline{display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--text-muted);}
+  .error-msg{color:var(--danger);font-size:0.85rem;margin-top:6px;}
+  .help-text{color:var(--text-faint);font-size:0.78rem;margin-top:4px;}
+
+  /* ---------- App shell ---------- */
+  #appShell{display:flex;min-height:100vh;}
+  .sidebar{
+    width:212px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;padding:18px 0;
+  }
+  .sidebar-logo{padding:0 18px 16px 18px;border-bottom:1px solid var(--border);margin-bottom:10px;}
+  .sidebar-logo .title{font-weight:700;color:var(--accent);font-size:1.15rem;}
+  .sidebar-logo .subtitle{font-size:0.72rem;color:var(--text-muted);margin-top:2px;}
+  .nav-btn{
+    display:flex;align-items:center;gap:10px;padding:11px 18px;border:none;background:none;
+    text-align:left;color:var(--text);font-size:0.93rem;width:100%;border-left:3px solid transparent;
+  }
+  .nav-btn:hover{background:var(--surface-alt);}
+  .nav-btn.active{background:var(--accent-soft);border-left-color:var(--accent);color:var(--accent);font-weight:600;}
+  .sidebar-spacer{flex:1;}
+  .sidebar-foot{padding:10px 18px;border-top:1px solid var(--border);}
+  .lock-btn{
+    display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;border-radius:6px;
+    border:1px solid var(--border-strong);background:var(--surface);color:var(--text);
+  }
+  .lock-btn:hover{background:var(--danger-soft);border-color:var(--danger);color:var(--danger);}
+
+  #appMain{flex:1;min-width:0;padding:26px 32px;max-width:1100px;}
+  .page-title{font-size:1.35rem;margin-bottom:18px;}
+  .page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:18px;}
+
+  /* ---------- Cards / dashboard ---------- */
+  .summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
+  .summary-card{
+    background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;
+    cursor:pointer;transition:box-shadow .12s,transform .12s;text-align:left;
+  }
+  .summary-card:hover{box-shadow:var(--shadow);transform:translateY(-1px);}
+  .summary-card .num{font-size:1.9rem;font-weight:700;}
+  .summary-card .label{font-size:0.85rem;color:var(--text-muted);margin-top:2px;}
+  .summary-card.overdue .num{color:var(--danger);}
+  .summary-card.today .num{color:var(--warn);}
+  .summary-card.draft .num{color:var(--accent);}
+  .summary-card.upcoming .num{color:var(--good);}
+
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:20px;}
+  .panel-title{font-size:1rem;font-weight:600;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;}
+  .empty-msg{color:var(--text-faint);font-size:0.88rem;padding:10px 2px;}
+
+  .list-row{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:10px 8px;border-bottom:1px solid var(--border);flex-wrap:wrap;
+  }
+  .list-row:last-child{border-bottom:none;}
+  .list-row:hover{background:var(--surface-alt);}
+  .list-row-main{cursor:pointer;flex:1;min-width:200px;}
+  .row-title{font-weight:600;font-size:0.92rem;}
+  .row-sub{font-size:0.8rem;color:var(--text-muted);margin-top:2px;}
+  .row-actions{display:flex;gap:6px;flex-shrink:0;}
+
+  .overdue-row{background:var(--danger-soft);border-radius:6px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--danger);}
+  .quick-btns{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;}
+
+  .example-banner{
+    background:var(--accent-soft);border:1px dashed var(--accent);border-radius:8px;
+    padding:10px 14px;font-size:0.85rem;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
+  }
+
+  /* badges */
+  .badge{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:20px;font-size:0.78rem;font-weight:600;}
+  .badge-intensive{background:var(--danger-soft);color:var(--danger);}
+  .badge-normal{background:var(--warn-soft);color:var(--warn);}
+  .badge-stable{background:var(--good-soft);color:var(--good);}
+  .badge-draft{background:var(--draft-soft);color:var(--draft);}
+  .badge-final{background:var(--good-soft);color:var(--good);}
+  .badge-pending{background:var(--warn-soft);color:var(--warn);}
+  .badge-completed{background:var(--draft-soft);color:var(--draft);}
+  .tag{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:1px 7px;font-size:0.75rem;margin:0 4px 4px 0;}
+
+  /* tables & tabs */
+  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;}
+  .tab-btn{padding:6px 14px;border-radius:20px;border:1px solid var(--border-strong);background:var(--surface);font-size:0.85rem;}
+  .tab-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  table{width:100%;border-collapse:collapse;font-size:0.88rem;}
+  table th{text-align:left;color:var(--text-muted);font-weight:600;font-size:0.78rem;padding:8px;border-bottom:2px solid var(--border);}
+  table td{padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:top;}
+  table tr:hover td{background:var(--surface-alt);}
+  .clickable-row{cursor:pointer;}
+
+  /* forms */
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .form-grid .full{grid-column:1/-1;}
+  .checkbox-group{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip-check{display:flex;align-items:center;gap:5px;border:1px solid var(--border-strong);border-radius:20px;padding:5px 12px;font-size:0.83rem;cursor:pointer;}
+  .chip-check input{margin:0;}
+  .chip-check.checked{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);}
+  .divider{height:1px;background:var(--border);margin:18px 0;}
+
+  .checklist-box{background:var(--warn-soft);border:1px solid var(--warn);border-radius:8px;padding:10px 14px;font-size:0.85rem;margin-top:10px;color:#5b4520;}
+  .checklist-box ul{margin:6px 0 0 18px;padding:0;}
+
+  .soap-copy-block{background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;padding:14px;white-space:pre-wrap;font-size:0.87rem;margin-top:10px;}
+
+  /* modal */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(30,30,28,0.42);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px;
+  }
+  .modal-box{background:var(--surface);border-radius:10px;max-width:520px;width:100%;padding:22px 24px;max-height:88vh;overflow-y:auto;box-shadow:0 8px 30px rgba(0,0,0,0.2);}
+
+  /* toast */
+  #toastContainer{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:8px;}
+  .toast{background:var(--text);color:#fff;padding:10px 16px;border-radius:6px;font-size:0.85rem;box-shadow:var(--shadow);opacity:0.95;}
+  .toast.error{background:var(--danger);}
+
+  /* lock screen */
+  #lockScreen{
+    position:fixed;inset:0;background:var(--bg);z-index:150;display:flex;align-items:center;justify-content:center;flex-direction:column;
+  }
+
+  .fatal-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;}
+  .fatal-box{max-width:480px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;}
+
+  /* responsive */
+  @media (max-width:820px){
+    #appShell{flex-direction:column;}
+    .sidebar{width:100%;flex-direction:row;overflow-x:auto;padding:8px 0;align-items:center;}
+    .sidebar-logo{border-bottom:none;border-right:1px solid var(--border);margin-bottom:0;padding:0 14px;flex-shrink:0;}
+    .nav-btn{width:auto;white-space:nowrap;border-left:none;border-bottom:3px solid transparent;padding:10px 12px;}
+    .nav-btn.active{border-left-color:transparent;border-bottom-color:var(--accent);}
+    .sidebar-spacer{display:none;}
+    .sidebar-foot{border-top:none;border-left:1px solid var(--border);flex-shrink:0;}
+    #appMain{padding:18px 14px;}
+    .summary-grid{grid-template-columns:1fr 1fr;}
+    .form-grid{grid-template-columns:1fr;}
+  }
+  @media (max-width:480px){
+    .summary-grid{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<div id="toastContainer"></div>
+
+<!-- Fatal error screen (unsupported browser) -->
+<div id="fatalScreen" class="fatal-screen hidden">
+  <div class="fatal-box">
+    <h2>실행할 수 없습니다</h2>
+    <p id="fatalMessage" style="color:var(--text-muted);"></p>
+  </div>
+</div>
+
+<!-- First run notice -->
+<div id="firstRunScreen" class="hidden">
+  <div id="authScreen">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <div class="title">사례관리 ON</div>
+        <div class="subtitle">정신건강복지센터 사례관리 업무 보조</div>
+      </div>
+      <div class="notice-box">이 앱은 로컬 PC에서 업무를 보조하기 위한 도구입니다. 실제 대상자 정보를 입력하기 전에 소속 기관의 개인정보보호 및 정보보안 지침을 확인하세요.
+
+비밀번호를 분실하면 암호화된 데이터를 복구하지 못할 수 있습니다.
+
+이 앱은 서버나 외부로 데이터를 전송하지 않으며, 모든 기록은 현재 사용 중인 브라우저에만 암호화되어 저장됩니다. 공식 전자의무기록 시스템이 아닌 개인 업무 보조 도구입니다.</div>
+      <label class="field-inline" style="margin-bottom:16px;">
+        <input type="checkbox" id="ackNoticeCheckbox"> 안내 사항을 확인했습니다.
+      </label>
+      <button class="btn btn-primary btn-block" id="ackNoticeBtn">다음</button>
+    </div>
+  </div>
+</div>
+
+<!-- Password setup -->
+<div id="setupScreen" class="hidden">
+  <div id="authScreenSetup" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <div class="title">사례관리 ON</div>
+        <div class="subtitle">앱 비밀번호 설정</div>
+      </div>
+      <p style="font-size:0.85rem;color:var(--text-muted);">이 비밀번호는 서버에 저장되지 않으며, 데이터 암호화 키를 만드는 데 사용됩니다. <strong>비밀번호를 잊으면 데이터를 복구할 수 없습니다.</strong></p>
+      <div class="field">
+        <label>비밀번호 (8자 이상)</label>
+        <input type="password" id="setupPw1" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label>비밀번호 확인</label>
+        <input type="password" id="setupPw2" autocomplete="new-password">
+      </div>
+      <div class="error-msg hidden" id="setupError"></div>
+      <button class="btn btn-primary btn-block" id="setupSubmitBtn">비밀번호 설정하고 시작하기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Login screen -->
+<div id="loginScreen" class="hidden">
+  <div id="authScreenLogin" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <div class="title">사례관리 ON</div>
+        <div class="subtitle">정신건강복지센터 사례관리 업무 보조</div>
+      </div>
+      <div class="field">
+        <label>비밀번호</label>
+        <input type="password" id="loginPw" autocomplete="current-password">
+      </div>
+      <div class="error-msg hidden" id="loginError"></div>
+      <button class="btn btn-primary btn-block" id="loginSubmitBtn">잠금 해제</button>
+      <p class="help-text" style="margin-top:14px;">비밀번호를 잊으면 암호화된 데이터를 복구할 수 없습니다. <button type="button" class="btn-link" id="resetAllLink" style="font-size:0.78rem;">모든 데이터 초기화</button></p>
+    </div>
+  </div>
+</div>
+
+<!-- Lock screen (idle / manual lock) -->
+<div id="lockScreen" class="hidden">
+  <div class="auth-box">
+    <div class="auth-logo">
+      <div class="title">🔒 사례관리 ON</div>
+      <div class="subtitle">화면이 잠겼습니다</div>
+    </div>
+    <div class="field">
+      <label>비밀번호를 입력해 잠금을 해제하세요</label>
+      <input type="password" id="unlockPw" autocomplete="current-password">
+    </div>
+    <div class="error-msg hidden" id="unlockError"></div>
+    <button class="btn btn-primary btn-block" id="unlockSubmitBtn">잠금 해제</button>
+  </div>
+</div>
+
+<!-- Main app shell -->
+<div id="appShell" class="hidden">
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div class="title">사례관리 ON</div>
+      <div class="subtitle">사례관리 업무 보조</div>
+    </div>
+    <nav id="sideNav">
+      <button class="nav-btn" data-view="dashboard">🏠 대시보드</button>
+      <button class="nav-btn" data-view="clients">👤 대상자</button>
+      <button class="nav-btn" data-view="soapList">📝 SOAP 기록</button>
+      <button class="nav-btn" data-view="followUps">🔔 후속조치</button>
+      <button class="nav-btn" data-view="schedule">📅 일정</button>
+      <button class="nav-btn" data-view="search">🔍 검색</button>
+    </nav>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-foot">
+      <button class="lock-btn" id="lockNowBtn">🔐 잠금</button>
+    </div>
+  </div>
+  <main id="appMain"></main>
+</div>
+
+<!-- Generic modal -->
+<div id="modalOverlay" class="modal-overlay hidden">
+  <div class="modal-box" id="modalBox"></div>
+</div>
+
+<script>
+'use strict';
+
+/* =========================================================================
+   UTILS
+   ========================================================================= */
+const Utils = {
+  todayStr(){
+    const d = new Date();
+    const tz = d.getTimezoneOffset() * 60000;
+    return new Date(d - tz).toISOString().slice(0, 10);
+  },
+  uid(prefix){
+    if (window.crypto && crypto.randomUUID) return prefix + '-' + crypto.randomUUID();
+    return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  },
+  escapeHtml(str){
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  },
+  nl2br(str){
+    return Utils.escapeHtml(str).replace(/\n/g, '<br>');
+  },
+  truncate(str, len){
+    if (!str) return '';
+    return str.length > len ? str.slice(0, len) + '…' : str;
+  },
+  bufToBase64(buf){
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  },
+  base64ToBuf(b64){
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr.buffer;
+  },
+  formatDateTime(iso){
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+  }
+};
+
+function toast(msg, type){
+  const el = document.createElement('div');
+  el.className = 'toast' + (type === 'error' ? ' error' : '');
+  el.textContent = msg;
+  document.getElementById('toastContainer').appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+function copyToClipboard(text){
+  const done = () => toast('복사되었습니다.');
+  const fail = () => {
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      done();
+    }catch(e){
+      toast('복사에 실패했습니다. 직접 선택하여 복사해 주세요.', 'error');
+    }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(fail);
+  } else {
+    fail();
+  }
+}
+
+/* =========================================================================
+   CRYPTO  (Web Crypto API: PBKDF2 key derivation + AES-GCM authenticated encryption)
+   ========================================================================= */
+const CryptoModule = {
+  ITERATIONS: 250000,
+  VERIFIER_TEXT: 'CASE_MANAGEMENT_ON_VERIFIER_V1',
+
+  async deriveKey(password, saltB64, iterations){
+    const enc = new TextEncoder();
+    const salt = Utils.base64ToBuf(saltB64);
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  },
+
+  generateSaltB64(){
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    return Utils.bufToBase64(salt.buffer);
+  },
+
+  async encryptJSON(key, obj){
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = new TextEncoder().encode(JSON.stringify(obj));
+    const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+    return { iv: Utils.bufToBase64(iv.buffer), cipher: Utils.bufToBase64(cipherBuf) };
+  },
+
+  async decryptJSON(key, ivB64, cipherB64){
+    const iv = new Uint8Array(Utils.base64ToBuf(ivB64));
+    const cipherBuf = Utils.base64ToBuf(cipherB64);
+    const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipherBuf);
+    return JSON.parse(new TextDecoder().decode(plainBuf));
+  }
+};
+
+/* =========================================================================
+   STORAGE  (IndexedDB — every record is stored as { id, iv, cipher }.
+   Only opaque ciphertext touches disk; nothing sensitive is ever written
+   to localStorage.)
+   ========================================================================= */
+const Storage = {
+  DB_NAME: 'case_management_on_db',
+  DB_VERSION: 1,
+  _dbPromise: null,
+
+  openDB(){
+    if (this._dbPromise) return this._dbPromise;
+    this._dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(this.DB_NAME, this.DB_VERSION);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
+        ['clients', 'soaps', 'followUps', 'schedules'].forEach(name => {
+          if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
+        });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return this._dbPromise;
+  },
+
+  async _tx(storeName, mode){
+    const db = await this.openDB();
+    return db.transaction(storeName, mode).objectStore(storeName);
+  },
+
+  idbGet(storeName, key){
+    return this._tx(storeName, 'readonly').then(store => new Promise((resolve, reject) => {
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }));
+  },
+  idbGetAll(storeName){
+    return this._tx(storeName, 'readonly').then(store => new Promise((resolve, reject) => {
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    }));
+  },
+  idbPut(storeName, value){
+    return this._tx(storeName, 'readwrite').then(store => new Promise((resolve, reject) => {
+      const req = store.put(value);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    }));
+  },
+  idbDelete(storeName, key){
+    return this._tx(storeName, 'readwrite').then(store => new Promise((resolve, reject) => {
+      const req = store.delete(key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    }));
+  },
+
+  async getSetting(key){
+    try{
+      const row = await this.idbGet('settings', key);
+      return row ? row.value : undefined;
+    }catch(e){ console.error(e); return undefined; }
+  },
+  async setSetting(key, value){
+    return this.idbPut('settings', { key, value });
+  },
+
+  async saveEncrypted(storeName, obj){
+    const { iv, cipher } = await CryptoModule.encryptJSON(Auth.cryptoKey, obj);
+    await this.idbPut(storeName, { id: obj.id, iv, cipher });
+  },
+
+  async loadAllDecrypted(storeName){
+    const rows = await this.idbGetAll(storeName);
+    const results = [];
+    let corrupted = 0;
+    for (const row of rows){
+      try{
+        const obj = await CryptoModule.decryptJSON(Auth.cryptoKey, row.iv, row.cipher);
+        results.push(obj);
+      }catch(e){
+        corrupted++;
+        console.error('복호화 실패:', storeName, row.id, e);
+      }
+    }
+    if (corrupted > 0){
+      toast(storeName + ' 저장소에서 ' + corrupted + '건의 기록을 불러오지 못했습니다. 데이터가 손상되었을 수 있습니다.', 'error');
+    }
+    return results;
+  },
+
+  async deleteAllData(){
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.deleteDatabase(this.DB_NAME);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => resolve();
+    });
+  }
+};
+
+/* =========================================================================
+   STATE  (decrypted, in-memory only — cleared completely on lock)
+   ========================================================================= */
+const State = {
+  unlocked: false,
+  clients: new Map(),
+  soaps: new Map(),
+  followUps: new Map(),
+  schedules: new Map(),
+  currentView: 'dashboard',
+  currentParams: {},
+  seedClientIds: [],
+
+  clear(){
+    this.unlocked = false;
+    this.clients.clear();
+    this.soaps.clear();
+    this.followUps.clear();
+    this.schedules.clear();
+  }
+};
+
+const CONSTANTS = {
+  CONTACT_TYPES: ['전화', '방문', '내소', '프로그램', '기타'],
+  AREAS: ['정신건강', '일상생활', '복약', '가족', '사회관계', '경제·주거', '취업', '프로그램', '기타'],
+  MANAGEMENT_LEVELS: {
+    intensive: { label: '집중관리', emoji: '🔴', badgeClass: 'badge-intensive' },
+    normal:    { label: '일반관리', emoji: '🟠', badgeClass: 'badge-normal' },
+    stable:    { label: '안정관리', emoji: '🟢', badgeClass: 'badge-stable' }
+  },
+  QUICK_P_ACTIONS: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인'],
+  FOLLOWUP_TYPES: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인', '기타']
+};
+
+/* =========================================================================
+   AUTH  (password setup / login / auto-lock. The derived AES key lives only
+   in this module's memory and is discarded on lock.)
+   ========================================================================= */
+const Auth = {
+  cryptoKey: null,
+  lastActivity: Date.now(),
+  idleTimerHandle: null,
+
+  async isFirstRun(){
+    const salt = await Storage.getSetting('authSalt');
+    return !salt;
+  },
+
+  async setupPassword(password){
+    const saltB64 = CryptoModule.generateSaltB64();
+    const iterations = CryptoModule.ITERATIONS;
+    const key = await CryptoModule.deriveKey(password, saltB64, iterations);
+    const { iv, cipher } = await CryptoModule.encryptJSON(key, { v: CryptoModule.VERIFIER_TEXT });
+    await Storage.setSetting('authSalt', saltB64);
+    await Storage.setSetting('authIterations', iterations);
+    await Storage.setSetting('authVerifierIV', iv);
+    await Storage.setSetting('authVerifierCipher', cipher);
+    await Storage.setSetting('autoLockMinutes', 5);
+    this.cryptoKey = key;
+  },
+
+  async login(password){
+    const saltB64 = await Storage.getSetting('authSalt');
+    const iterations = await Storage.getSetting('authIterations');
+    const ivB64 = await Storage.getSetting('authVerifierIV');
+    const cipherB64 = await Storage.getSetting('authVerifierCipher');
+    if (!saltB64) throw new Error('NOT_INITIALIZED');
+    const key = await CryptoModule.deriveKey(password, saltB64, iterations);
+    try{
+      const result = await CryptoModule.decryptJSON(key, ivB64, cipherB64);
+      if (result.v !== CryptoModule.VERIFIER_TEXT) throw new Error('mismatch');
+    }catch(e){
+      throw new Error('WRONG_PASSWORD');
+    }
+    this.cryptoKey = key;
+  },
+
+  lock(){
+    this.cryptoKey = null;
+    State.clear();
+    Notifications.resetNotifiedIds();
+    UI.showLockScreen();
+  },
+
+  async getAutoLockMinutes(){
+    const m = await Storage.getSetting('autoLockMinutes');
+    return m || 5;
+  },
+
+  markActivity(){
+    this.lastActivity = Date.now();
+  },
+
+  startIdleWatcher(){
+    ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'].forEach(evt => {
+      document.addEventListener(evt, () => Auth.markActivity(), { passive: true });
+    });
+    if (this.idleTimerHandle) clearInterval(this.idleTimerHandle);
+    this.idleTimerHandle = setInterval(async () => {
+      if (!State.unlocked) return;
+      const minutes = await Auth.getAutoLockMinutes();
+      if (Date.now() - Auth.lastActivity > minutes * 60000){
+        Auth.lock();
+      }
+    }, 10000);
+  }
+};
+
+/* =========================================================================
+   DATA LOADING
+   ========================================================================= */
+async function loadAllDataIntoState(){
+  State.clients.clear();
+  State.soaps.clear();
+  State.followUps.clear();
+  State.schedules.clear();
+
+  const clients = await Storage.loadAllDecrypted('clients');
+  clients.forEach(c => State.clients.set(c.id, c));
+
+  const soaps = await Storage.loadAllDecrypted('soaps');
+  soaps.forEach(s => State.soaps.set(s.id, s));
+
+  const followUps = await Storage.loadAllDecrypted('followUps');
+  followUps.forEach(f => State.followUps.set(f.id, f));
+
+  const schedules = await Storage.loadAllDecrypted('schedules');
+  schedules.forEach(s => State.schedules.set(s.id, s));
+
+  State.seedClientIds = (await Storage.getSetting('seedClientIds')) || [];
+  State.unlocked = true;
+}
+
+/* =========================================================================
+   CLIENTS
+   ========================================================================= */
+const Clients = {
+  list(){
+    return Array.from(State.clients.values()).sort((a, b) => a.id.localeCompare(b.id));
+  },
+  get(id){ return State.clients.get(id); },
+
+  async add({ id, alias, managementLevel }){
+    id = (id || '').trim();
+    if (!id) throw new Error('대상자 ID를 입력해 주세요.');
+    if (State.clients.has(id)) throw new Error('이미 존재하는 대상자 ID입니다.');
+    const client = { id, alias: (alias || '').trim(), managementLevel: managementLevel || 'normal' };
+    State.clients.set(id, client);
+    await Storage.saveEncrypted('clients', client);
+    return client;
+  },
+
+  async update(id, patch){
+    const client = State.clients.get(id);
+    if (!client) return;
+    Object.assign(client, patch);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  async setManagementLevel(id, level){
+    // Management level is ALWAYS set explicitly by the caseworker — never inferred by the app.
+    await this.update(id, { managementLevel: level });
+  },
+
+  async remove(id){
+    State.clients.delete(id);
+    await Storage.idbDelete('clients', id);
+  },
+
+  lastRecordDate(clientId){
+    let latest = null;
+    State.soaps.forEach(s => {
+      if (s.clientId === clientId && (!latest || s.date > latest)) latest = s.date;
+    });
+    return latest;
+  },
+  pendingFollowUpCount(clientId){
+    let n = 0;
+    State.followUps.forEach(f => { if (f.clientId === clientId && f.status === 'pending') n++; });
+    return n;
+  },
+  upcomingScheduleCount(clientId){
+    let n = 0;
+    const today = Utils.todayStr();
+    State.schedules.forEach(s => { if (s.clientId === clientId && s.status === 'planned' && s.date >= today) n++; });
+    return n;
+  },
+
+  async seedExampleData(){
+    const seedIds = [];
+    const examples = [
+      { id: 'A001', alias: '(예시) 재가 방문 대상자', managementLevel: 'intensive' },
+      { id: 'A002', alias: '(예시) 정기 전화상담 대상자', managementLevel: 'normal' },
+      { id: 'A003', alias: '(예시) 프로그램 연계 대상자', managementLevel: 'stable' }
+    ];
+    for (const c of examples){
+      await this.add(c);
+      seedIds.push(c.id);
+    }
+
+    // one example finished SOAP record
+    const today = Utils.todayStr();
+    const exSoap = {
+      id: Utils.uid('soap'), clientId: 'A001', date: today, contactType: '전화',
+      areas: ['정신건강', '일상생활'],
+      S: '(예시) 대상자는 최근 수면 시간이 줄었다고 표현함.',
+      O: '(예시) 통화 중 이전보다 말수가 다소 늘어난 모습이 확인됨.',
+      A: '(예시) 최근 수면 변화와 관련하여 일상생활 상태를 지속적으로 확인할 필요가 있는 것으로 판단됨.',
+      PText: '(예시) 대상자에게 재연락하여 수면 상태 확인 예정.',
+      PActions: ['대상자 재연락'], pDate: today,
+      status: 'final', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    };
+    State.soaps.set(exSoap.id, exSoap);
+    await Storage.saveEncrypted('soaps', exSoap);
+
+    const exFollow = {
+      id: Utils.uid('fu'), clientId: 'A002', type: '보호자 연락', text: '(예시) 보호자에게 최근 상태 문의 필요',
+      dueDate: today, memo: '', status: 'pending', linkedSoapId: ''
+    };
+    State.followUps.set(exFollow.id, exFollow);
+    await Storage.saveEncrypted('followUps', exFollow);
+
+    const exSchedule = {
+      id: Utils.uid('sch'), clientId: 'A003', date: today, contactType: '방문', memo: '(예시) 정기 방문상담', status: 'planned'
+    };
+    State.schedules.set(exSchedule.id, exSchedule);
+    await Storage.saveEncrypted('schedules', exSchedule);
+
+    State.seedClientIds = seedIds;
+    await Storage.setSetting('seedClientIds', seedIds);
+  },
+
+  async removeExampleData(){
+    const ids = State.seedClientIds || [];
+    for (const id of ids){
+      // remove client and any records referencing it
+      State.clients.delete(id);
+      await Storage.idbDelete('clients', id);
+      for (const s of Array.from(State.soaps.values())) if (s.clientId === id){ State.soaps.delete(s.id); await Storage.idbDelete('soaps', s.id); }
+      for (const f of Array.from(State.followUps.values())) if (f.clientId === id){ State.followUps.delete(f.id); await Storage.idbDelete('followUps', f.id); }
+      for (const sc of Array.from(State.schedules.values())) if (sc.clientId === id){ State.schedules.delete(sc.id); await Storage.idbDelete('schedules', sc.id); }
+    }
+    State.seedClientIds = [];
+    await Storage.setSetting('seedClientIds', []);
+  }
+};
+
+/* =========================================================================
+   SOAP  — the core feature. Includes the rule-based (non-AI) "A" drafting
+   engine. The generator is isolated behind SoapModule.generateADraft() so an
+   external AI backend could be substituted later without touching the rest
+   of the app.
+   ========================================================================= */
+const SoapModule = {
+  TOPIC_KEYWORDS: [
+    { key: 'sleep',   label: '수면 상태',       words: ['수면', '잠을', '잠이', '불면', '잠들'] },
+    { key: 'meal',    label: '식사 상태',       words: ['식사', '영양', '끼니', '식욕'] },
+    { key: 'hygiene', label: '위생 및 일상생활', words: ['위생', '청결', '일상생활', '활동량', '씻'] },
+    { key: 'med',     label: '복약 관련 내용',   words: ['복약', '약을', '약물 복용', '투약', '처방'] },
+    { key: 'mood',    label: '정서 상태',       words: ['우울', '불안', '스트레스', '정서', '기분'] },
+    { key: 'social',  label: '사회적 관계',     words: ['대인관계', '가족', '친구', '이웃', '관계'] },
+    { key: 'econ',    label: '경제적 상황',     words: ['경제', '생활비', '수급', '재정', '소득'] },
+    { key: 'housing', label: '주거 환경',       words: ['주거', '거주', '집 안', '이사'] },
+    { key: 'job',     label: '취업 관련 사항',   words: ['취업', '구직', '직장', '근로', '알바'] },
+    { key: 'program', label: '프로그램 참여',   words: ['프로그램', '참여', '교육', '모임'] }
+  ],
+  CHANGE_WORDS: ['이전보다', '최근', '증가', '감소', '악화', '호전', '좋아짐', '나빠짐', '변화', '늘어', '줄어'],
+
+  list(){
+    return Array.from(State.soaps.values()).sort((a, b) => (b.date + b.updatedAt).localeCompare(a.date + a.updatedAt));
+  },
+  get(id){ return State.soaps.get(id); },
+  listByClient(clientId){
+    return this.list().filter(s => s.clientId === clientId);
+  },
+  draftCount(){
+    let n = 0;
+    State.soaps.forEach(s => { if (s.status === 'draft') n++; });
+    return n;
+  },
+
+  createBlank(prefill){
+    prefill = prefill || {};
+    return {
+      id: '', clientId: prefill.clientId || '', date: Utils.todayStr(), contactType: '전화',
+      areas: [], S: '', O: '', A: '', PText: prefill.PText || '', PActions: [], pDate: '',
+      status: 'draft', createdAt: '', updatedAt: ''
+    };
+  },
+
+  describeMissingParts(soap){
+    if (!soap.S && !soap.O) return '작성 시작 전';
+    if ((soap.S || soap.O) && !soap.A) return 'S·O 입력 완료 / A 작성 필요';
+    if (soap.A && !soap.PText && (!soap.PActions || soap.PActions.length === 0)) return 'A 작성 완료 / P 입력 필요';
+    return '검토 후 최종저장 필요';
+  },
+
+  // ---- Rule-based "A" draft generator (no external AI, no network calls) ----
+  generateADraft({ S, O, areas }){
+    const combined = ((S || '') + '\n' + (O || ''));
+    const found = this.TOPIC_KEYWORDS.filter(t => t.words.some(w => combined.includes(w)));
+    const hasChange = this.CHANGE_WORDS.some(w => combined.includes(w));
+    const hasAnyText = (S && S.trim()) || (O && O.trim());
+
+    if (!hasAnyText){
+      return {
+        text: '',
+        checklist: ['S(주관적 정보)와 O(객관적 정보)를 먼저 입력한 후 다시 시도해 주세요.']
+      };
+    }
+
+    const sentences = [];
+
+    // ① 현재 상태 및 변화
+    if (found.length > 0){
+      let s1 = '상담 과정에서 ' + found.map(t => t.label).join(', ') + ' 관련 내용이 확인됨.';
+      if (hasChange) s1 += ' 이전 상담 대비 변화가 있는 것으로 파악되어 지속적으로 관찰할 필요가 있는 것으로 판단됨.';
+      sentences.push(s1);
+    } else {
+      sentences.push('금번 상담에서 확인된 S·O 내용을 바탕으로 특이 변화 사항은 뚜렷하게 나타나지 않는 것으로 보임.');
+    }
+
+    // ② 사례관리 의미
+    const areaText = (areas && areas.length) ? areas.filter(a => a !== '기타').join(', ') : '';
+    if (areaText){
+      sentences.push(areaText + ' 영역과 관련하여 대상자의 일상생활 및 사회적 기능 유지를 위한 사례관리 지속이 필요한 것으로 사료됨.');
+    } else {
+      sentences.push('금번 확인된 내용은 대상자의 사례관리 지속 필요성을 뒷받침하는 것으로 사료됨.');
+    }
+
+    // ③ 필요한 개입 및 관찰
+    if (found.length > 0){
+      sentences.push('향후 상담에서 ' + found.map(t => t.label).join(', ') + '에 대해 지속적으로 관찰할 필요가 있는 것으로 판단됨.');
+    } else {
+      sentences.push('다음 상담 시까지 대상자의 전반적인 상태를 지속적으로 관찰할 필요가 있는 것으로 판단됨.');
+    }
+
+    // ⚠ 확인해 볼 항목 — helps the worker notice gaps; this is NOT a risk assessment.
+    const checklist = [];
+    const foundKeys = found.map(t => t.key);
+    if (!foundKeys.includes('sleep')) checklist.push('수면 상태가 확인되지 않음');
+    if (!foundKeys.includes('med')) checklist.push('복약 상태가 확인되지 않음');
+    if (!foundKeys.includes('hygiene')) checklist.push('일상생활 수행 정도가 확인되지 않음');
+    checklist.push('위험 관련 내용은 자동으로 판단하지 않으므로, 필요 시 실무자가 직접 확인 후 기록하세요.');
+
+    return { text: sentences.join(' '), checklist };
+  },
+
+  formatForCopy(soap){
+    const areasLine = (soap.areas && soap.areas.length) ? ' [' + soap.areas.join(', ') + ']' : '';
+    const parts = [];
+    if (soap.PActions && soap.PActions.length) parts.push(soap.PActions.join(', ') + ' 예정.');
+    if (soap.PText) parts.push(soap.PText);
+    if (soap.pDate) parts.push(soap.pDate + '.');
+    const pLine = parts.join(' ');
+    return [
+      '[' + soap.date + ' / ' + soap.clientId + ' / ' + soap.contactType + areasLine + ']',
+      'S. ' + (soap.S || ''),
+      'O. ' + (soap.O || ''),
+      'A. ' + (soap.A || ''),
+      'P. ' + pLine
+    ].join('\n');
+  },
+
+  async save(soap, finalize){
+    if (!soap.clientId) throw new Error('대상자를 선택해 주세요.');
+    if (!soap.date) throw new Error('날짜를 입력해 주세요.');
+    const now = new Date().toISOString();
+    const isNew = !soap.id;
+    if (isNew){ soap.id = Utils.uid('soap'); soap.createdAt = now; }
+    soap.updatedAt = now;
+    soap.status = finalize ? 'final' : 'draft';
+
+    State.soaps.set(soap.id, soap);
+    await Storage.saveEncrypted('soaps', soap);
+
+    // Auto-create follow-ups from P actions on final save, once per SOAP.
+    if (finalize && soap.pDate && soap.PActions && soap.PActions.length){
+      const alreadyLinked = Array.from(State.followUps.values()).some(f => f.linkedSoapId === soap.id);
+      if (!alreadyLinked){
+        for (const actionText of soap.PActions){
+          const fu = {
+            id: Utils.uid('fu'), clientId: soap.clientId, type: actionText, text: '',
+            dueDate: soap.pDate, memo: '', status: 'pending', linkedSoapId: soap.id
+          };
+          State.followUps.set(fu.id, fu);
+          await Storage.saveEncrypted('followUps', fu);
+        }
+      }
+    }
+    return soap;
+  },
+
+  async remove(id){
+    State.soaps.delete(id);
+    await Storage.idbDelete('soaps', id);
+  }
+};
+
+/* =========================================================================
+   FOLLOW-UPS
+   ========================================================================= */
+const FollowUps = {
+  list(){
+    return Array.from(State.followUps.values()).sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
+  },
+  get(id){ return State.followUps.get(id); },
+
+  overdue(){
+    const today = Utils.todayStr();
+    return this.list().filter(f => f.status === 'pending' && f.dueDate && f.dueDate < today);
+  },
+  dueToday(){
+    const today = Utils.todayStr();
+    return this.list().filter(f => f.status === 'pending' && f.dueDate === today);
+  },
+  upcoming(){
+    const today = Utils.todayStr();
+    return this.list().filter(f => f.status === 'pending' && f.dueDate && f.dueDate > today);
+  },
+  pendingCount(){
+    let n = 0;
+    State.followUps.forEach(f => { if (f.status === 'pending') n++; });
+    return n;
+  },
+
+  async add({ clientId, type, text, dueDate, memo }){
+    if (!clientId) throw new Error('대상자를 선택해 주세요.');
+    if (!dueDate) throw new Error('예정일을 입력해 주세요.');
+    const fu = { id: Utils.uid('fu'), clientId, type: type || '기타', text: text || '', dueDate, memo: memo || '', status: 'pending', linkedSoapId: '' };
+    State.followUps.set(fu.id, fu);
+    await Storage.saveEncrypted('followUps', fu);
+    return fu;
+  },
+
+  async complete(id){
+    const fu = State.followUps.get(id);
+    if (!fu) return;
+    fu.status = 'completed';
+    await Storage.saveEncrypted('followUps', fu);
+  },
+
+  async remove(id){
+    State.followUps.delete(id);
+    await Storage.idbDelete('followUps', id);
+  }
+};
+
+/* =========================================================================
+   SCHEDULES
+   ========================================================================= */
+const Schedules = {
+  list(){
+    return Array.from(State.schedules.values()).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));
+  },
+  get(id){ return State.schedules.get(id); },
+  today(){
+    const today = Utils.todayStr();
+    return this.list().filter(s => s.date === today && s.status === 'planned');
+  },
+  plannedCount(){
+    const today = Utils.todayStr();
+    let n = 0;
+    State.schedules.forEach(s => { if (s.status === 'planned' && s.date >= today) n++; });
+    return n;
+  },
+
+  async add({ clientId, date, contactType, memo }){
+    if (!clientId) throw new Error('대상자를 선택해 주세요.');
+    if (!date) throw new Error('날짜를 입력해 주세요.');
+    const sc = { id: Utils.uid('sch'), clientId, date, contactType: contactType || '전화', memo: memo || '', status: 'planned' };
+    State.schedules.set(sc.id, sc);
+    await Storage.saveEncrypted('schedules', sc);
+    return sc;
+  },
+  async setStatus(id, status){
+    const sc = State.schedules.get(id);
+    if (!sc) return;
+    sc.status = status;
+    await Storage.saveEncrypted('schedules', sc);
+  },
+  async remove(id){
+    State.schedules.delete(id);
+    await Storage.idbDelete('schedules', id);
+  }
+};
+
+/* =========================================================================
+   SEARCH
+   ========================================================================= */
+const Search = {
+  run(filters){
+    let results = SoapModule.list();
+    if (filters.clientId) results = results.filter(s => s.clientId === filters.clientId);
+    if (filters.dateFrom) results = results.filter(s => s.date >= filters.dateFrom);
+    if (filters.dateTo) results = results.filter(s => s.date <= filters.dateTo);
+    if (filters.contactType) results = results.filter(s => s.contactType === filters.contactType);
+    if (filters.area) results = results.filter(s => s.areas && s.areas.includes(filters.area));
+    if (filters.status) results = results.filter(s => s.status === filters.status);
+    if (filters.managementLevel){
+      results = results.filter(s => {
+        const c = Clients.get(s.clientId);
+        return c && c.managementLevel === filters.managementLevel;
+      });
+    }
+    if (filters.keyword){
+      const kw = filters.keyword.toLowerCase();
+      results = results.filter(s => (s.S + s.O + s.A + s.PText).toLowerCase().includes(kw));
+    }
+    return results;
+  }
+};
+
+/* =========================================================================
+   NOTIFICATIONS  (Browser Notification API, best-effort, in-app only while
+   the app tab is open — never sent anywhere over the network)
+   ========================================================================= */
+const Notifications = {
+  enabled: false,
+  notifiedIds: new Set(),
+  intervalHandle: null,
+
+  resetNotifiedIds(){ this.notifiedIds.clear(); },
+
+  async requestPermission(){
+    if (!('Notification' in window)){
+      toast('이 브라우저는 알림 기능을 지원하지 않습니다.', 'error');
+      return false;
+    }
+    const perm = await Notification.requestPermission();
+    this.enabled = perm === 'granted';
+    if (this.enabled) toast('알림이 켜졌습니다.');
+    return this.enabled;
+  },
+
+  notify(title, body){
+    if (this.enabled && 'Notification' in window && Notification.permission === 'granted'){
+      try{ new Notification(title, { body }); }catch(e){ /* ignore */ }
+    }
+  },
+
+  checkAndNotify(){
+    if (!this.enabled || !State.unlocked) return;
+    Schedules.today().forEach(s => {
+      const key = 'sch-' + s.id;
+      if (!this.notifiedIds.has(key)){
+        this.notifiedIds.add(key);
+        this.notify('오늘 예정된 일정', s.clientId + ' · ' + s.contactType);
+      }
+    });
+    FollowUps.overdue().forEach(f => {
+      const key = 'fu-overdue-' + f.id;
+      if (!this.notifiedIds.has(key)){
+        this.notifiedIds.add(key);
+        this.notify('기한 초과 후속조치', f.clientId + ' · ' + f.type);
+      }
+    });
+    if (SoapModule.draftCount() > 0){
+      const key = 'draft-count-' + Utils.todayStr();
+      if (!this.notifiedIds.has(key)){
+        this.notifiedIds.add(key);
+        this.notify('미완성 SOAP', SoapModule.draftCount() + '건의 SOAP 기록이 임시저장 상태입니다.');
+      }
+    }
+  },
+
+  start(){
+    if (this.intervalHandle) clearInterval(this.intervalHandle);
+    this.intervalHandle = setInterval(() => this.checkAndNotify(), 60000);
+  }
+};
+
+/* =========================================================================
+   UI — routing, rendering, modal & general DOM glue
+   ========================================================================= */
+const UI = {
+  showFatal(msg){
+    document.getElementById('fatalMessage').textContent = msg;
+    document.getElementById('fatalScreen').classList.remove('hidden');
+  },
+
+  showFirstRunNotice(){
+    document.getElementById('firstRunScreen').classList.remove('hidden');
+  },
+  hideFirstRunNotice(){
+    document.getElementById('firstRunScreen').classList.add('hidden');
+  },
+  showSetupScreen(){
+    document.getElementById('setupScreen').classList.remove('hidden');
+  },
+  hideSetupScreen(){
+    document.getElementById('setupScreen').classList.add('hidden');
+  },
+  showLoginScreen(){
+    document.getElementById('loginScreen').classList.remove('hidden');
+  },
+  hideLoginScreen(){
+    document.getElementById('loginScreen').classList.add('hidden');
+  },
+  showLockScreen(){
+    document.getElementById('appShell').classList.add('hidden');
+    document.getElementById('lockScreen').classList.remove('hidden');
+    document.getElementById('unlockPw').value = '';
+    document.getElementById('unlockError').classList.add('hidden');
+    setTimeout(() => document.getElementById('unlockPw').focus(), 50);
+  },
+  hideLockScreen(){
+    document.getElementById('lockScreen').classList.add('hidden');
+  },
+  showAppShell(){
+    document.getElementById('appShell').classList.remove('hidden');
+  },
+
+  openModal(html){
+    document.getElementById('modalBox').innerHTML = html;
+    document.getElementById('modalOverlay').classList.remove('hidden');
+  },
+  closeModal(){
+    document.getElementById('modalOverlay').classList.add('hidden');
+    document.getElementById('modalBox').innerHTML = '';
+  },
+  confirm(message, onYes){
+    UI.openModal(
+      '<h3>확인</h3><p style="color:var(--text-muted);margin-bottom:18px;">' + Utils.escapeHtml(message) + '</p>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
+      '<button class="btn" id="confirmNoBtn">취소</button>' +
+      '<button class="btn btn-danger" id="confirmYesBtn">확인</button>' +
+      '</div>'
+    );
+    document.getElementById('confirmNoBtn').onclick = () => UI.closeModal();
+    document.getElementById('confirmYesBtn').onclick = () => { UI.closeModal(); onYes(); };
+  },
+
+  navigate(view, params){
+    State.currentView = view;
+    State.currentParams = params || {};
+    UI.renderSidebarActive();
+    UI.renderCurrentView();
+    document.getElementById('appMain').scrollTop = 0;
+  },
+
+  renderSidebarActive(){
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.view === State.currentView);
+    });
+  },
+
+  renderCurrentView(){
+    const main = document.getElementById('appMain');
+    switch (State.currentView){
+      case 'dashboard': main.innerHTML = Views.dashboard(); Views.bindDashboard(); break;
+      case 'clients': main.innerHTML = Views.clientsList(); Views.bindClientsList(); break;
+      case 'clientDetail': main.innerHTML = Views.clientDetail(State.currentParams.id); Views.bindClientDetail(State.currentParams.id); break;
+      case 'soapList': main.innerHTML = Views.soapList(); Views.bindSoapList(); break;
+      case 'soapEditor': main.innerHTML = Views.soapEditor(State.currentParams); Views.bindSoapEditor(State.currentParams); break;
+      case 'followUps': main.innerHTML = Views.followUps(); Views.bindFollowUps(); break;
+      case 'schedule': main.innerHTML = Views.schedule(); Views.bindSchedule(); break;
+      case 'search': main.innerHTML = Views.search(); Views.bindSearch(); break;
+      default: main.innerHTML = '<p>알 수 없는 화면입니다.</p>';
+    }
+  }
+};
+
+/* =========================================================================
+   VIEWS — each function returns an HTML string; each bind* attaches events.
+   Re-rendering the whole view on every change keeps state and DOM in sync
+   without a virtual-DOM dependency (acceptable at this data scale).
+   ========================================================================= */
+const Views = {
+
+  clientPickerHtml(selectedId, idAttr){
+    const options = Clients.list().map(c =>
+      '<option value="' + Utils.escapeHtml(c.id) + (c.alias ? ' — ' + Utils.escapeHtml(c.alias) : '') + '">'
+    ).join('');
+    const selected = selectedId ? (selectedId + (Clients.get(selectedId) && Clients.get(selectedId).alias ? ' — ' + Clients.get(selectedId).alias : '')) : '';
+    return '<input type="text" id="' + idAttr + '" list="' + idAttr + 'List" placeholder="대상자 ID 검색 (예: A001)" value="' + Utils.escapeHtml(selected) + '" autocomplete="off">' +
+      '<datalist id="' + idAttr + 'List">' + options + '</datalist>';
+  },
+  resolveClientPickerValue(inputValue){
+    if (!inputValue) return '';
+    const id = inputValue.split(' — ')[0].trim();
+    return Clients.get(id) ? id : (State.clients.has(inputValue.trim()) ? inputValue.trim() : id);
+  },
+
+  managementBadge(level){
+    const m = CONSTANTS.MANAGEMENT_LEVELS[level] || CONSTANTS.MANAGEMENT_LEVELS.normal;
+    return '<span class="badge ' + m.badgeClass + '">' + m.emoji + ' ' + m.label + '</span>';
+  },
+
+  /* ---------------- DASHBOARD ---------------- */
+  dashboard(){
+    const overdue = FollowUps.overdue();
+    const dueToday = FollowUps.dueToday();
+    const todaySchedules = Schedules.today();
+    const draftSoaps = SoapModule.list().filter(s => s.status === 'draft');
+    const recentFinal = SoapModule.list().filter(s => s.status === 'final').slice(0, 5);
+    const upcomingCount = Schedules.plannedCount();
+
+    const hasSeed = (State.seedClientIds || []).length > 0 && (State.seedClientIds || []).some(id => State.clients.has(id));
+
+    let html = '<h1 class="page-title">🏠 대시보드</h1>';
+
+    if (hasSeed){
+      html += '<div class="example-banner"><span>📌 예시 데이터가 포함되어 있습니다. 실제 업무 데이터를 입력하기 전에 확인하세요.</span>' +
+        '<button class="btn btn-sm" id="removeSeedBtn">예시 데이터 삭제</button></div>';
+    }
+
+    html += '<div style="margin-bottom:18px;">' +
+      (Notifications.enabled
+        ? '<span class="help-text">🔔 브라우저 알림이 켜져 있습니다.</span>'
+        : '<button class="btn btn-sm" id="enableNotifBtn">🔔 브라우저 알림 사용</button>') +
+      '</div>';
+
+    html += '<div class="summary-grid">' +
+      '<button class="summary-card overdue" data-goto="followUps" data-filter="overdue"><div class="num">' + overdue.length + '</div><div class="label">⚠ 기한 초과</div></button>' +
+      '<button class="summary-card today" data-scroll="todaySection"><div class="num">' + (dueToday.length + todaySchedules.length) + '</div><div class="label">🔴 오늘 할 일</div></button>' +
+      '<button class="summary-card draft" data-scroll="draftSection"><div class="num">' + draftSoaps.length + '</div><div class="label">📝 미완성 SOAP</div></button>' +
+      '<button class="summary-card upcoming" data-goto="schedule" data-filter="upcoming"><div class="num">' + upcomingCount + '</div><div class="label">📅 예정 일정</div></button>' +
+      '</div>';
+
+    // Overdue
+    html += '<div class="panel"><div class="panel-title">⚠ 기한 초과 후속조치</div>';
+    if (overdue.length === 0){
+      html += '<div class="empty-msg">기한이 지난 후속조치가 없습니다.</div>';
+    } else {
+      overdue.forEach(f => {
+        const c = Clients.get(f.clientId);
+        html += '<div class="overdue-row">' +
+          '<strong>' + Utils.escapeHtml(f.clientId) + '</strong>' + (c && c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') +
+          ' — ' + Utils.escapeHtml(f.type) + '<br>' +
+          '<span style="font-size:0.82rem;">기한: ' + f.dueDate + ' · 상태: 미완료</span>' +
+          '<div class="row-actions" style="margin-top:6px;">' +
+          '<button class="btn btn-sm" data-complete-fu="' + f.id + '">완료만</button>' +
+          '<button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료하고 SOAP 작성</button>' +
+          '</div></div>';
+      });
+    }
+    html += '</div>';
+
+    // Today
+    html += '<div class="panel" id="todaySection"><div class="panel-title">🔴 오늘 할 일</div>';
+    if (dueToday.length === 0 && todaySchedules.length === 0){
+      html += '<div class="empty-msg">오늘 예정된 일정이나 후속조치가 없습니다.</div>';
+    } else {
+      todaySchedules.forEach(s => {
+        const c = Clients.get(s.clientId);
+        html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + s.clientId + '">' +
+          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + ' — ' + Utils.escapeHtml(s.contactType) + '</div>' +
+          '<div class="row-sub">' + Utils.escapeHtml(s.memo || '일정') + '</div></div>' +
+          '<div class="row-actions"><button class="btn btn-sm" data-complete-schedule="' + s.id + '">완료</button></div></div>';
+      });
+      dueToday.forEach(f => {
+        const c = Clients.get(f.clientId);
+        html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + f.clientId + '">' +
+          '<div class="row-title">' + Utils.escapeHtml(f.clientId) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + ' — ' + Utils.escapeHtml(f.type) + '</div>' +
+          '<div class="row-sub">후속조치 · 오늘 기한</div></div>' +
+          '<div class="row-actions">' +
+          '<button class="btn btn-sm" data-complete-fu="' + f.id + '">완료만</button>' +
+          '<button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료+SOAP</button>' +
+          '</div></div>';
+      });
+    }
+    html += '</div>';
+
+    // Draft SOAPs
+    html += '<div class="panel" id="draftSection"><div class="panel-title">📝 미완성 SOAP</div>';
+    if (draftSoaps.length === 0){
+      html += '<div class="empty-msg">임시저장된 SOAP 기록이 없습니다.</div>';
+    } else {
+      draftSoaps.forEach(s => {
+        html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
+          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + s.date + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
+          '<div class="row-sub">' + SoapModule.describeMissingParts(s) + '</div></div></div>';
+      });
+    }
+    html += '</div>';
+
+    // Recent records
+    html += '<div class="panel"><div class="panel-title">최근 기록</div>';
+    if (recentFinal.length === 0){
+      html += '<div class="empty-msg">완료된 SOAP 기록이 아직 없습니다.</div>';
+    } else {
+      recentFinal.forEach(s => {
+        html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
+          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + s.date + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
+          '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 60) + '</div></div></div>';
+      });
+    }
+    html += '</div>';
+
+    // Quick buttons
+    html += '<div class="quick-btns">' +
+      '<button class="btn-quick" id="qbNewSoap">＋ 새 SOAP 기록</button>' +
+      '<button class="btn-quick" id="qbNewFollowUp">＋ 후속조치 등록</button>' +
+      '<button class="btn-quick" id="qbNewSchedule">＋ 일정 등록</button>' +
+      '</div>';
+
+    return html;
+  },
+
+  bindDashboard(){
+    document.querySelectorAll('[data-goto]').forEach(el => {
+      el.onclick = () => UI.navigate(el.dataset.goto, { filter: el.dataset.filter });
+    });
+    document.querySelectorAll('[data-scroll]').forEach(el => {
+      el.onclick = () => {
+        const target = document.getElementById(el.dataset.scroll);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+    });
+    document.querySelectorAll('[data-open-soap]').forEach(el => {
+      el.onclick = () => UI.navigate('soapEditor', { soapId: el.dataset.openSoap });
+    });
+    document.querySelectorAll('[data-goto-client]').forEach(el => {
+      el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient });
+    });
+    document.querySelectorAll('[data-complete-fu]').forEach(el => {
+      el.onclick = async () => { await FollowUps.complete(el.dataset.completeFu); toast('후속조치를 완료 처리했습니다.'); UI.renderCurrentView(); };
+    });
+    document.querySelectorAll('[data-complete-fu-soap]').forEach(el => {
+      el.onclick = async () => {
+        const fu = FollowUps.get(el.dataset.completeFuSoap);
+        await FollowUps.complete(fu.id);
+        UI.navigate('soapEditor', { prefillClientId: fu.clientId, relatedFollowUp: { id: fu.id, text: fu.type } });
+      };
+    });
+    document.querySelectorAll('[data-complete-schedule]').forEach(el => {
+      el.onclick = async () => { await Schedules.setStatus(el.dataset.completeSchedule, 'completed'); toast('일정을 완료 처리했습니다.'); UI.renderCurrentView(); };
+    });
+    const seedBtn = document.getElementById('removeSeedBtn');
+    if (seedBtn) seedBtn.onclick = () => UI.confirm('예시 데이터(대상자, SOAP, 후속조치, 일정)를 모두 삭제할까요?', async () => {
+      await Clients.removeExampleData(); toast('예시 데이터를 삭제했습니다.'); UI.renderCurrentView();
+    });
+    const notifBtn = document.getElementById('enableNotifBtn');
+    if (notifBtn) notifBtn.onclick = async () => { await Notifications.requestPermission(); UI.renderCurrentView(); };
+
+    document.getElementById('qbNewSoap').onclick = () => UI.navigate('soapEditor', {});
+    document.getElementById('qbNewFollowUp').onclick = () => Views.openFollowUpModal();
+    document.getElementById('qbNewSchedule').onclick = () => Views.openScheduleModal();
+  },
+
+  /* ---------------- CLIENTS ---------------- */
+  clientsList(){
+    const clients = Clients.list();
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">👤 대상자</h1>' +
+      '<button class="btn btn-primary" id="newClientBtn">＋ 새 대상자</button></div>';
+    html += '<div class="panel">';
+    if (clients.length === 0){
+      html += '<div class="empty-msg">등록된 대상자가 없습니다. "＋ 새 대상자"로 추가해 보세요.</div>';
+    } else {
+      html += '<table><thead><tr><th>ID</th><th>별칭</th><th>관리 수준</th><th>최근 기록일</th><th>미완료 후속조치</th><th>예정 일정</th></tr></thead><tbody>';
+      clients.forEach(c => {
+        html += '<tr class="clickable-row" data-client="' + Utils.escapeHtml(c.id) + '">' +
+          '<td><strong>' + Utils.escapeHtml(c.id) + '</strong></td>' +
+          '<td>' + Utils.escapeHtml(c.alias || '-') + '</td>' +
+          '<td>' + Views.managementBadge(c.managementLevel) + '</td>' +
+          '<td>' + (Clients.lastRecordDate(c.id) || '-') + '</td>' +
+          '<td>' + Clients.pendingFollowUpCount(c.id) + '</td>' +
+          '<td>' + Clients.upcomingScheduleCount(c.id) + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    return html;
+  },
+  bindClientsList(){
+    document.getElementById('newClientBtn').onclick = () => Views.openNewClientModal();
+    document.querySelectorAll('[data-client]').forEach(el => {
+      el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.client });
+    });
+  },
+
+  clientDetail(id){
+    const c = Clients.get(id);
+    if (!c) return '<p>대상자를 찾을 수 없습니다.</p><button class="btn" onclick="UI.navigate(\'clients\')">목록으로</button>';
+    const pendingFus = FollowUps.list().filter(f => f.clientId === id && f.status === 'pending');
+    const timeline = SoapModule.listByClient(id);
+
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + Utils.escapeHtml(c.id) + (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') + '</h1>' +
+      '<button class="btn btn-sm" id="backToClientsBtn">← 대상자 목록</button></div>';
+
+    html += '<div class="panel">' +
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+      '<span>관리 수준:</span>' +
+      '<select id="mgmtLevelSelect">' +
+      Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => '<option value="' + k + '"' + (k === c.managementLevel ? ' selected' : '') + '>' + CONSTANTS.MANAGEMENT_LEVELS[k].emoji + ' ' + CONSTANTS.MANAGEMENT_LEVELS[k].label + '</option>').join('') +
+      '</select>' +
+      '<span class="help-text" style="margin-left:6px;">관리 수준은 담당자가 직접 지정합니다.</span>' +
+      '<button class="btn btn-sm btn-danger" id="deleteClientBtn" style="margin-left:auto;">대상자 삭제</button>' +
+      '</div>' +
+      '<div class="quick-btns" style="margin-top:14px;">' +
+      '<button class="btn-quick" id="clNewSoap">＋ 새 SOAP</button>' +
+      '<button class="btn-quick" id="clNewFollowUp">＋ 후속조치</button>' +
+      '<button class="btn-quick" id="clNewSchedule">＋ 일정</button>' +
+      '</div></div>';
+
+    html += '<div class="panel"><div class="panel-title">후속조치 (미완료)</div>';
+    if (pendingFus.length === 0){
+      html += '<div class="empty-msg">미완료 후속조치가 없습니다.</div>';
+    } else {
+      pendingFus.forEach(f => {
+        html += '<div class="list-row"><div class="list-row-main"><div class="row-title">' + Utils.escapeHtml(f.type) + '</div>' +
+          '<div class="row-sub">예정일: ' + f.dueDate + (f.text ? ' · ' + Utils.escapeHtml(f.text) : '') + '</div></div>' +
+          '<div class="row-actions"><button class="btn btn-sm" data-complete-fu="' + f.id + '">완료</button></div></div>';
+      });
+    }
+    html += '</div>';
+
+    html += '<div class="panel"><div class="panel-title">SOAP 타임라인</div>';
+    if (timeline.length === 0){
+      html += '<div class="empty-msg">작성된 SOAP 기록이 없습니다.</div>';
+    } else {
+      timeline.forEach(s => {
+        html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
+          '<div class="row-title">' + s.date + ' · ' + Utils.escapeHtml(s.contactType) + '상담 ' +
+          (s.status === 'draft' ? '<span class="badge badge-draft">임시저장</span>' : '<span class="badge badge-final">완료</span>') + '</div>' +
+          '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 70) + '</div></div></div>';
+      });
+    }
+    html += '</div>';
+
+    return html;
+  },
+  bindClientDetail(id){
+    document.getElementById('backToClientsBtn').onclick = () => UI.navigate('clients');
+    document.getElementById('mgmtLevelSelect').onchange = async (e) => {
+      await Clients.setManagementLevel(id, e.target.value);
+      toast('관리 수준이 변경되었습니다.');
+      UI.renderCurrentView();
+    };
+    document.getElementById('deleteClientBtn').onclick = () => UI.confirm('대상자 ' + id + '를 삭제할까요? (관련 SOAP·후속조치·일정 기록은 유지되지만 목록에서 대상자 정보는 사라집니다)', async () => {
+      await Clients.remove(id); toast('대상자를 삭제했습니다.'); UI.navigate('clients');
+    });
+    document.getElementById('clNewSoap').onclick = () => UI.navigate('soapEditor', { prefillClientId: id });
+    document.getElementById('clNewFollowUp').onclick = () => Views.openFollowUpModal(id);
+    document.getElementById('clNewSchedule').onclick = () => Views.openScheduleModal(id);
+    document.querySelectorAll('[data-open-soap]').forEach(el => { el.onclick = () => UI.navigate('soapEditor', { soapId: el.dataset.openSoap }); });
+    document.querySelectorAll('[data-complete-fu]').forEach(el => { el.onclick = async () => { await FollowUps.complete(el.dataset.completeFu); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
+  },
+
+  /* ---------------- SOAP LIST ---------------- */
+  soapList(){
+    const filter = State.currentParams.filter || 'all';
+    let items = SoapModule.list();
+    if (filter === 'draft') items = items.filter(s => s.status === 'draft');
+    if (filter === 'final') items = items.filter(s => s.status === 'final');
+
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📝 SOAP 기록</h1>' +
+      '<button class="btn btn-primary" id="newSoapBtn">＋ 새 SOAP 기록</button></div>';
+    html += '<div class="tabs">' +
+      '<button class="tab-btn' + (filter === 'all' ? ' active' : '') + '" data-f="all">전체</button>' +
+      '<button class="tab-btn' + (filter === 'draft' ? ' active' : '') + '" data-f="draft">임시저장</button>' +
+      '<button class="tab-btn' + (filter === 'final' ? ' active' : '') + '" data-f="final">완료</button>' +
+      '</div>';
+    html += '<div class="panel">';
+    if (items.length === 0){
+      html += '<div class="empty-msg">해당 조건의 SOAP 기록이 없습니다.</div>';
+    } else {
+      html += '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담영역</th><th>상태</th></tr></thead><tbody>';
+      items.forEach(s => {
+        html += '<tr class="clickable-row" data-open-soap="' + s.id + '">' +
+          '<td>' + s.date + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td><td>' + Utils.escapeHtml(s.contactType) + '</td>' +
+          '<td>' + (s.areas || []).map(a => '<span class="tag">' + Utils.escapeHtml(a) + '</span>').join('') + '</td>' +
+          '<td>' + (s.status === 'draft' ? '<span class="badge badge-draft">임시저장</span>' : '<span class="badge badge-final">완료</span>') + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    return html;
+  },
+  bindSoapList(){
+    document.getElementById('newSoapBtn').onclick = () => UI.navigate('soapEditor', {});
+    document.querySelectorAll('.tab-btn').forEach(el => { el.onclick = () => UI.navigate('soapList', { filter: el.dataset.f }); });
+    document.querySelectorAll('[data-open-soap]').forEach(el => { el.onclick = () => UI.navigate('soapEditor', { soapId: el.dataset.openSoap }); });
+  },
+
+  /* ---------------- SOAP EDITOR ---------------- */
+  _draftCache: null,
+  _lastChecklist: [],
+
+  soapEditor(params){
+    let soap;
+    if (params.soapId){
+      soap = JSON.parse(JSON.stringify(SoapModule.get(params.soapId)));
+    } else if (this._draftCache && this._draftCache.__paramsKey === JSON.stringify(params)){
+      soap = this._draftCache;
+    } else {
+      soap = SoapModule.createBlank({ clientId: params.prefillClientId });
+      soap.__paramsKey = JSON.stringify(params);
+    }
+    this._draftCache = soap;
+
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📝 SOAP 기록 ' + (soap.id ? '수정' : '작성') + '</h1>' +
+      '<button class="btn btn-sm" id="soapBackBtn">← 뒤로</button></div>';
+
+    if (params.relatedFollowUp){
+      html += '<div class="example-banner">🔗 관련 후속조치: ' + Utils.escapeHtml(params.relatedFollowUp.text) + ' (완료 처리됨)</div>';
+    }
+
+    html += '<div class="panel"><div class="form-grid">';
+    html += '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(soap.clientId, 'soapClientPicker') + '</div>';
+    html += '<div class="field"><label>날짜</label><input type="date" id="soapDate" value="' + soap.date + '"></div>';
+    html += '<div class="field"><label>접촉 유형</label><select id="soapContactType">' +
+      CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '"' + (t === soap.contactType ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>';
+    html += '<div class="field full"><label>상담 영역 (복수 선택 가능)</label><div class="checkbox-group">' +
+      CONSTANTS.AREAS.map(a => '<label class="chip-check' + (soap.areas.includes(a) ? ' checked' : '') + '"><input type="checkbox" class="areaChk" value="' + a + '"' + (soap.areas.includes(a) ? ' checked' : '') + '>' + a + '</label>').join('') +
+      '</div></div>';
+    html += '</div></div>';
+
+    html += '<div class="panel"><div class="field full"><label>S (주관적 정보)</label>' +
+      '<textarea id="soapS" placeholder="대상자가 표현한 주요 호소, 현재 상황, 변화, 욕구 등을 기록하세요.">' + Utils.escapeHtml(soap.S) + '</textarea></div>' +
+      '<div class="field full"><label>O (객관적 정보)</label>' +
+      '<textarea id="soapO" placeholder="상담 중 관찰된 모습, 행동, 말투, 활동상태, 확인된 사실 등을 기록하세요.">' + Utils.escapeHtml(soap.O) + '</textarea></div></div>';
+
+    html += '<div class="panel">' +
+      '<div class="panel-title">A (사정)<span><button class="btn btn-sm btn-primary" id="genABtn">✨ A 자동작성</button></span></div>' +
+      '<div class="field full"><textarea id="soapA" placeholder="자동작성 버튼을 눌러 초안을 생성하거나 직접 작성하세요.">' + Utils.escapeHtml(soap.A) + '</textarea></div>' +
+      '<div id="checklistBox"></div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px;">' +
+      '<button class="btn btn-sm" id="regenABtn">✨ A 다시 작성</button>' +
+      '<button class="btn btn-sm" id="copyABtn">📋 A 복사</button>' +
+      '</div></div>';
+
+    html += '<div class="panel"><div class="panel-title">P (계획)</div>' +
+      '<div class="checkbox-group" style="margin-bottom:12px;">' +
+      CONSTANTS.QUICK_P_ACTIONS.map(a => '<label class="chip-check' + (soap.PActions.includes(a) ? ' checked' : '') + '"><input type="checkbox" class="pActionChk" value="' + a + '"' + (soap.PActions.includes(a) ? ' checked' : '') + '>' + a + '</label>').join('') +
+      '</div>' +
+      '<div class="field full"><label>후속조치 내용 (자유 입력)</label><textarea id="soapPText" style="min-height:70px;" placeholder="예: 다음 주 화요일 대상자에게 전화하여 수면 상태 확인 예정.">' + Utils.escapeHtml(soap.PText) + '</textarea></div>' +
+      '<div class="field" style="max-width:220px;"><label>예정일</label><input type="date" id="soapPDate" value="' + (soap.pDate || '') + '"></div>' +
+      '<p class="help-text">예정일을 입력하고 최종저장하면 위 선택 항목이 자동으로 후속조치로 등록됩니다.</p>' +
+      '</div>';
+
+    if (soap.status === 'final' && soap.id){
+      html += '<div class="panel"><div class="panel-title">SOAP 전체 복사</div>' +
+        '<div class="soap-copy-block">' + Utils.nl2br(SoapModule.formatForCopy(soap)) + '</div>' +
+        '<button class="btn btn-sm" id="copyAllBtn" style="margin-top:10px;">📋 SOAP 전체 복사</button></div>';
+    }
+
+    html += '<div style="display:flex;gap:10px;margin-bottom:30px;">' +
+      '<button class="btn" id="saveDraftBtn">임시저장</button>' +
+      '<button class="btn btn-primary" id="saveFinalBtn">최종저장</button>' +
+      (soap.id ? '<button class="btn btn-danger" id="deleteSoapBtn" style="margin-left:auto;">삭제</button>' : '') +
+      '</div>';
+
+    return html;
+  },
+
+  _readSoapForm(){
+    const soap = Views._draftCache;
+    soap.clientId = Views.resolveClientPickerValue(document.getElementById('soapClientPicker').value);
+    soap.date = document.getElementById('soapDate').value;
+    soap.contactType = document.getElementById('soapContactType').value;
+    soap.areas = Array.from(document.querySelectorAll('.areaChk:checked')).map(el => el.value);
+    soap.S = document.getElementById('soapS').value;
+    soap.O = document.getElementById('soapO').value;
+    soap.A = document.getElementById('soapA').value;
+    soap.PActions = Array.from(document.querySelectorAll('.pActionChk:checked')).map(el => el.value);
+    soap.PText = document.getElementById('soapPText').value;
+    soap.pDate = document.getElementById('soapPDate').value;
+    return soap;
+  },
+
+  bindSoapEditor(params){
+    document.getElementById('soapBackBtn').onclick = () => {
+      Views._draftCache = null;
+      if (params.prefillClientId) UI.navigate('clientDetail', { id: params.prefillClientId });
+      else UI.navigate('soapList', {});
+    };
+
+    document.querySelectorAll('.chip-check input').forEach(chk => {
+      chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
+    });
+
+    const renderChecklist = (checklist) => {
+      const box = document.getElementById('checklistBox');
+      if (!checklist || checklist.length === 0){ box.innerHTML = ''; return; }
+      box.innerHTML = '<div class="checklist-box">⚠ 확인해 볼 항목<ul>' + checklist.map(c => '<li>' + Utils.escapeHtml(c) + '</li>').join('') + '</ul></div>';
+    };
+
+    const doGenerate = (force) => {
+      const soap = Views._readSoapForm();
+      if (soap.A && soap.A.trim() && !force){
+        UI.confirm('이미 작성된 A 내용이 있습니다. 자동작성 초안으로 덮어쓸까요?', () => {
+          const result = SoapModule.generateADraft(soap);
+          document.getElementById('soapA').value = result.text;
+          renderChecklist(result.checklist);
+        });
+        return;
+      }
+      const result = SoapModule.generateADraft(soap);
+      document.getElementById('soapA').value = result.text;
+      renderChecklist(result.checklist);
+    };
+
+    document.getElementById('genABtn').onclick = () => doGenerate(false);
+    document.getElementById('regenABtn').onclick = () => doGenerate(true);
+    document.getElementById('copyABtn').onclick = () => copyToClipboard(document.getElementById('soapA').value);
+
+    const copyAllBtn = document.getElementById('copyAllBtn');
+    if (copyAllBtn) copyAllBtn.onclick = () => copyToClipboard(SoapModule.formatForCopy(Views._readSoapForm()));
+
+    document.getElementById('saveDraftBtn').onclick = async () => {
+      try{
+        const soap = Views._readSoapForm();
+        await SoapModule.save(soap, false);
+        Views._draftCache = null;
+        toast('임시저장했습니다.');
+        UI.navigate('clientDetail', { id: soap.clientId });
+      }catch(e){ toast(e.message || '저장에 실패했습니다.', 'error'); }
+    };
+    document.getElementById('saveFinalBtn').onclick = async () => {
+      try{
+        const soap = Views._readSoapForm();
+        if (!soap.A || !soap.A.trim()){
+          UI.confirm('A(사정) 내용이 비어 있습니다. 그대로 최종저장할까요?', async () => {
+            await SoapModule.save(soap, true);
+            Views._draftCache = null;
+            toast('SOAP 기록을 저장했습니다.');
+            UI.navigate('clientDetail', { id: soap.clientId });
+          });
+          return;
+        }
+        await SoapModule.save(soap, true);
+        Views._draftCache = null;
+        toast('SOAP 기록을 저장했습니다.');
+        UI.navigate('clientDetail', { id: soap.clientId });
+      }catch(e){ toast(e.message || '저장에 실패했습니다.', 'error'); }
+    };
+    const delBtn = document.getElementById('deleteSoapBtn');
+    if (delBtn) delBtn.onclick = () => UI.confirm('이 SOAP 기록을 삭제할까요?', async () => {
+      await SoapModule.remove(params.soapId);
+      Views._draftCache = null;
+      toast('삭제했습니다.');
+      UI.navigate('soapList', {});
+    });
+  },
+
+  /* ---------------- FOLLOW-UPS ---------------- */
+  followUps(){
+    const filter = State.currentParams.filter || 'all';
+    let items = FollowUps.list();
+    const today = Utils.todayStr();
+    if (filter === 'today') items = items.filter(f => f.status === 'pending' && f.dueDate === today);
+    if (filter === 'overdue') items = items.filter(f => f.status === 'pending' && f.dueDate < today);
+    if (filter === 'upcoming') items = items.filter(f => f.status === 'pending' && f.dueDate > today);
+    if (filter === 'done') items = items.filter(f => f.status === 'completed');
+
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">🔔 후속조치</h1>' +
+      '<button class="btn btn-primary" id="newFuBtn">＋ 후속조치 등록</button></div>';
+    html += '<div class="tabs">' +
+      ['all:전체', 'today:오늘', 'overdue:기한 초과', 'upcoming:예정', 'done:완료'].map(pair => {
+        const [key, label] = pair.split(':');
+        return '<button class="tab-btn' + (filter === key ? ' active' : '') + '" data-f="' + key + '">' + label + '</button>';
+      }).join('') + '</div>';
+
+    html += '<div class="panel">';
+    if (items.length === 0){
+      html += '<div class="empty-msg">해당 조건의 후속조치가 없습니다.</div>';
+    } else {
+      items.forEach(f => {
+        const c = Clients.get(f.clientId);
+        const overdue = f.status === 'pending' && f.dueDate < today;
+        html += '<div class="list-row' + (overdue ? '' : '') + '" style="' + (overdue ? 'background:var(--danger-soft);' : '') + '">' +
+          '<div class="list-row-main">' +
+          '<div class="row-title">' + Utils.escapeHtml(f.clientId) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + ' — ' + Utils.escapeHtml(f.type) + '</div>' +
+          '<div class="row-sub">예정일: ' + f.dueDate + (f.text ? ' · ' + Utils.escapeHtml(f.text) : '') + ' ' +
+          (f.status === 'pending' ? (overdue ? '<span class="badge badge-intensive">기한 초과</span>' : '<span class="badge badge-pending">예정</span>') : '<span class="badge badge-completed">완료</span>') +
+          '</div></div>' +
+          '<div class="row-actions">' +
+          (f.status === 'pending' ? '<button class="btn btn-sm" data-complete-fu="' + f.id + '">완료만</button><button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료+SOAP</button>' : '') +
+          '<button class="btn btn-sm btn-danger" data-del-fu="' + f.id + '">삭제</button>' +
+          '</div></div>';
+      });
+    }
+    html += '</div>';
+    return html;
+  },
+  bindFollowUps(){
+    document.getElementById('newFuBtn').onclick = () => Views.openFollowUpModal();
+    document.querySelectorAll('.tab-btn').forEach(el => { el.onclick = () => UI.navigate('followUps', { filter: el.dataset.f }); });
+    document.querySelectorAll('[data-complete-fu]').forEach(el => { el.onclick = async () => { await FollowUps.complete(el.dataset.completeFu); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
+    document.querySelectorAll('[data-complete-fu-soap]').forEach(el => {
+      el.onclick = async () => {
+        const fu = FollowUps.get(el.dataset.completeFuSoap);
+        await FollowUps.complete(fu.id);
+        UI.navigate('soapEditor', { prefillClientId: fu.clientId, relatedFollowUp: { id: fu.id, text: fu.type } });
+      };
+    });
+    document.querySelectorAll('[data-del-fu]').forEach(el => {
+      el.onclick = () => UI.confirm('이 후속조치를 삭제할까요?', async () => { await FollowUps.remove(el.dataset.delFu); toast('삭제했습니다.'); UI.renderCurrentView(); });
+    });
+  },
+
+  /* ---------------- SCHEDULE ---------------- */
+  schedule(){
+    const filter = State.currentParams.filter || 'all';
+    const today = Utils.todayStr();
+    let items = Schedules.list();
+    if (filter === 'today') items = items.filter(s => s.date === today);
+    if (filter === 'upcoming') items = items.filter(s => s.status === 'planned' && s.date >= today);
+    if (filter === 'past') items = items.filter(s => s.date < today);
+
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📅 일정</h1>' +
+      '<button class="btn btn-primary" id="newSchBtn">＋ 일정 등록</button></div>';
+    html += '<div class="tabs">' +
+      ['all:전체', 'today:오늘', 'upcoming:예정', 'past:지난 일정'].map(pair => {
+        const [key, label] = pair.split(':');
+        return '<button class="tab-btn' + (filter === key ? ' active' : '') + '" data-f="' + key + '">' + label + '</button>';
+      }).join('') + '</div>';
+
+    html += '<div class="panel">';
+    if (items.length === 0){
+      html += '<div class="empty-msg">해당 조건의 일정이 없습니다.</div>';
+    } else {
+      html += '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>메모</th><th>상태</th><th></th></tr></thead><tbody>';
+      items.forEach(s => {
+        const c = Clients.get(s.clientId);
+        html += '<tr><td>' + s.date + '</td><td>' + Utils.escapeHtml(s.clientId) + (c && c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') + '</td>' +
+          '<td>' + Utils.escapeHtml(s.contactType) + '</td><td>' + Utils.escapeHtml(s.memo || '-') + '</td>' +
+          '<td>' + (s.status === 'planned' ? '<span class="badge badge-pending">예정</span>' : '<span class="badge badge-completed">완료</span>') + '</td>' +
+          '<td>' + (s.status === 'planned' ? '<button class="btn btn-sm" data-done-sch="' + s.id + '">완료</button>' : '') +
+          ' <button class="btn btn-sm btn-danger" data-del-sch="' + s.id + '">삭제</button></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    return html;
+  },
+  bindSchedule(){
+    document.getElementById('newSchBtn').onclick = () => Views.openScheduleModal();
+    document.querySelectorAll('.tab-btn').forEach(el => { el.onclick = () => UI.navigate('schedule', { filter: el.dataset.f }); });
+    document.querySelectorAll('[data-done-sch]').forEach(el => { el.onclick = async () => { await Schedules.setStatus(el.dataset.doneSch, 'completed'); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
+    document.querySelectorAll('[data-del-sch]').forEach(el => { el.onclick = () => UI.confirm('이 일정을 삭제할까요?', async () => { await Schedules.remove(el.dataset.delSch); toast('삭제했습니다.'); UI.renderCurrentView(); }); });
+  },
+
+  /* ---------------- SEARCH ---------------- */
+  search(){
+    let html = '<h1 class="page-title">🔍 검색</h1>';
+    html += '<div class="panel"><div class="form-grid">';
+    html += '<div class="field"><label>대상자 ID</label><select id="sfClient"><option value="">전체</option>' +
+      Clients.list().map(c => '<option value="' + c.id + '">' + c.id + (c.alias ? ' - ' + Utils.escapeHtml(c.alias) : '') + '</option>').join('') + '</select></div>';
+    html += '<div class="field"><label>관리 수준</label><select id="sfLevel"><option value="">전체</option>' +
+      Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => '<option value="' + k + '">' + CONSTANTS.MANAGEMENT_LEVELS[k].label + '</option>').join('') + '</select></div>';
+    html += '<div class="field"><label>날짜(시작)</label><input type="date" id="sfDateFrom"></div>';
+    html += '<div class="field"><label>날짜(종료)</label><input type="date" id="sfDateTo"></div>';
+    html += '<div class="field"><label>접촉 유형</label><select id="sfContactType"><option value="">전체</option>' +
+      CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>';
+    html += '<div class="field"><label>상담 영역</label><select id="sfArea"><option value="">전체</option>' +
+      CONSTANTS.AREAS.map(a => '<option value="' + a + '">' + a + '</option>').join('') + '</select></div>';
+    html += '<div class="field"><label>기록 상태</label><select id="sfStatus"><option value="">전체</option><option value="draft">임시저장</option><option value="final">완료</option></select></div>';
+    html += '<div class="field"><label>키워드</label><input type="text" id="sfKeyword" placeholder="S/O/A/P 내용 검색"></div>';
+    html += '</div><button class="btn btn-primary" id="doSearchBtn">검색</button></div>';
+    html += '<div class="panel" id="searchResults"><div class="empty-msg">검색 조건을 입력하고 검색 버튼을 눌러 주세요.</div></div>';
+    return html;
+  },
+  bindSearch(){
+    document.getElementById('doSearchBtn').onclick = () => {
+      const filters = {
+        clientId: document.getElementById('sfClient').value,
+        managementLevel: document.getElementById('sfLevel').value,
+        dateFrom: document.getElementById('sfDateFrom').value,
+        dateTo: document.getElementById('sfDateTo').value,
+        contactType: document.getElementById('sfContactType').value,
+        area: document.getElementById('sfArea').value,
+        status: document.getElementById('sfStatus').value,
+        keyword: document.getElementById('sfKeyword').value.trim()
+      };
+      const results = Search.run(filters);
+      const box = document.getElementById('searchResults');
+      if (results.length === 0){
+        box.innerHTML = '<div class="empty-msg">검색 결과가 없습니다.</div>';
+        return;
+      }
+      box.innerHTML = '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담영역</th><th>내용</th></tr></thead><tbody>' +
+        results.map(s => '<tr class="clickable-row" data-open-soap="' + s.id + '"><td>' + s.date + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td>' +
+          '<td>' + Utils.escapeHtml(s.contactType) + '</td><td>' + (s.areas || []).join(', ') + '</td>' +
+          '<td>' + Utils.truncate(Utils.escapeHtml(s.S || s.A || ''), 60) + '</td></tr>').join('') +
+        '</tbody></table>';
+      box.querySelectorAll('[data-open-soap]').forEach(el => { el.onclick = () => UI.navigate('soapEditor', { soapId: el.dataset.openSoap }); });
+    };
+  },
+
+  /* ---------------- Modals: quick add ---------------- */
+  openNewClientModal(){
+    UI.openModal(
+      '<h3>새 대상자</h3>' +
+      '<div class="field"><label>대상자 ID (예: A004)</label><input type="text" id="ncId"></div>' +
+      '<div class="field"><label>별칭 (선택)</label><input type="text" id="ncAlias"></div>' +
+      '<div class="field"><label>관리 수준</label><select id="ncLevel">' +
+      Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => '<option value="' + k + '"' + (k === 'normal' ? ' selected' : '') + '>' + CONSTANTS.MANAGEMENT_LEVELS[k].emoji + ' ' + CONSTANTS.MANAGEMENT_LEVELS[k].label + '</option>').join('') +
+      '</select></div>' +
+      '<div class="error-msg hidden" id="ncError"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="ncCancel">취소</button><button class="btn btn-primary" id="ncSubmit">추가</button></div>'
+    );
+    document.getElementById('ncCancel').onclick = () => UI.closeModal();
+    document.getElementById('ncSubmit').onclick = async () => {
+      try{
+        const c = await Clients.add({
+          id: document.getElementById('ncId').value,
+          alias: document.getElementById('ncAlias').value,
+          managementLevel: document.getElementById('ncLevel').value
+        });
+        UI.closeModal();
+        toast('대상자를 추가했습니다.');
+        UI.navigate('clientDetail', { id: c.id });
+      }catch(e){
+        const err = document.getElementById('ncError');
+        err.textContent = e.message;
+        err.classList.remove('hidden');
+      }
+    };
+  },
+
+  openFollowUpModal(prefillClientId){
+    UI.openModal(
+      '<h3>후속조치 등록</h3>' +
+      '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(prefillClientId || '', 'nfClient') + '</div>' +
+      '<div class="field"><label>유형</label><div class="checkbox-group">' +
+      CONSTANTS.FOLLOWUP_TYPES.map((t, i) => '<label class="chip-check' + (i === 0 ? ' checked' : '') + '"><input type="radio" name="nfType" value="' + t + '"' + (i === 0 ? ' checked' : '') + '>' + t + '</label>').join('') +
+      '</div></div>' +
+      '<div class="field"><label>세부 내용 (선택)</label><textarea id="nfText" style="min-height:60px;"></textarea></div>' +
+      '<div class="field"><label>예정일</label><input type="date" id="nfDue" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field"><label>메모 (선택)</label><input type="text" id="nfMemo"></div>' +
+      '<div class="error-msg hidden" id="nfError"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="nfCancel">취소</button><button class="btn btn-primary" id="nfSubmit">등록</button></div>'
+    );
+    document.querySelectorAll('#modalBox .chip-check input[type=radio]').forEach(r => {
+      r.addEventListener('change', () => {
+        document.querySelectorAll('#modalBox .chip-check').forEach(l => l.classList.remove('checked'));
+        r.closest('.chip-check').classList.add('checked');
+      });
+    });
+    document.getElementById('nfCancel').onclick = () => UI.closeModal();
+    document.getElementById('nfSubmit').onclick = async () => {
+      try{
+        const typeEl = document.querySelector('#modalBox input[name=nfType]:checked');
+        await FollowUps.add({
+          clientId: Views.resolveClientPickerValue(document.getElementById('nfClient').value),
+          type: typeEl ? typeEl.value : '기타',
+          text: document.getElementById('nfText').value,
+          dueDate: document.getElementById('nfDue').value,
+          memo: document.getElementById('nfMemo').value
+        });
+        UI.closeModal();
+        toast('후속조치를 등록했습니다.');
+        UI.renderCurrentView();
+      }catch(e){
+        const err = document.getElementById('nfError');
+        err.textContent = e.message;
+        err.classList.remove('hidden');
+      }
+    };
+  },
+
+  openScheduleModal(prefillClientId){
+    UI.openModal(
+      '<h3>일정 등록</h3>' +
+      '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(prefillClientId || '', 'nsClient') + '</div>' +
+      '<div class="field"><label>날짜</label><input type="date" id="nsDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field"><label>접촉 유형</label><select id="nsContactType">' +
+      CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>메모 (선택)</label><input type="text" id="nsMemo"></div>' +
+      '<div class="error-msg hidden" id="nsError"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="nsCancel">취소</button><button class="btn btn-primary" id="nsSubmit">등록</button></div>'
+    );
+    document.getElementById('nsCancel').onclick = () => UI.closeModal();
+    document.getElementById('nsSubmit').onclick = async () => {
+      try{
+        await Schedules.add({
+          clientId: Views.resolveClientPickerValue(document.getElementById('nsClient').value),
+          date: document.getElementById('nsDate').value,
+          contactType: document.getElementById('nsContactType').value,
+          memo: document.getElementById('nsMemo').value
+        });
+        UI.closeModal();
+        toast('일정을 등록했습니다.');
+        UI.renderCurrentView();
+      }catch(e){
+        const err = document.getElementById('nsError');
+        err.textContent = e.message;
+        err.classList.remove('hidden');
+      }
+    };
+  }
+};
+
+/* =========================================================================
+   INIT / BOOTSTRAP
+   ========================================================================= */
+async function bootstrapApp(){
+  await loadAllDataIntoState();
+  UI.hideLoginScreen();
+  UI.hideSetupScreen();
+  UI.hideLockScreen();
+  UI.showAppShell();
+
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => UI.navigate(btn.dataset.view, {}));
+  });
+  document.getElementById('lockNowBtn').addEventListener('click', () => Auth.lock());
+  document.getElementById('modalOverlay').addEventListener('click', (e) => {
+    if (e.target.id === 'modalOverlay') UI.closeModal();
+  });
+
+  Auth.startIdleWatcher();
+  Notifications.start();
+
+  UI.navigate('dashboard', {});
+}
+
+async function initApp(){
+  // Feature detection: the whole security model depends on these APIs.
+  if (!window.crypto || !window.crypto.subtle){
+    UI.showFatal('이 브라우저는 Web Crypto API를 지원하지 않아 앱을 안전하게 실행할 수 없습니다. 최신 버전의 Chrome, Edge 또는 Firefox 브라우저를 사용해 주세요.');
+    return;
+  }
+  if (!window.indexedDB){
+    UI.showFatal('이 브라우저는 IndexedDB를 지원하지 않아 데이터를 저장할 수 없습니다. 최신 버전의 Chrome, Edge 또는 Firefox 브라우저를 사용해 주세요.');
+    return;
+  }
+
+  try{
+    await Storage.openDB();
+  }catch(e){
+    console.error(e);
+    UI.showFatal('저장소(IndexedDB)에 접근할 수 없습니다. 브라우저의 개인정보 보호 모드이거나 저장 공간 설정을 확인해 주세요.');
+    return;
+  }
+
+  const firstRun = await Auth.isFirstRun();
+
+  if (firstRun){
+    UI.showFirstRunNotice();
+    const ackCheckbox = document.getElementById('ackNoticeCheckbox');
+    document.getElementById('ackNoticeBtn').addEventListener('click', () => {
+      if (!ackCheckbox.checked){
+        toast('안내 사항을 확인 후 체크해 주세요.', 'error');
+        return;
+      }
+      UI.hideFirstRunNotice();
+      UI.showSetupScreen();
+      document.getElementById('setupPw1').focus();
+    });
+
+    document.getElementById('setupSubmitBtn').addEventListener('click', async () => {
+      const pw1 = document.getElementById('setupPw1').value;
+      const pw2 = document.getElementById('setupPw2').value;
+      const errEl = document.getElementById('setupError');
+      errEl.classList.add('hidden');
+      if (pw1.length < 8){
+        errEl.textContent = '비밀번호는 8자 이상으로 설정해 주세요.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      if (pw1 !== pw2){
+        errEl.textContent = '비밀번호가 서로 일치하지 않습니다.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      try{
+        await Auth.setupPassword(pw1);
+        await loadAllDataIntoState();
+        await Clients.seedExampleData();
+        await bootstrapApp();
+        toast('비밀번호가 설정되었습니다. 예시 데이터가 포함되어 있습니다.');
+      }catch(e){
+        console.error(e);
+        errEl.textContent = '초기 설정 중 오류가 발생했습니다. 다시 시도해 주세요.';
+        errEl.classList.remove('hidden');
+      }
+    });
+  } else {
+    UI.showLoginScreen();
+    document.getElementById('loginPw').focus();
+
+    const tryLogin = async () => {
+      const pw = document.getElementById('loginPw').value;
+      const errEl = document.getElementById('loginError');
+      errEl.classList.add('hidden');
+      try{
+        await Auth.login(pw);
+        await bootstrapApp();
+      }catch(e){
+        errEl.textContent = (e.message === 'WRONG_PASSWORD') ? '비밀번호가 올바르지 않습니다.' : '잠금 해제 중 오류가 발생했습니다.';
+        errEl.classList.remove('hidden');
+      }
+    };
+    document.getElementById('loginSubmitBtn').addEventListener('click', tryLogin);
+    document.getElementById('loginPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryLogin(); });
+
+    document.getElementById('resetAllLink').addEventListener('click', () => {
+      UI.confirm('모든 데이터를 삭제하고 처음부터 다시 시작할까요? 이 작업은 되돌릴 수 없습니다.', async () => {
+        try{
+          await Storage.deleteAllData();
+          location.reload();
+        }catch(e){
+          toast('초기화 중 오류가 발생했습니다.', 'error');
+        }
+      });
+    });
+  }
+
+  // Unlock screen (after auto-lock or manual lock)
+  const tryUnlock = async () => {
+    const pw = document.getElementById('unlockPw').value;
+    const errEl = document.getElementById('unlockError');
+    errEl.classList.add('hidden');
+    try{
+      await Auth.login(pw);
+      await loadAllDataIntoState();
+      UI.hideLockScreen();
+      UI.showAppShell();
+      UI.navigate('dashboard', {});
+      Auth.markActivity();
+    }catch(e){
+      errEl.textContent = (e.message === 'WRONG_PASSWORD') ? '비밀번호가 올바르지 않습니다.' : '잠금 해제 중 오류가 발생했습니다.';
+      errEl.classList.remove('hidden');
+    }
+  };
+  document.getElementById('unlockSubmitBtn').addEventListener('click', tryUnlock);
+  document.getElementById('unlockPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
+}
+
+document.addEventListener('DOMContentLoaded', initApp);
+</script>
+</body>
+</html>
