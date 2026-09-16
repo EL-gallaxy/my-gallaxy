@@ -924,9 +924,15 @@ const Clients = {
     await Storage.saveEncrypted('clients', client);
   },
 
+  // Deleting a client also removes every SOAP/후속조치/일정 record that
+  // references it — nothing is left orphaned. The caseworker confirms this
+  // explicitly via a warning dialog before it runs (see clientDetail).
   async remove(id){
     State.clients.delete(id);
     await Storage.idbDelete('clients', id);
+    for (const s of Array.from(State.soaps.values())) if (s.clientId === id){ State.soaps.delete(s.id); await Storage.idbDelete('soaps', s.id); }
+    for (const f of Array.from(State.followUps.values())) if (f.clientId === id){ State.followUps.delete(f.id); await Storage.idbDelete('followUps', f.id); }
+    for (const sc of Array.from(State.schedules.values())) if (sc.clientId === id){ State.schedules.delete(sc.id); await Storage.idbDelete('schedules', sc.id); }
   },
 
   lastRecordDate(clientId){
@@ -994,14 +1000,7 @@ const Clients = {
 
   async removeExampleData(){
     const ids = State.seedClientIds || [];
-    for (const id of ids){
-      // remove client and any records referencing it
-      State.clients.delete(id);
-      await Storage.idbDelete('clients', id);
-      for (const s of Array.from(State.soaps.values())) if (s.clientId === id){ State.soaps.delete(s.id); await Storage.idbDelete('soaps', s.id); }
-      for (const f of Array.from(State.followUps.values())) if (f.clientId === id){ State.followUps.delete(f.id); await Storage.idbDelete('followUps', f.id); }
-      for (const sc of Array.from(State.schedules.values())) if (sc.clientId === id){ State.schedules.delete(sc.id); await Storage.idbDelete('schedules', sc.id); }
-    }
+    for (const id of ids) await this.remove(id);
     State.seedClientIds = [];
     await Storage.setSetting('seedClientIds', []);
   }
@@ -2197,9 +2196,19 @@ const Views = {
         UI.renderCurrentView();
       };
     };
-    document.getElementById('deleteClientBtn').onclick = () => UI.confirm('대상자 ' + id + '를 삭제할까요? (관련 SOAP·후속조치·일정 기록은 유지되지만 목록에서 대상자 정보는 사라집니다)', async () => {
-      await Clients.remove(id); toast('대상자를 삭제했습니다.'); UI.navigate('clients');
-    });
+    document.getElementById('deleteClientBtn').onclick = () => {
+      const soapCount = SoapModule.listByClient(id).length;
+      const fuCount = FollowUps.list().filter(f => f.clientId === id).length;
+      const schCount = Schedules.list().filter(s => s.clientId === id).length;
+      UI.confirm(
+        '대상자 ' + id + '를 삭제하면 작성된 SOAP 기록 ' + soapCount + '건, 후속조치 ' + fuCount + '건, 일정 ' + schCount + '건이 모두 함께 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다. 정말 삭제할까요?',
+        async () => {
+          await Clients.remove(id);
+          toast('대상자와 관련 기록을 모두 삭제했습니다.');
+          UI.navigate('clients');
+        }
+      );
+    };
     document.getElementById('clNewSoap').onclick = () => UI.navigate('soapEditor', { prefillClientId: id });
     document.getElementById('clNewFollowUp').onclick = () => Views.openFollowUpModal(id);
     document.getElementById('clNewSchedule').onclick = () => Views.openScheduleModal(id);
