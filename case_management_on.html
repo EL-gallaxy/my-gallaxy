@@ -486,6 +486,22 @@ const Utils = {
     if (!iso) return '';
     const d = new Date(iso);
     return d.toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+  },
+  // Builds the list of dates for a recurring follow-up/schedule: the base
+  // date plus (count - 1) further occurrences spaced by the given pattern.
+  computeRecurringDates(baseDateStr, pattern, count){
+    const dates = [baseDateStr];
+    if (!pattern || pattern === 'none' || count <= 1) return dates;
+    const [y, m, d] = baseDateStr.split('-').map(Number);
+    for (let i = 1; i < count; i++){
+      let dt;
+      if (pattern === 'weekly') dt = new Date(y, m - 1, d + 7 * i);
+      else if (pattern === 'biweekly') dt = new Date(y, m - 1, d + 14 * i);
+      else if (pattern === 'monthly') dt = new Date(y, m - 1 + i, d);
+      else break;
+      dates.push(dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0'));
+    }
+    return dates;
   }
 };
 
@@ -894,9 +910,18 @@ const Clients = {
     await Storage.saveEncrypted('clients', client);
   },
 
-  async setManagementLevel(id, level){
-    // Management level is ALWAYS set explicitly by the caseworker — never inferred by the app.
-    await this.update(id, { managementLevel: level });
+  // Management level is ALWAYS set explicitly by the caseworker — never
+  // inferred by the app. Every change is logged with who-decided-what-when
+  // (the reason text, if given) so the level's history stays visible.
+  async setManagementLevel(id, level, reason){
+    const client = State.clients.get(id);
+    if (!client) return;
+    const from = client.managementLevel;
+    if (from === level) return;
+    client.managementLevel = level;
+    client.managementHistory = client.managementHistory || [];
+    client.managementHistory.push({ date: Utils.todayStr(), from, to: level, reason: (reason || '').trim() });
+    await Storage.saveEncrypted('clients', client);
   },
 
   async remove(id){
@@ -1231,6 +1256,20 @@ const SoapModule = {
     return soap;
   },
 
+  // Background auto-save while composing: persists the record as-is without
+  // forcing draft/final status or creating linked follow-ups (that only
+  // happens on an explicit 최종저장). Never touches an already-final record.
+  async autosave(soap){
+    if (!soap.clientId) return null;
+    if (soap.status === 'final') return null;
+    const now = new Date().toISOString();
+    if (!soap.id){ soap.id = Utils.uid('soap'); soap.createdAt = now; soap.status = 'draft'; }
+    soap.updatedAt = now;
+    State.soaps.set(soap.id, soap);
+    await Storage.saveEncrypted('soaps', soap);
+    return soap;
+  },
+
   async remove(id){
     State.soaps.delete(id);
     await Storage.idbDelete('soaps', id);
@@ -1291,7 +1330,7 @@ const FollowUps = {
    ========================================================================= */
 const Schedules = {
   list(){
-    return Array.from(State.schedules.values()).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));
+    return Array.from(State.schedules.values()).sort((a, b) => (a.date + (a.time || '99:99')).localeCompare(b.date + (b.time || '99:99')));
   },
   get(id){ return State.schedules.get(id); },
   today(){
@@ -1305,10 +1344,10 @@ const Schedules = {
     return n;
   },
 
-  async add({ clientId, date, contactType, memo }){
+  async add({ clientId, date, time, contactType, memo }){
     if (!clientId) throw new Error('대상자를 선택해 주세요.');
     if (!date) throw new Error('날짜를 입력해 주세요.');
-    const sc = { id: Utils.uid('sch'), clientId, date, contactType: contactType || '전화', memo: memo || '', status: 'planned' };
+    const sc = { id: Utils.uid('sch'), clientId, date, time: time || '', contactType: contactType || '전화', memo: memo || '', status: 'planned' };
     State.schedules.set(sc.id, sc);
     await Storage.saveEncrypted('schedules', sc);
     return sc;
@@ -1432,6 +1471,60 @@ const CSV = {
       s.S || '', s.O || '', s.A || '', s.PText || '', s.pDate || ''
     ]);
     this.download('soap_records_' + Utils.todayStr() + '.csv', this.build(headers, rows));
+  },
+
+  // Minimal RFC4180-ish parser: handles quoted fields, escaped "" quotes,
+  // and \r\n or \n line endings. Good enough for a file the user exported
+  // from this app or built in a spreadsheet.
+  parseSimple(text){
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const rows = [];
+    let i = 0, field = '', row = [], inQuotes = false;
+    const pushField = () => { row.push(field); field = ''; };
+    const pushRow = () => { pushField(); rows.push(row); row = []; };
+    while (i < text.length){
+      const ch = text[i];
+      if (inQuotes){
+        if (ch === '"'){
+          if (text[i + 1] === '"'){ field += '"'; i += 2; continue; }
+          inQuotes = false; i++; continue;
+        }
+        field += ch; i++; continue;
+      }
+      if (ch === '"'){ inQuotes = true; i++; continue; }
+      if (ch === ','){ pushField(); i++; continue; }
+      if (ch === '\r'){ i++; continue; }
+      if (ch === '\n'){ pushRow(); i++; continue; }
+      field += ch; i++;
+    }
+    if (field.length || row.length) pushRow();
+    return rows.filter(r => !(r.length === 1 && r[0] === ''));
+  },
+
+  // Bulk-registers clients from a CSV (대상자ID, 별칭, 관리수준 — matching this
+  // app's own CSV export, extra columns are ignored). Duplicate or blank IDs
+  // are skipped rather than aborting the whole import.
+  async importClients(file){
+    const text = await file.text();
+    const rows = this.parseSimple(text);
+    if (rows.length < 2) return { added: 0, skipped: 0 };
+    const labelToKey = {};
+    Object.keys(CONSTANTS.MANAGEMENT_LEVELS).forEach(k => { labelToKey[CONSTANTS.MANAGEMENT_LEVELS[k].label] = k; });
+    let added = 0, skipped = 0;
+    for (const r of rows.slice(1)){
+      const id = (r[0] || '').trim();
+      if (!id){ skipped++; continue; }
+      const alias = (r[1] || '').trim();
+      const levelRaw = (r[2] || '').trim();
+      const managementLevel = CONSTANTS.MANAGEMENT_LEVELS[levelRaw] ? levelRaw : (labelToKey[levelRaw] || 'maintenance');
+      try{
+        await Clients.add({ id, alias, managementLevel });
+        added++;
+      }catch(e){
+        skipped++;
+      }
+    }
+    return { added, skipped };
   }
 };
 
@@ -1445,6 +1538,7 @@ const CSV = {
    ========================================================================= */
 const Backup = {
   SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'seedClientIds'],
+  overdueCached: false,
 
   async exportAll(){
     const data = { app: 'case_management_on', version: 1, exportedAt: new Date().toISOString(), settings: {} };
@@ -1459,6 +1553,16 @@ const Backup = {
   async downloadBackup(){
     const data = await this.exportAll();
     CSV.download('case_management_on_backup_' + Utils.todayStr() + '.json', JSON.stringify(data, null, 2), 'application/json');
+    await Storage.setSetting('lastBackupAt', new Date().toISOString());
+    this.overdueCached = false;
+  },
+
+  REMINDER_THRESHOLD_DAYS: 14,
+  async isBackupOverdue(){
+    const lastBackupAt = await Storage.getSetting('lastBackupAt');
+    if (!lastBackupAt) return true;
+    const daysSince = (Date.now() - new Date(lastBackupAt).getTime()) / 86400000;
+    return daysSince >= this.REMINDER_THRESHOLD_DAYS;
   },
 
   async importFromFile(file){
@@ -1656,6 +1760,28 @@ const Views = {
     return Clients.get(id) ? id : (State.clients.has(inputValue.trim()) ? inputValue.trim() : id);
   },
 
+  // Shared recurrence controls for the follow-up / schedule "quick add"
+  // modals. Kept as independent records once created (no linked series) —
+  // simplest to review, edit, or delete individually afterward.
+  repeatFieldsHtml(prefix){
+    return '<div class="field"><label>반복</label><select id="' + prefix + 'Repeat">' +
+      '<option value="none">반복 없음</option><option value="weekly">매주</option>' +
+      '<option value="biweekly">2주마다</option><option value="monthly">매월</option>' +
+      '</select></div>' +
+      '<div class="field hidden" id="' + prefix + 'RepeatCountWrap"><label>반복 횟수</label>' +
+      '<input type="number" id="' + prefix + 'RepeatCount" min="2" max="24" value="4"></div>';
+  },
+  bindRepeatFields(prefix){
+    const sel = document.getElementById(prefix + 'Repeat');
+    const wrap = document.getElementById(prefix + 'RepeatCountWrap');
+    sel.onchange = () => wrap.classList.toggle('hidden', sel.value === 'none');
+  },
+  readRepeatDates(prefix, baseDate){
+    const pattern = document.getElementById(prefix + 'Repeat').value;
+    const count = pattern === 'none' ? 1 : (parseInt(document.getElementById(prefix + 'RepeatCount').value, 10) || 4);
+    return Utils.computeRecurringDates(baseDate, pattern, count);
+  },
+
   managementBadge(level){
     const m = CONSTANTS.MANAGEMENT_LEVELS[level] || CONSTANTS.MANAGEMENT_LEVELS.maintenance;
     return '<span class="badge ' + m.badgeClass + '">' + m.emoji + ' ' + m.label + '</span>';
@@ -1663,8 +1789,8 @@ const Views = {
 
   directionBadge(direction){
     if (direction === 'decline') return '<span class="badge badge-crisis">감소 추세</span>';
-    if (direction === 'improve') return '<span class="badge badge-stable">개선 추세</span>';
-    if (direction === 'mixed') return '<span class="badge badge-normal">복합적 변화</span>';
+    if (direction === 'improve') return '<span class="badge badge-temporary">개선 추세</span>';
+    if (direction === 'mixed') return '<span class="badge badge-intensive">복합적 변화</span>';
     return '<span class="badge badge-draft">언급됨</span>';
   },
 
@@ -1720,6 +1846,12 @@ const Views = {
         '<button class="btn btn-sm" id="removeSeedBtn">예시 데이터 삭제</button></div>';
     }
 
+    if (Backup.overdueCached){
+      html += '<div class="example-banner" style="border-color:var(--warn);background:var(--warn-soft);">' +
+        '<span>⏰ 최근 ' + Backup.REMINDER_THRESHOLD_DAYS + '일 이상 백업하지 않았습니다. 데이터는 이 브라우저에만 저장되어 있으니, 지금 백업해 두는 것을 권장합니다.</span>' +
+        '<button class="btn btn-sm" id="backupNowBannerBtn">지금 백업하기</button></div>';
+    }
+
     html += '<div style="margin-bottom:18px;">' +
       (Notifications.enabled
         ? '<span class="help-text">🔔 브라우저 알림이 켜져 있습니다.</span>'
@@ -1760,7 +1892,7 @@ const Views = {
       todaySchedules.forEach(s => {
         const c = Clients.get(s.clientId);
         html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + s.clientId + '">' +
-          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + ' — ' + Utils.escapeHtml(s.contactType) + '</div>' +
+          '<div class="row-title">' + (s.time ? '<strong>' + s.time + '</strong> ' : '') + Utils.escapeHtml(s.clientId) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + ' — ' + Utils.escapeHtml(s.contactType) + '</div>' +
           '<div class="row-sub">' + Utils.escapeHtml(s.memo || '일정') + '</div></div>' +
           '<div class="row-actions"><button class="btn btn-sm" data-complete-schedule="' + s.id + '">완료</button></div></div>';
       });
@@ -1861,10 +1993,13 @@ const Views = {
     document.getElementById('qbNewFollowUp').onclick = () => Views.openFollowUpModal();
     document.getElementById('qbNewSchedule').onclick = () => Views.openScheduleModal();
 
-    document.getElementById('exportBackupBtn').onclick = async () => {
-      try{ await Backup.downloadBackup(); toast('백업 파일을 저장했습니다.'); }
+    const doBackupNow = async () => {
+      try{ await Backup.downloadBackup(); toast('백업 파일을 저장했습니다.'); UI.renderCurrentView(); }
       catch(e){ console.error(e); toast('백업 파일 생성에 실패했습니다.', 'error'); }
     };
+    document.getElementById('exportBackupBtn').onclick = doBackupNow;
+    const backupBannerBtn = document.getElementById('backupNowBannerBtn');
+    if (backupBannerBtn) backupBannerBtn.onclick = doBackupNow;
     const importInput = document.getElementById('importBackupInput');
     document.getElementById('importBackupBtn').onclick = () => importInput.click();
     importInput.onchange = (e) => {
@@ -1885,14 +2020,40 @@ const Views = {
   },
 
   /* ---------------- CLIENTS ---------------- */
+  MANAGEMENT_LEVEL_RANK: { crisis: 0, intensive: 1, maintenance: 2, temporary: 3 },
+
   clientsList(){
-    const clients = Clients.list();
+    const sort = State.currentParams.sort || 'id';
+    const levelFilter = State.currentParams.levelFilter || 'all';
+    let clients = Clients.list(); // base order: ID ascending
+    if (levelFilter !== 'all') clients = clients.filter(c => c.managementLevel === levelFilter);
+    if (sort === 'level'){
+      clients = clients.slice().sort((a, b) => (Views.MANAGEMENT_LEVEL_RANK[a.managementLevel] ?? 9) - (Views.MANAGEMENT_LEVEL_RANK[b.managementLevel] ?? 9));
+    } else if (sort === 'recent'){
+      clients = clients.slice().sort((a, b) => (Clients.lastRecordDate(b.id) || '').localeCompare(Clients.lastRecordDate(a.id) || ''));
+    }
+
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">👤 대상자</h1>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="exportClientsCsvBtn">⬇ CSV 내보내기</button>' +
+      '<button class="btn btn-sm" id="importClientsCsvBtn">⬆ CSV 일괄 등록</button>' +
+      '<input type="file" id="importClientsCsvInput" accept=".csv,text/csv" class="hidden">' +
       '<button class="btn btn-primary" id="newClientBtn">＋ 새 대상자</button></div></div>';
+
+    html += '<div class="panel" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">' +
+      '<div class="field" style="margin:0;max-width:200px;"><label>정렬</label><select id="clientSortSelect">' +
+      '<option value="id"' + (sort === 'id' ? ' selected' : '') + '>ID순</option>' +
+      '<option value="recent"' + (sort === 'recent' ? ' selected' : '') + '>최근 기록일순</option>' +
+      '<option value="level"' + (sort === 'level' ? ' selected' : '') + '>관리수준순</option>' +
+      '</select></div>' +
+      '<div class="field" style="margin:0;max-width:200px;"><label>관리수준 필터</label><select id="clientLevelFilterSelect">' +
+      '<option value="all"' + (levelFilter === 'all' ? ' selected' : '') + '>전체</option>' +
+      Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => '<option value="' + k + '"' + (levelFilter === k ? ' selected' : '') + '>' + CONSTANTS.MANAGEMENT_LEVELS[k].emoji + ' ' + CONSTANTS.MANAGEMENT_LEVELS[k].label + '</option>').join('') +
+      '</select></div>' +
+      '</div>';
+
     html += '<div class="panel">';
     if (clients.length === 0){
-      html += '<div class="empty-msg">등록된 대상자가 없습니다. "＋ 새 대상자"로 추가해 보세요.</div>';
+      html += '<div class="empty-msg">해당 조건의 대상자가 없습니다.</div>';
     } else {
       html += '<table><thead><tr><th>ID</th><th>별칭</th><th>관리 수준</th><th>최근 기록일</th><th>미완료 후속조치</th><th>예정 일정</th></tr></thead><tbody>';
       clients.forEach(c => {
@@ -1913,6 +2074,23 @@ const Views = {
   bindClientsList(){
     document.getElementById('newClientBtn').onclick = () => Views.openNewClientModal();
     document.getElementById('exportClientsCsvBtn').onclick = () => CSV.exportClients();
+    document.getElementById('clientSortSelect').onchange = (e) => UI.navigate('clients', { sort: e.target.value, levelFilter: State.currentParams.levelFilter || 'all' });
+    document.getElementById('clientLevelFilterSelect').onchange = (e) => UI.navigate('clients', { sort: State.currentParams.sort || 'id', levelFilter: e.target.value });
+    const importInput = document.getElementById('importClientsCsvInput');
+    document.getElementById('importClientsCsvBtn').onclick = () => importInput.click();
+    importInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try{
+        const result = await CSV.importClients(file);
+        toast(result.added + '건 등록되었습니다.' + (result.skipped ? ' (' + result.skipped + '건 건너뜀)' : ''));
+        UI.renderCurrentView();
+      }catch(err){
+        console.error(err);
+        toast('CSV 파일을 읽지 못했습니다. 형식을 확인해 주세요.', 'error');
+      }
+      importInput.value = '';
+    };
     document.querySelectorAll('[data-client]').forEach(el => {
       el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.client });
     });
@@ -1942,6 +2120,19 @@ const Views = {
       '<button class="btn-quick" id="clNewFollowUp">＋ 후속조치</button>' +
       '<button class="btn-quick" id="clNewSchedule">＋ 일정</button>' +
       '</div></div>';
+
+    if (c.managementHistory && c.managementHistory.length){
+      html += '<div class="panel"><div class="panel-title">관리수준 변경 이력</div>';
+      c.managementHistory.slice().reverse().forEach(h => {
+        const fromLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.from] || {}).label || h.from || '(미지정)';
+        const toLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.to] || {}).label || h.to;
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + h.date + ' · ' + Utils.escapeHtml(fromLabel) + ' → ' + Utils.escapeHtml(toLabel) + '</div>' +
+          (h.reason ? '<div class="row-sub">사유: ' + Utils.escapeHtml(h.reason) + '</div>' : '') +
+          '</div></div>';
+      });
+      html += '</div>';
+    }
 
     // MSE (정신상태검사) and case goals — free-text fields the caseworker fills in
     // and edits directly; the app never generates or infers this content.
@@ -1986,10 +2177,25 @@ const Views = {
   bindClientDetail(id){
     document.getElementById('backToClientsBtn').onclick = () => UI.navigate('clients');
     document.getElementById('printClientBtn').onclick = () => window.print();
-    document.getElementById('mgmtLevelSelect').onchange = async (e) => {
-      await Clients.setManagementLevel(id, e.target.value);
-      toast('관리 수준이 변경되었습니다.');
-      UI.renderCurrentView();
+    document.getElementById('mgmtLevelSelect').onchange = (e) => {
+      const newLevel = e.target.value;
+      const prevLevel = Clients.get(id).managementLevel;
+      e.target.value = prevLevel; // hold the visible select steady until the change is confirmed
+      const newLabel = (CONSTANTS.MANAGEMENT_LEVELS[newLevel] || {}).label || newLevel;
+      UI.openModal(
+        '<h3>관리 수준 변경</h3>' +
+        '<p style="color:var(--text-muted);margin-bottom:14px;">' + newLabel + '(으)로 변경합니다. 변경 사유를 기록해 두면 이후 이력에서 확인할 수 있습니다.</p>' +
+        '<div class="field"><label>변경 사유 (선택)</label><textarea id="mgmtReasonInput" style="min-height:70px;" placeholder="예: 최근 재입원 이력 확인되어 집중 관찰 필요"></textarea></div>' +
+        '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="mgmtReasonCancel">취소</button><button class="btn btn-primary" id="mgmtReasonSubmit">변경</button></div>'
+      );
+      document.getElementById('mgmtReasonCancel').onclick = () => UI.closeModal();
+      document.getElementById('mgmtReasonSubmit').onclick = async () => {
+        const reason = document.getElementById('mgmtReasonInput').value;
+        UI.closeModal();
+        await Clients.setManagementLevel(id, newLevel, reason);
+        toast('관리 수준이 변경되었습니다.');
+        UI.renderCurrentView();
+      };
     };
     document.getElementById('deleteClientBtn').onclick = () => UI.confirm('대상자 ' + id + '를 삭제할까요? (관련 SOAP·후속조치·일정 기록은 유지되지만 목록에서 대상자 정보는 사라집니다)', async () => {
       await Clients.remove(id); toast('대상자를 삭제했습니다.'); UI.navigate('clients');
@@ -2072,6 +2278,9 @@ const Views = {
 
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📝 SOAP 기록 ' + (soap.id ? '수정' : '작성') + '</h1>' +
       '<button class="btn btn-sm" id="soapBackBtn">← 뒤로</button></div>';
+    if (soap.status !== 'final'){
+      html += '<p class="help-text" id="autosaveIndicator" style="margin-top:-10px;margin-bottom:14px;">입력하는 동안 자동으로 임시저장됩니다.</p>';
+    }
 
     if (params.relatedFollowUp){
       html += '<div class="example-banner">🔗 관련 후속조치: ' + Utils.escapeHtml(params.relatedFollowUp.text) + ' (완료 처리됨)</div>';
@@ -2154,6 +2363,29 @@ const Views = {
       chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
     });
 
+    // Auto-save while composing: debounced so it fires ~1.5s after the user
+    // stops typing, and only for drafts (never silently rewrites a
+    // final/completed record).
+    let autosaveTimer = null;
+    const scheduleAutosave = () => {
+      if (Views._draftCache.status === 'final') return;
+      if (autosaveTimer) clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(async () => {
+        const current = Views._readSoapForm();
+        const hasContent = (current.S || '').trim() || (current.O || '').trim() || (current.A || '').trim();
+        if (!current.clientId || !hasContent) return;
+        try{
+          await SoapModule.autosave(current);
+          const el = document.getElementById('autosaveIndicator');
+          if (el) el.textContent = '자동 저장됨 · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+        }catch(e){ console.error(e); }
+      }, 1500);
+    };
+    document.querySelectorAll('#appMain input, #appMain textarea, #appMain select').forEach(el => {
+      el.addEventListener('input', scheduleAutosave);
+      el.addEventListener('change', scheduleAutosave);
+    });
+
     const renderChecklist = (checklist) => {
       const box = document.getElementById('checklistBox');
       if (!checklist || checklist.length === 0){ box.innerHTML = ''; return; }
@@ -2167,12 +2399,14 @@ const Views = {
           const result = SoapModule.generateADraft(soap);
           document.getElementById('soapA').value = result.text;
           renderChecklist(result.checklist);
+          scheduleAutosave();
         });
         return;
       }
       const result = SoapModule.generateADraft(soap);
       document.getElementById('soapA').value = result.text;
       renderChecklist(result.checklist);
+      scheduleAutosave();
     };
 
     document.getElementById('genABtn').onclick = () => doGenerate(false);
@@ -2281,14 +2515,14 @@ const Views = {
   // date-sorted list, so a follow-up's due date also shows up under 일정.
   scheduleCombinedItems(){
     const scheduleItems = Schedules.list().map(s => ({
-      kind: 'schedule', id: s.id, clientId: s.clientId, date: s.date,
+      kind: 'schedule', id: s.id, clientId: s.clientId, date: s.date, time: s.time || '',
       typeLabel: s.contactType, note: s.memo || '', status: s.status
     }));
     const followUpItems = FollowUps.list().filter(f => f.dueDate).map(f => ({
-      kind: 'followup', id: f.id, clientId: f.clientId, date: f.dueDate,
+      kind: 'followup', id: f.id, clientId: f.clientId, date: f.dueDate, time: '',
       typeLabel: f.type, note: f.text || '', status: f.status === 'pending' ? 'planned' : 'completed'
     }));
-    return scheduleItems.concat(followUpItems).sort((a, b) => a.date.localeCompare(b.date));
+    return scheduleItems.concat(followUpItems).sort((a, b) => (a.date + (a.time || '99:99')).localeCompare(b.date + (b.time || '99:99')));
   },
 
   // Calendar month currently displayed on the 일정 tab. Kept outside
@@ -2371,13 +2605,13 @@ const Views = {
     if (items.length === 0){
       html += '<div class="empty-msg">해당 조건의 일정이 없습니다.</div>';
     } else {
-      html += '<table><thead><tr><th>날짜</th><th>구분</th><th>대상자</th><th>내용</th><th>상태</th><th></th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>날짜</th><th>시간</th><th>구분</th><th>대상자</th><th>내용</th><th>상태</th><th></th></tr></thead><tbody>';
       items.forEach(it => {
         const c = Clients.get(it.clientId);
         const kindBadge = it.kind === 'schedule' ? '<span class="tag">일정</span>' : '<span class="tag">후속조치</span>';
         const doneAttr = it.kind === 'schedule' ? 'data-done-sch' : 'data-done-fu';
         const delAttr = it.kind === 'schedule' ? 'data-del-sch' : 'data-del-fu2';
-        html += '<tr><td>' + it.date + '</td><td>' + kindBadge + '</td>' +
+        html += '<tr><td>' + it.date + '</td><td>' + (it.time || '-') + '</td><td>' + kindBadge + '</td>' +
           '<td>' + Utils.escapeHtml(it.clientId) + (c && c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') + '</td>' +
           '<td>' + Utils.escapeHtml(it.typeLabel) + (it.note ? ' · ' + Utils.escapeHtml(it.note) : '') + '</td>' +
           '<td>' + (it.status === 'planned' ? '<span class="badge badge-pending">예정</span>' : '<span class="badge badge-completed">완료</span>') + '</td>' +
@@ -2611,6 +2845,7 @@ const Views = {
       '<div class="field"><label>세부 내용 (선택)</label><textarea id="nfText" style="min-height:60px;"></textarea></div>' +
       '<div class="field"><label>예정일</label><input type="date" id="nfDue" value="' + Utils.todayStr() + '"></div>' +
       '<div class="field"><label>메모 (선택)</label><input type="text" id="nfMemo"></div>' +
+      Views.repeatFieldsHtml('nf') +
       '<div class="error-msg hidden" id="nfError"></div>' +
       '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="nfCancel">취소</button><button class="btn btn-primary" id="nfSubmit">등록</button></div>'
     );
@@ -2620,19 +2855,26 @@ const Views = {
         r.closest('.chip-check').classList.add('checked');
       });
     });
+    Views.bindRepeatFields('nf');
     document.getElementById('nfCancel').onclick = () => UI.closeModal();
     document.getElementById('nfSubmit').onclick = async () => {
       try{
         const typeEl = document.querySelector('#modalBox input[name=nfType]:checked');
-        await FollowUps.add({
-          clientId: Views.resolveClientPickerValue(document.getElementById('nfClient').value),
-          type: typeEl ? typeEl.value : '기타',
-          text: document.getElementById('nfText').value,
-          dueDate: document.getElementById('nfDue').value,
-          memo: document.getElementById('nfMemo').value
-        });
+        const clientId = Views.resolveClientPickerValue(document.getElementById('nfClient').value);
+        const baseDate = document.getElementById('nfDue').value;
+        if (!baseDate) throw new Error('예정일을 입력해 주세요.');
+        const dates = Views.readRepeatDates('nf', baseDate);
+        for (const dueDate of dates){
+          await FollowUps.add({
+            clientId,
+            type: typeEl ? typeEl.value : '기타',
+            text: document.getElementById('nfText').value,
+            dueDate,
+            memo: document.getElementById('nfMemo').value
+          });
+        }
         UI.closeModal();
-        toast('후속조치를 등록했습니다.');
+        toast(dates.length > 1 ? '후속조치를 ' + dates.length + '건 등록했습니다.' : '후속조치를 등록했습니다.');
         UI.renderCurrentView();
       }catch(e){
         const err = document.getElementById('nfError');
@@ -2646,24 +2888,35 @@ const Views = {
     UI.openModal(
       '<h3>일정 등록</h3>' +
       '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(prefillClientId || '', 'nsClient') + '</div>' +
+      '<div class="form-grid">' +
       '<div class="field"><label>날짜</label><input type="date" id="nsDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field"><label>시간 (선택)</label><input type="time" id="nsTime"></div>' +
+      '</div>' +
       '<div class="field"><label>접촉 유형</label><select id="nsContactType">' +
       CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
       '<div class="field"><label>메모 (선택)</label><input type="text" id="nsMemo"></div>' +
+      Views.repeatFieldsHtml('ns') +
       '<div class="error-msg hidden" id="nsError"></div>' +
       '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="nsCancel">취소</button><button class="btn btn-primary" id="nsSubmit">등록</button></div>'
     );
+    Views.bindRepeatFields('ns');
     document.getElementById('nsCancel').onclick = () => UI.closeModal();
     document.getElementById('nsSubmit').onclick = async () => {
       try{
-        await Schedules.add({
-          clientId: Views.resolveClientPickerValue(document.getElementById('nsClient').value),
-          date: document.getElementById('nsDate').value,
-          contactType: document.getElementById('nsContactType').value,
-          memo: document.getElementById('nsMemo').value
-        });
+        const clientId = Views.resolveClientPickerValue(document.getElementById('nsClient').value);
+        const baseDate = document.getElementById('nsDate').value;
+        if (!baseDate) throw new Error('날짜를 입력해 주세요.');
+        const dates = Views.readRepeatDates('ns', baseDate);
+        for (const date of dates){
+          await Schedules.add({
+            clientId, date,
+            time: document.getElementById('nsTime').value,
+            contactType: document.getElementById('nsContactType').value,
+            memo: document.getElementById('nsMemo').value
+          });
+        }
         UI.closeModal();
-        toast('일정을 등록했습니다.');
+        toast(dates.length > 1 ? '일정을 ' + dates.length + '건 등록했습니다.' : '일정을 등록했습니다.');
         UI.renderCurrentView();
       }catch(e){
         const err = document.getElementById('nsError');
@@ -2694,6 +2947,7 @@ async function bootstrapApp(){
 
   Auth.startIdleWatcher();
   Notifications.start();
+  Backup.overdueCached = await Backup.isBackupOverdue();
 
   UI.navigate('dashboard', {});
 }
