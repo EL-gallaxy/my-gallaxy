@@ -585,6 +585,11 @@ const Utils = {
     if (days < 60) return days + '일';
     return Math.floor(days / 30) + '개월';
   },
+  // 'YYYY-MM-DD' plus an optional ' HH:MM' — used everywhere a SOAP's date is
+  // displayed, since SOAP records may optionally carry a time-of-day.
+  formatSoapDate(soap){
+    return soap.date + (soap.time ? ' ' + soap.time : '');
+  },
   // 'YYYY-MM-DD' of the Sunday starting the week containing dateStr — used by
   // the 일정 tab's 주간 보기.
   startOfWeekStr(dateStr){
@@ -1550,7 +1555,7 @@ const SoapModule = {
   createBlank(prefill){
     prefill = prefill || {};
     return {
-      id: '', clientId: prefill.clientId || '', date: Utils.todayStr(), contactType: '전화',
+      id: '', clientId: prefill.clientId || '', date: Utils.todayStr(), time: '', contactType: '전화',
       subject: prefill.subject || 'client',
       areas: [], S: '', O: '', A: '', PText: prefill.PText || '', PActions: [], pDate: '',
       status: 'draft', createdAt: '', updatedAt: ''
@@ -1659,7 +1664,7 @@ const SoapModule = {
     const pLine = parts.join(' ');
     const subjectLabel = CONSTANTS.SOAP_SUBJECTS[soap.subject] || CONSTANTS.SOAP_SUBJECTS.client;
     return [
-      '[' + soap.date + ' / ' + soap.clientId + ' / ' + soap.contactType + ' / ' + subjectLabel + areasLine + ']',
+      '[' + soap.date + (soap.time ? ' ' + soap.time : '') + ' / ' + soap.clientId + ' / ' + soap.contactType + ' / ' + subjectLabel + areasLine + ']',
       'S. ' + (soap.S || ''),
       'O. ' + (soap.O || ''),
       'A. ' + (soap.A || ''),
@@ -2011,9 +2016,9 @@ const CSV = {
     this.download('monthly_report_' + report.month + '.csv', this.build(headers, rows));
   },
   exportSoaps(list){
-    const headers = ['날짜', '대상자', '접촉유형', '상담영역', '상태', 'S', 'O', 'A', 'P', '예정일'];
+    const headers = ['날짜', '시간', '대상자', '접촉유형', '상담영역', '상태', 'S', 'O', 'A', 'P', '예정일'];
     const rows = list.map(s => [
-      s.date, s.clientId, s.contactType, (s.areas || []).join(';'), s.status === 'final' ? '완료' : '임시저장',
+      s.date, s.time || '', s.clientId, s.contactType, (s.areas || []).join(';'), s.status === 'final' ? '완료' : '임시저장',
       s.S || '', s.O || '', s.A || '', s.PText || '', s.pDate || ''
     ]);
     this.download('soap_records_' + Utils.todayStr() + '.csv', this.build(headers, rows));
@@ -2539,7 +2544,7 @@ const Views = {
     } else {
       draftSoaps.forEach(s => {
         html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
-          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + s.date + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
+          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + Utils.formatSoapDate(s) + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
           '<div class="row-sub">' + SoapModule.describeMissingParts(s) + '</div></div></div>';
       });
     }
@@ -2552,7 +2557,7 @@ const Views = {
     } else {
       recentFinal.forEach(s => {
         html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
-          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + s.date + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
+          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + Utils.formatSoapDate(s) + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
           '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 60) + '</div></div></div>';
       });
     }
@@ -3064,7 +3069,7 @@ const Views = {
     } else {
       timeline.forEach(s => {
         soapHtml += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
-          '<div class="row-title">' + s.date + ' · ' + Utils.escapeHtml(s.contactType) + '상담 ' +
+          '<div class="row-title">' + Utils.formatSoapDate(s) + ' · ' + Utils.escapeHtml(s.contactType) + '상담 ' +
           (s.status === 'draft' ? '<span class="badge badge-draft">임시저장</span>' : '<span class="badge badge-final">완료</span>') + '</div>' +
           '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 70) + '</div></div></div>';
       });
@@ -3451,7 +3456,7 @@ const Views = {
 
     html += '<div class="panel"><div class="panel-title">최근 SOAP 사정(A) 요약</div>' +
       (recentSoaps.length
-        ? recentSoaps.map(s => '<p style="font-size:0.9rem;margin-bottom:8px;"><strong>' + s.date + ' · ' + Utils.escapeHtml(s.contactType) + '</strong><br>' + Utils.escapeHtml(s.A || '') + '</p>').join('')
+        ? recentSoaps.map(s => '<p style="font-size:0.9rem;margin-bottom:8px;"><strong>' + Utils.formatSoapDate(s) + ' · ' + Utils.escapeHtml(s.contactType) + '</strong><br>' + Utils.escapeHtml(s.A || '') + '</p>').join('')
         : '<div class="empty-msg">완료된 SOAP 기록 없음</div>') + '</div>';
 
     html += '<div class="panel"><div class="panel-title">미완료 후속조치</div>' +
@@ -3489,7 +3494,7 @@ const Views = {
       html += '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담대상</th><th>상담영역</th><th>상태</th></tr></thead><tbody>';
       items.forEach(s => {
         html += '<tr class="clickable-row" data-open-soap="' + s.id + '">' +
-          '<td>' + s.date + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td><td>' + Utils.escapeHtml(s.contactType) + '</td>' +
+          '<td>' + Utils.formatSoapDate(s) + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td><td>' + Utils.escapeHtml(s.contactType) + '</td>' +
           '<td>' + Utils.escapeHtml(CONSTANTS.SOAP_SUBJECTS[s.subject] || CONSTANTS.SOAP_SUBJECTS.client) + '</td>' +
           '<td>' + (s.areas || []).map(a => '<span class="tag">' + Utils.escapeHtml(a) + '</span>').join('') + '</td>' +
           '<td>' + (s.status === 'draft' ? '<span class="badge badge-draft">임시저장</span>' : '<span class="badge badge-final">완료</span>') + '</td>' +
@@ -3543,6 +3548,7 @@ const Views = {
     html += '<div class="panel"><div class="form-grid">';
     html += '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(soap.clientId, 'soapClientPicker') + '</div>';
     html += '<div class="field"><label>날짜</label><input type="date" id="soapDate" value="' + soap.date + '"></div>';
+    html += '<div class="field"><label>시간(선택)</label><input type="time" id="soapTime" value="' + (soap.time || '') + '"></div>';
     html += '<div class="field"><label>접촉 유형</label><select id="soapContactType">' +
       CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '"' + (t === soap.contactType ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>';
     html += '<div class="field"><label>상담 대상</label><select id="soapSubject">' +
@@ -3598,6 +3604,7 @@ const Views = {
     const soap = Views._draftCache;
     soap.clientId = Views.resolveClientPickerValue(document.getElementById('soapClientPicker').value);
     soap.date = document.getElementById('soapDate').value;
+    soap.time = document.getElementById('soapTime').value;
     soap.contactType = document.getElementById('soapContactType').value;
     soap.subject = document.getElementById('soapSubject').value;
     soap.areas = Array.from(document.querySelectorAll('.areaChk:checked')).map(el => el.value);
@@ -4049,7 +4056,7 @@ const Views = {
       }
       box.innerHTML = '<div style="text-align:right;margin-bottom:8px;"><button class="btn btn-sm" id="exportSearchCsvBtn">⬇ CSV 내보내기</button></div>' +
         '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담영역</th><th>내용</th></tr></thead><tbody>' +
-        results.map(s => '<tr class="clickable-row" data-open-soap="' + s.id + '"><td>' + s.date + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td>' +
+        results.map(s => '<tr class="clickable-row" data-open-soap="' + s.id + '"><td>' + Utils.formatSoapDate(s) + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td>' +
           '<td>' + Utils.escapeHtml(s.contactType) + '</td><td>' + (s.areas || []).join(', ') + '</td>' +
           '<td>' + Utils.truncate(Utils.escapeHtml(s.S || s.A || ''), 60) + '</td></tr>').join('') +
         '</tbody></table>';
@@ -4086,7 +4093,7 @@ const Views = {
         html += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' · ' + Utils.escapeHtml(s.contactType) +
           (s.status === 'draft' ? ' <span class="badge badge-draft">임시저장</span>' : ' <span class="badge badge-final">완료</span>') + '</div>' +
-          '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 70) + '</div></div></div>';
+          '<div class="row-sub">상담일시: ' + Utils.formatSoapDate(s) + ' · ' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 70) + '</div></div></div>';
       });
     }
 
