@@ -407,7 +407,7 @@
     #vsViolence, #vsCompanion, #vsPets, #reportMonthSelect, #exportReportCsvBtn, #reportModeMonthBtn,
     #reportModeYearBtn, #reportYearSelect, #exportAnnualReportCsvBtn,
     #printReportBtn, #journalDateInput, #printJournalBtn, #icsExportBtn, #dailyBriefingBtn,
-    #briefingDateInput, #printBriefingBtn, .example-banner{
+    #briefingDateInput, #printBriefingBtn, #addRiskBtn, #riskFactorList, #addReassessBtn, .example-banner{
       display:none !important;
     }
     body{background:#fff;}
@@ -1015,7 +1015,28 @@ const CONSTANTS = {
   // 복약 갱신(다음 처방·진료 예정일) 임박 알림 기준 — 관리수준과 무관하게
   // 하나의 기준을 쓴다(처방 주기는 진단·병원 사정에 따르지, 사례관리 수준과
   // 직접 연동되지 않으므로).
-  MEDICATION_RENEWAL_ALERT_DAYS: 90
+  MEDICATION_RENEWAL_ALERT_DAYS: 90,
+  // 구조화된 자·타해 위험도 평가 요인 — 체크한 항목 개수로 앱이 위험도를
+  // 자동 산정하지 않는다. 어디까지나 실무자가 판단에 참고할 사실 항목이며,
+  // 최종 위험도(낮음/중간/높음)는 실무자가 직접 선택한다.
+  RISK_FACTORS: [
+    { key: 'ideation', label: '최근 자살사고(생각) 있음' },
+    { key: 'plan', label: '구체적인 자살계획 있음' },
+    { key: 'meansAccess', label: '자살 수단에 대한 접근 가능성 있음' },
+    { key: 'priorAttempt', label: '과거 자살시도 이력 있음' },
+    { key: 'hopelessness', label: '최근 절망감·무력감 호소' },
+    { key: 'substanceUse', label: '최근 음주·약물 등 물질 남용 문제' }
+  ],
+  RISK_LEVELS: {
+    low:    { label: '낮음', badgeClass: 'badge-temporary' },
+    medium: { label: '중간', badgeClass: 'badge-intensive' },
+    high:   { label: '높음', badgeClass: 'badge-crisis' }
+  },
+  // 정기 재사정 주기 — 관리수준을 재산정 없이 방치하지 않도록, 관리수준별로
+  // 마지막 재사정일(또는 등록일)로부터 이 일수가 지나면 대시보드에서 짚어준다.
+  // 미접촉 대상자 기준과는 별개의 절차적 장치(대면 접촉 여부와 무관하게,
+  // "정식으로 다시 사정했는가"만 본다).
+  REASSESSMENT_INTERVAL_DAYS_BY_LEVEL: { crisis: 90, intensive: 180, maintenance: 365, temporary: 365 }
 };
 
 /* =========================================================================
@@ -1189,8 +1210,8 @@ const FontSize = {
 const DashboardPrefs = {
   WIDGETS: {
     crisis: '🚨 위기관리 대상자 현황', overdue: '⚠ 기한 초과 후속조치', gap: '🕓 미접촉 대상자',
-    medRenewal: '💊 복약 갱신 임박', today: '🔴 오늘 할 일', draft: '📝 미완성 SOAP',
-    recent: '최근 기록', selfCare: '🧘 자기돌봄 메모', dataManage: '데이터 관리'
+    medRenewal: '💊 복약 갱신 임박', reassessment: '📋 정기 재사정 필요', today: '🔴 오늘 할 일',
+    draft: '📝 미완성 SOAP', recent: '최근 기록', selfCare: '🧘 자기돌봄 메모', dataManage: '데이터 관리'
   },
   hidden: {},
 
@@ -1518,6 +1539,72 @@ const Clients = {
     if (!client) return;
     client.assessments = (client.assessments || []).filter(a => a.id !== assessmentId);
     await Storage.saveEncrypted('clients', client);
+  },
+
+  // 구조화된 자·타해 위험도 평가 — RISK_FACTORS 체크 항목은 참고용 사실
+  // 기록일 뿐이며, 앱이 이를 근거로 위험도를 자동 산정하지 않는다. level은
+  // 실무자가 직접 선택해 기록하고, 이력을 남겨 변화 추이를 확인할 수 있게 한다.
+  async addRiskAssessment(id, { date, level, factors, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.riskAssessments = client.riskAssessments || [];
+    client.riskAssessments.push({
+      id: Utils.uid('risk'), date: date || Utils.todayStr(), level: level || 'low',
+      factors: factors || {}, note: (note || '').trim()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeRiskAssessment(id, riskId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.riskAssessments = (client.riskAssessments || []).filter(r => r.id !== riskId);
+    await Storage.saveEncrypted('clients', client);
+  },
+  latestRiskAssessment(id){
+    const client = State.clients.get(id);
+    if (!client || !(client.riskAssessments || []).length) return null;
+    return client.riskAssessments.slice().sort((a, b) => a.date.localeCompare(b.date)).reverse()[0];
+  },
+
+  // 정기 재사정 이력 — 미접촉 여부(대면 접촉 유무)와는 별개로, 관리수준을
+  // 정식으로 다시 사정했는지를 절차적으로 짚어주기 위한 기록.
+  async addReassessment(id, { date, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.reassessments = client.reassessments || [];
+    client.reassessments.push({ id: Utils.uid('reas'), date: date || Utils.todayStr(), note: (note || '').trim() });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeReassessment(id, reassessId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.reassessments = (client.reassessments || []).filter(r => r.id !== reassessId);
+    await Storage.saveEncrypted('clients', client);
+  },
+  lastReassessmentDate(id){
+    const client = State.clients.get(id);
+    if (!client) return null;
+    let latest = null;
+    (client.reassessments || []).forEach(r => { if (!latest || r.date > latest) latest = r.date; });
+    return latest;
+  },
+  getReassessmentGapInfo(clientId){
+    const client = this.get(clientId);
+    if (!client || client.status === 'closed') return null;
+    const thresholdDays = CONSTANTS.REASSESSMENT_INTERVAL_DAYS_BY_LEVEL[client.managementLevel];
+    if (!thresholdDays) return null;
+    const lastDate = this.lastReassessmentDate(clientId);
+    const baseDate = lastDate || client.registrationDate;
+    if (!baseDate) return null;
+    const days = Utils.daysSince(baseDate);
+    if (days < thresholdDays) return null;
+    return { clientId, lastReassessmentDate: lastDate || null, sinceRegistration: !lastDate, days, thresholdDays };
+  },
+  reassessmentGapList(){
+    return this.list()
+      .map(c => this.getReassessmentGapInfo(c.id))
+      .filter(Boolean)
+      .sort((a, b) => (b.days - b.thresholdDays) - (a.days - a.thresholdDays));
   },
 
   // 필수 서류/동의서 체크리스트 — 수령 여부와 날짜만 토글로 관리한다.
@@ -2463,6 +2550,8 @@ const Search = {
       (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · ')));
       (c.documents || []).forEach(d => push(c, '필수 서류', d.name));
       (c.assessments || []).forEach(a => push(c, '사정도구 점수', [a.scale, a.score, a.note].filter(Boolean).join(' · ')));
+      (c.riskAssessments || []).forEach(r => push(c, '위험도 평가', [(CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note].filter(Boolean).join(' · ')));
+      (c.reassessments || []).forEach(r => push(c, '정기 재사정', r.note));
       (c.admissions || []).forEach(a => push(c, '입퇴원 이력', [a.type, a.hospital, a.note].filter(Boolean).join(' · ')));
       (c.tags || []).forEach(t => push(c, '특성 태그', t));
     });
@@ -3030,6 +3119,8 @@ const Views = {
     (c.medications || []).forEach(m => push(m.date, '', '💊', '복약 등록', [m.name, m.dose].filter(Boolean).join(' ')));
     (c.caseConferences || []).forEach(cf => push(cf.date, '', '🗂', '사례회의', cf.decision || cf.discussion || ''));
     (c.assessments || []).forEach(a => push(a.date, '', '📊', '사정도구: ' + a.scale, a.score ? a.score + '점' : ''));
+    (c.riskAssessments || []).forEach(r => push(r.date, '', '🎯', '위험도 평가: ' + (CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note || ''));
+    (c.reassessments || []).forEach(r => push(r.date, '', '📋', '정기 재사정 완료', r.note || ''));
     (c.documents || []).forEach(d => { if (d.receivedDate) push(d.receivedDate, '', '📄', '서류 수령', d.name); });
     (c.managementHistory || []).forEach(h => {
       const fromLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.from] || {}).label || h.from || '(미지정)';
@@ -3164,6 +3255,7 @@ const Views = {
     const contactGaps = Clients.contactGapList();
     const medRenewals = Clients.getUpcomingMedicationRenewals(CONSTANTS.MEDICATION_RENEWAL_ALERT_DAYS);
     const crisisClients = Clients.list().filter(c => c.managementLevel === 'crisis' && c.status !== 'closed');
+    const reassessGaps = Clients.reassessmentGapList();
 
     const hasSeed = (State.seedClientIds || []).length > 0 && (State.seedClientIds || []).some(id => State.clients.has(id));
 
@@ -3196,6 +3288,7 @@ const Views = {
       (hide('gap') ? '' : '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">🕓 미접촉 대상자</div></button>') +
       (hide('crisis') ? '' : '<button class="summary-card overdue" data-scroll="crisisSection"><div class="num">' + crisisClients.length + '</div><div class="label">🚨 위기관리 대상자</div></button>') +
       (hide('medRenewal') ? '' : '<button class="summary-card overdue" data-scroll="medRenewalSection"><div class="num">' + medRenewals.length + '</div><div class="label">💊 복약 갱신 임박</div></button>') +
+      (hide('reassessment') ? '' : '<button class="summary-card gap" data-scroll="reassessmentSection"><div class="num">' + reassessGaps.length + '</div><div class="label">📋 정기 재사정 필요</div></button>') +
       '</div>';
 
     // 위기관리 대상자 현황판 — 관리수준을 필터링해서 목록을 찾아가지 않아도,
@@ -3270,6 +3363,25 @@ const Views = {
             '<strong>' + Utils.escapeHtml(r.clientId) + '</strong>' + (r.alias ? ' (' + Utils.escapeHtml(r.alias) + ')' : '') +
             (r.overdue ? ' <span class="badge badge-crisis">⏰ 예정일 경과</span>' : ' <span class="badge badge-pending">⏳ 임박</span>') +
             '<br><span style="font-size:0.82rem;">' + Utils.escapeHtml(r.medication.name) + ' · 다음 처방(진료) 예정일: ' + r.medication.nextRxDate + '</span>' +
+            '</div>';
+        });
+      }
+      html += '</div>';
+    }
+
+    // 정기 재사정 필요 — 대면 접촉 유무와 무관하게, 관리수준을 정식으로
+    // 다시 사정한 지 관리수준별 기준 일수가 지난 대상자를 짚어준다.
+    if (!hide('reassessment')){
+      html += '<div class="panel" id="reassessmentSection"><div class="panel-title">📋 정기 재사정 필요</div>';
+      if (reassessGaps.length === 0){
+        html += '<div class="empty-msg">기준 주기 이내로 재사정이 이루어져, 재사정이 필요한 대상자가 없습니다.</div>';
+      } else {
+        reassessGaps.forEach(g => {
+          const gc = Clients.get(g.clientId);
+          const levelLabel = (CONSTANTS.MANAGEMENT_LEVELS[gc && gc.managementLevel] || {}).label || '';
+          html += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
+            '<strong>' + Utils.escapeHtml(g.clientId) + '</strong>' + (gc && gc.alias ? ' (' + Utils.escapeHtml(gc.alias) + ')' : '') + ' · ' + levelLabel +
+            '<br><span style="font-size:0.82rem;">' + (g.lastReassessmentDate ? '마지막 재사정: ' + g.lastReassessmentDate : '재사정 이력 없음(등록일 기준)') + ' · 약 ' + Utils.formatElapsedDays(g.days) + ' 경과 (기준: ' + Utils.formatElapsedDays(g.thresholdDays) + ')</span>' +
             '</div>';
         });
       }
@@ -3594,7 +3706,8 @@ const Views = {
     html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + Utils.escapeHtml(c.id) + (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') +
       (isClosed ? ' <span class="badge badge-closed">🔒 종결</span>' : '') +
       ((c.crisisEvents || []).length ? ' <span class="badge badge-crisis-flag">⚠ 위기개입 이력 있음</span>' : '') +
-      ((c.visitSafety && (c.visitSafety.hasViolenceHistory || c.visitSafety.needsCompanion || c.visitSafety.hasPets)) ? ' <span class="badge badge-crisis-flag">🧳 방문 전 확인 필요</span>' : '') + '</h1>' +
+      ((c.visitSafety && (c.visitSafety.hasViolenceHistory || c.visitSafety.needsCompanion || c.visitSafety.hasPets)) ? ' <span class="badge badge-crisis-flag">🧳 방문 전 확인 필요</span>' : '') +
+      ((Clients.latestRiskAssessment(c.id) || {}).level === 'high' ? ' <span class="badge badge-crisis-flag">🎯 고위험 평가</span>' : '') + '</h1>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-sm btn-danger" id="emergencyInfoBtn">🚨 긴급 정보</button>' +
       '<button class="btn btn-sm" id="handoverBtn">📄 인계서</button>' +
       '<button class="btn btn-sm" id="printClientBtn">🖨️ 인쇄</button>' +
@@ -3715,6 +3828,34 @@ const Views = {
         '<button class="btn btn-sm" id="addGoalBtn">＋ 목표 추가</button></details>';
     }
 
+    // 정기 재사정 — 대면 접촉 여부(미접촉 대상자 알림)와는 별개로, 관리수준을
+    // 정식으로 다시 사정했는지를 절차적으로 짚어주는 이력. 신입 직원에게는
+    // 당장 급하지 않은 행정 절차라 간소화 모드에서 숨긴다.
+    if (!SimpleMode.isSimple()){
+      const reassessments = (c.reassessments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+      const reassessGap = Clients.getReassessmentGapInfo(c.id);
+      historyHtml += '<details class="panel"' + (reassessments.length ? ' open' : '') + '><summary class="panel-title">📋 정기 재사정</summary>' +
+        '<p class="help-text" style="margin-bottom:12px;">' +
+        (reassessGap
+          ? '<span style="color:var(--danger);">⚠ 마지막 재사정으로부터 약 ' + Utils.formatElapsedDays(reassessGap.days) + ' 경과 (기준: ' + Utils.formatElapsedDays(reassessGap.thresholdDays) + ')</span>'
+          : (reassessments.length ? '기준 주기 이내로 재사정이 이루어졌습니다.' : '아직 재사정 이력이 없습니다.')) +
+        '</p>';
+      if (reassessments.length === 0){
+        historyHtml += '<div class="empty-msg">등록된 재사정 이력이 없습니다.</div>';
+      } else {
+        reassessments.forEach(r => {
+          historyHtml += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + r.date + '</div>' +
+            (r.note ? '<div class="row-sub">' + Utils.escapeHtml(r.note) + '</div>' : '') +
+            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-reassess="' + r.id + '">삭제</button></div></div>';
+        });
+      }
+      historyHtml += '<div class="divider"></div><div class="form-grid">' +
+        '<div class="field"><label>재사정일</label><input type="date" id="reassessDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field full"><label>메모(선택)</label><input type="text" id="reassessNote" placeholder="예: 정기 사례회의를 통해 관리수준 재검토"></div></div>' +
+        '<button class="btn btn-sm" id="addReassessBtn">＋ 재사정 완료 기록</button></details>';
+    }
+
     if (c.managementHistory && c.managementHistory.length){
       historyHtml += '<details class="panel" open><summary class="panel-title">관리수준 변경 이력</summary>';
       c.managementHistory.slice().reverse().forEach(h => {
@@ -3743,6 +3884,41 @@ const Views = {
       '<div class="field full"><label>기타 방문 시 주의사항(선택)</label>' +
       '<textarea id="vsNote" style="min-height:60px;" placeholder="예: 3층 도보, 주차 어려움, 오후 방문 선호 등">' + Utils.escapeHtml(vs.note || '') + '</textarea></div>' +
       '<button class="btn btn-primary btn-sm" id="saveVisitSafetyBtn">저장</button></div>';
+
+    // 구조화된 자·타해 위험도 평가 — 체크리스트는 실무자의 판단을 돕는 참고
+    // 사실 항목일 뿐이며, 앱이 체크 개수로 위험도를 자동 산정하지 않는다.
+    // 위험도(낮음/중간/높음)는 실무자가 직접 선택해서 기록하고, 이력으로 남긴다.
+    // 안전과 직결된 항목이라 간소화 모드에서도 계속 표시한다.
+    const riskAssessments = (c.riskAssessments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    const latestRisk = riskAssessments[0] || null;
+    const riskLevelInfo = latestRisk ? (CONSTANTS.RISK_LEVELS[latestRisk.level] || CONSTANTS.RISK_LEVELS.low) : null;
+    safetyHtml += '<details class="panel"' + (riskAssessments.length ? ' open' : '') +
+      (latestRisk && latestRisk.level === 'high' ? ' style="border-color:var(--danger);background:var(--danger-soft);"' : '') + '>' +
+      '<summary class="panel-title">🎯 위험도 평가 (구조화)' + (latestRisk ? ' <span class="badge ' + riskLevelInfo.badgeClass + '">최근: ' + riskLevelInfo.label + '</span>' : '') + '</summary>' +
+      '<p class="help-text" style="margin-bottom:12px;">아래 항목은 위험도를 자동으로 판정하지 않는 참고용 체크리스트입니다. 최종 위험도는 실무자가 직접 선택해 기록하세요.</p>';
+    if (riskAssessments.length === 0){
+      safetyHtml += '<div class="empty-msg">기록된 위험도 평가가 없습니다.</div>';
+    } else {
+      riskAssessments.forEach(r => {
+        const li = CONSTANTS.RISK_LEVELS[r.level] || CONSTANTS.RISK_LEVELS.low;
+        const checkedFactors = CONSTANTS.RISK_FACTORS.filter(f => r.factors && r.factors[f.key]).map(f => f.label);
+        safetyHtml += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + r.date + ' · <span class="badge ' + li.badgeClass + '">' + li.label + '</span></div>' +
+          (checkedFactors.length ? '<div class="row-sub">해당 항목: ' + checkedFactors.map(Utils.escapeHtml).join(', ') + '</div>' : '<div class="row-sub">해당하는 위험 요인 없음</div>') +
+          (r.note ? '<div class="row-sub">메모: ' + Utils.escapeHtml(r.note) + '</div>' : '') +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-risk="' + r.id + '">삭제</button></div></div>';
+      });
+    }
+    safetyHtml += '<div class="divider"></div>' +
+      '<div id="riskFactorList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">' +
+      CONSTANTS.RISK_FACTORS.map(f => '<label class="field-inline"><input type="checkbox" class="riskFactorChk" data-factor="' + f.key + '"> ' + f.label + '</label>').join('') +
+      '</div>' +
+      '<div class="form-grid">' +
+      '<div class="field"><label>위험도 (실무자 판단)</label><select id="riskLevel">' +
+      Object.keys(CONSTANTS.RISK_LEVELS).map(k => '<option value="' + k + '">' + CONSTANTS.RISK_LEVELS[k].label + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>평가일</label><input type="date" id="riskDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field full"><label>메모(선택)</label><textarea id="riskNote" style="min-height:60px;"></textarea></div></div>' +
+      '<button class="btn btn-sm" id="addRiskBtn">＋ 위험도 평가 추가</button></details>';
 
     // 위기 시 안전계획(Safety Plan) — 위기가 실제로 발생한 뒤 남기는 "위기개입
     // 기록"과 달리, 위기가 오기 전에 대상자와 함께 미리 세워두는 예방적 계획.
@@ -4207,6 +4383,27 @@ const Views = {
       });
     });
 
+    document.getElementById('addRiskBtn').onclick = async () => {
+      const factors = {};
+      document.querySelectorAll('.riskFactorChk').forEach(chk => { factors[chk.dataset.factor] = chk.checked; });
+      await Clients.addRiskAssessment(id, {
+        date: document.getElementById('riskDate').value,
+        level: document.getElementById('riskLevel').value,
+        factors,
+        note: document.getElementById('riskNote').value
+      });
+      toast('위험도 평가를 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-risk]').forEach(el => {
+      el.onclick = () => UI.confirm('이 위험도 평가 기록을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
+        await Clients.removeRiskAssessment(id, el.dataset.delRisk);
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
+
     document.getElementById('addCrisisBtn').onclick = async () => {
       await Clients.addCrisisEvent(id, {
         type: document.getElementById('crisisType').value,
@@ -4396,6 +4593,25 @@ const Views = {
       });
     });
 
+    // 정기 재사정 (간소화 모드에서는 패널 자체가 렌더링되지 않으므로 가드 필요)
+    const addReassessBtn = document.getElementById('addReassessBtn');
+    if (addReassessBtn) addReassessBtn.onclick = async () => {
+      await Clients.addReassessment(id, {
+        date: document.getElementById('reassessDate').value,
+        note: document.getElementById('reassessNote').value
+      });
+      toast('재사정 완료를 기록했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-reassess]').forEach(el => {
+      el.onclick = () => UI.confirm('이 재사정 기록을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
+        await Clients.removeReassessment(id, el.dataset.delReassess);
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
+
     const famBtn = document.getElementById('addFamilyBtn');
     if (famBtn) famBtn.onclick = async () => {
       try{
@@ -4489,6 +4705,7 @@ const Views = {
 
     const latestMgmtChange = (c.managementHistory || []).slice(-1)[0];
     const latestCrisis = (c.crisisEvents || []).slice().sort((a, b) => b.date.localeCompare(a.date))[0];
+    const latestRisk = Clients.latestRiskAssessment(id);
     const latestMed = (c.medications || []).slice().sort((a, b) => b.date.localeCompare(a.date))[0];
     const recentSoaps = SoapModule.listByClient(id).filter(s => s.status === 'final').slice(0, 2);
     const pendingFus = FollowUps.list().filter(f => f.clientId === id && f.status === 'pending');
@@ -4517,6 +4734,11 @@ const Views = {
     }
 
     html += '<div class="panel"><div class="panel-title">위기·안전 정보</div>';
+    if (latestRisk){
+      const li = CONSTANTS.RISK_LEVELS[latestRisk.level] || CONSTANTS.RISK_LEVELS.low;
+      html += '<p style="font-weight:600;font-size:0.85rem;margin-bottom:4px;">최근 위험도 평가</p>' +
+        '<p style="font-size:0.9rem;margin-bottom:10px;">' + latestRisk.date + ' · <span class="badge ' + li.badgeClass + '">' + li.label + '</span>' + (latestRisk.note ? ' — ' + Utils.escapeHtml(latestRisk.note) : '') + '</p>';
+    }
     html += '<p style="font-weight:600;font-size:0.85rem;margin-bottom:4px;">최근 위기개입</p>';
     html += latestCrisis
       ? '<p style="font-size:0.9rem;margin-bottom:10px;">' + latestCrisis.date + (latestCrisis.time ? ' ' + latestCrisis.time : '') + ' · <span class="badge badge-crisis">' + Utils.escapeHtml(latestCrisis.type) + '</span>' + (latestCrisis.description ? ' — ' + Utils.escapeHtml(latestCrisis.description) : '') + '</p>'
@@ -4541,6 +4763,7 @@ const Views = {
       '<p style="font-size:0.9rem;white-space:pre-line;">' + (Utils.escapeHtml(c.mse || '') || '<span class="empty-msg" style="padding:0;">기록 없음</span>') + '</p>' +
       (c.longTermGoal ? '<p style="font-size:0.85rem;color:var(--text-muted);"><strong>장기목표:</strong> ' + Utils.nl2br(c.longTermGoal) + '</p>' : '') +
       (c.shortTermGoal ? '<p style="font-size:0.85rem;color:var(--text-muted);"><strong>단기목표:</strong> ' + Utils.nl2br(c.shortTermGoal) + '</p>' : '') +
+      ((c.intakeAssessment && c.intakeAssessment.strengths) ? '<p style="font-size:0.85rem;color:var(--text-muted);"><strong>강점 및 자원:</strong> ' + Utils.nl2br(c.intakeAssessment.strengths) + '</p>' : '') +
       '</div>';
 
     html += '<div class="panel"><div class="panel-title">최근 SOAP 사정(A) 요약</div>' +
@@ -5846,6 +6069,13 @@ const Views = {
     const c = Clients.get(id);
     if (!c) return;
     let html = '<h3 style="color:var(--danger);">🚨 긴급 정보 — ' + Utils.escapeHtml(c.id) + (c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') + '</h3>';
+
+    const latestRisk = Clients.latestRiskAssessment(id);
+    if (latestRisk){
+      const li = CONSTANTS.RISK_LEVELS[latestRisk.level] || CONSTANTS.RISK_LEVELS.low;
+      html += '<p style="font-weight:600;margin:14px 0 6px;">최근 위험도 평가</p>' +
+        '<p style="font-size:0.9rem;margin:0 0 4px;"><span class="badge ' + li.badgeClass + '">' + li.label + '</span> · ' + latestRisk.date + (latestRisk.note ? ' · ' + Utils.escapeHtml(latestRisk.note) : '') + '</p>';
+    }
 
     html += '<p style="font-weight:600;margin:14px 0 6px;">보호자·비상연락처</p>';
     const contacts = c.emergencyContacts || [];
