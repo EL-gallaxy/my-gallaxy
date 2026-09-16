@@ -252,7 +252,7 @@
 
   /* modal */
   .modal-overlay{
-    position:fixed;inset:0;background:rgba(30,30,28,0.42);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px;
+    position:fixed;inset:0;background:rgba(30,30,28,0.42);display:flex;align-items:center;justify-content:center;z-index:300;padding:16px;
   }
   .modal-box{background:var(--surface);border-radius:10px;max-width:520px;width:100%;padding:22px 24px;max-height:88vh;overflow-y:auto;box-shadow:0 8px 30px rgba(0,0,0,0.2);}
 
@@ -385,7 +385,11 @@
       </div>
       <div class="error-msg hidden" id="loginError"></div>
       <button class="btn btn-primary btn-block" id="loginSubmitBtn">잠금 해제</button>
-      <p class="help-text" style="margin-top:14px;">비밀번호를 잊으면 암호화된 데이터를 복구할 수 없습니다. <button type="button" class="btn-link" id="resetAllLink" style="font-size:0.78rem;">모든 데이터 초기화</button></p>
+      <p class="help-text" style="margin-top:14px;">비밀번호를 잊으면 암호화된 데이터를 복구할 수 없습니다.</p>
+      <div class="hidden" id="loginResetPrompt" style="margin-top:8px;text-align:center;">
+        <p class="help-text" style="margin-bottom:8px;">비밀번호가 계속 맞지 않는다면, 데이터를 초기화하고 새로 시작할 수 있습니다.</p>
+        <button type="button" class="btn btn-sm btn-danger" id="resetAllLink">🗑 모든 데이터 초기화</button>
+      </div>
     </div>
   </div>
 </div>
@@ -403,6 +407,10 @@
     </div>
     <div class="error-msg hidden" id="unlockError"></div>
     <button class="btn btn-primary btn-block" id="unlockSubmitBtn">잠금 해제</button>
+    <div class="hidden" id="unlockResetPrompt" style="margin-top:12px;text-align:center;">
+      <p class="help-text" style="margin-bottom:8px;">비밀번호가 계속 맞지 않는다면, 데이터를 초기화하고 새로 시작할 수 있습니다.</p>
+      <button type="button" class="btn btn-sm btn-danger" id="unlockResetLink">🗑 모든 데이터 초기화</button>
+    </div>
   </div>
 </div>
 
@@ -1565,6 +1573,7 @@ const UI = {
     document.getElementById('lockScreen').classList.remove('hidden');
     document.getElementById('unlockPw').value = '';
     document.getElementById('unlockError').classList.add('hidden');
+    document.getElementById('unlockResetPrompt').classList.add('hidden');
     setTimeout(() => document.getElementById('unlockPw').focus(), 50);
   },
   hideLockScreen(){
@@ -2766,21 +2775,13 @@ async function initApp(){
       }catch(e){
         errEl.textContent = (e.message === 'WRONG_PASSWORD') ? '비밀번호가 올바르지 않습니다.' : '잠금 해제 중 오류가 발생했습니다.';
         errEl.classList.remove('hidden');
+        if (e.message === 'WRONG_PASSWORD') document.getElementById('loginResetPrompt').classList.remove('hidden');
       }
     };
     document.getElementById('loginSubmitBtn').addEventListener('click', tryLogin);
     document.getElementById('loginPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryLogin(); });
 
-    document.getElementById('resetAllLink').addEventListener('click', () => {
-      UI.confirm('모든 데이터를 삭제하고 처음부터 다시 시작할까요? 이 작업은 되돌릴 수 없습니다.', async () => {
-        try{
-          await Storage.deleteAllData();
-          location.reload();
-        }catch(e){
-          toast('초기화 중 오류가 발생했습니다.', 'error');
-        }
-      });
-    });
+    document.getElementById('resetAllLink').addEventListener('click', performFullReset);
   }
 
   // Unlock screen (after auto-lock or manual lock)
@@ -2798,10 +2799,25 @@ async function initApp(){
     }catch(e){
       errEl.textContent = (e.message === 'WRONG_PASSWORD') ? '비밀번호가 올바르지 않습니다.' : '잠금 해제 중 오류가 발생했습니다.';
       errEl.classList.remove('hidden');
+      if (e.message === 'WRONG_PASSWORD') document.getElementById('unlockResetPrompt').classList.remove('hidden');
     }
   };
   document.getElementById('unlockSubmitBtn').addEventListener('click', tryUnlock);
   document.getElementById('unlockPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
+  document.getElementById('unlockResetLink').addEventListener('click', performFullReset);
+}
+
+// Shared by the login screen's and lock screen's "잊었을 때" reset prompts —
+// wipes the local IndexedDB entirely and reloads to the first-run flow.
+function performFullReset(){
+  UI.confirm('모든 데이터를 삭제하고 처음부터 다시 시작할까요? 이 작업은 되돌릴 수 없습니다.', async () => {
+    try{
+      await Storage.deleteAllData();
+      location.reload();
+    }catch(e){
+      toast('초기화 중 오류가 발생했습니다.', 'error');
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', initApp);
