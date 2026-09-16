@@ -223,6 +223,14 @@
   details.panel[open] > summary.panel-title::after{content:'▾';}
   .tag{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:1px 7px;font-size:0.75rem;margin:0 4px 4px 0;}
 
+  /* top-level tabs on the 대상자 상세 page — grouping the growing list of
+     panels into 기본정보/이력관리/위기·안전/SOAP. All groups stay in the DOM
+     (only hidden via CSS) so print and existing element-id bindings work
+     the same as before. */
+  .detail-tab-group{display:none;}
+  .detail-tab-group.active{display:block;}
+  @media print{ .detail-tab-group{display:block !important;} }
+
   /* calendar (일정 tab) */
   .calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
   .calendar-dow{text-align:center;font-size:0.75rem;color:var(--text-muted);padding:4px 0;font-weight:600;}
@@ -362,7 +370,7 @@
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-toggle-doc], #reportMonthSelect, #exportReportCsvBtn,
-    #printReportBtn, .example-banner{
+    #printReportBtn, #journalDateInput, #printJournalBtn, .example-banner{
       display:none !important;
     }
     body{background:#fff;}
@@ -1748,6 +1756,7 @@ const FollowUps = {
     const fu = State.followUps.get(id);
     if (!fu) return;
     fu.status = 'completed';
+    fu.completedAt = new Date().toISOString();
     await Storage.saveEncrypted('followUps', fu);
   },
 
@@ -1788,6 +1797,7 @@ const Schedules = {
     const sc = State.schedules.get(id);
     if (!sc) return;
     sc.status = status;
+    if (status === 'completed') sc.completedAt = new Date().toISOString();
     await Storage.saveEncrypted('schedules', sc);
   },
   async remove(id){
@@ -1819,6 +1829,39 @@ const Search = {
       const kw = filters.keyword.toLowerCase();
       results = results.filter(s => (s.S + s.O + s.A + s.PText).toLowerCase().includes(kw));
     }
+    return results;
+  },
+
+  // 통합검색 — SOAP 본문이 아니라, 대상자에 딸린 하위 기록(보호자 연락처,
+  // 자원연계, 위기개입, 복약, 사례회의, 서류, 사정도구, 태그, 입퇴원, MSE/목표,
+  // 종결정보, 관리수준 변경사유) 전체에서 키워드를 찾는다. 종결 대상자도
+  // 포함해 전체를 대상으로 한다.
+  runUniversal(keyword){
+    const kw = (keyword || '').trim().toLowerCase();
+    if (!kw) return [];
+    const results = [];
+    const push = (client, section, text) => {
+      if ((text || '').toLowerCase().includes(kw)) results.push({ clientId: client.id, alias: client.alias, section, text });
+    };
+    Clients.list().forEach(c => {
+      push(c, '기본정보', c.alias);
+      push(c, '기본정보', c.referralSource);
+      push(c, 'MSE/목표', c.mse);
+      push(c, 'MSE/목표', c.longTermGoal);
+      push(c, 'MSE/목표', c.shortTermGoal);
+      push(c, '종결정보', c.closedReason);
+      push(c, '종결정보', c.closedNote);
+      (c.managementHistory || []).forEach(h => push(c, '관리수준 이력', h.reason));
+      (c.emergencyContacts || []).forEach(ec => push(c, '보호자·비상연락처', [ec.name, ec.relation, ec.phone, ec.note].filter(Boolean).join(' · ')));
+      (c.resourceLinks || []).forEach(r => push(c, '자원연계 현황', [r.type, r.name, r.contact, r.note].filter(Boolean).join(' · ')));
+      (c.crisisEvents || []).forEach(e => push(c, '위기개입 기록', [e.type, e.description, e.action].filter(Boolean).join(' · ')));
+      (c.medications || []).forEach(m => push(c, '복약 현황', [m.name, m.dose, m.hospital, m.note].filter(Boolean).join(' · ')));
+      (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · ')));
+      (c.documents || []).forEach(d => push(c, '필수 서류', d.name));
+      (c.assessments || []).forEach(a => push(c, '사정도구 점수', [a.scale, a.score, a.note].filter(Boolean).join(' · ')));
+      (c.admissions || []).forEach(a => push(c, '입퇴원 이력', [a.type, a.hospital, a.note].filter(Boolean).join(' · ')));
+      (c.tags || []).forEach(t => push(c, '특성 태그', t));
+    });
     return results;
   }
 };
@@ -1896,6 +1939,21 @@ const Stats = {
       contactTypeCounts,
       subjectCounts
     };
+  },
+
+  // 일일 업무일지 — "오늘 무엇을 했는지" 보고용. SOAP는 상담 날짜가 아니라
+  // 실제로 쓰거나 고친 시각(updatedAt) 기준으로 잡는다 — 예전 방문 건을 오늘
+  // 기록했다면 그것도 오늘 한 일이기 때문이다. 후속조치/일정은 완료 처리한
+  // 시각(completedAt) 기준.
+  dailyJournal(dateStr){
+    const soapsToday = SoapModule.list().filter(s => (s.updatedAt || '').slice(0, 10) === dateStr);
+    const completedFollowUpsToday = FollowUps.list().filter(f => f.status === 'completed' && (f.completedAt || '').slice(0, 10) === dateStr);
+    const completedSchedulesToday = Schedules.list().filter(s => s.status === 'completed' && (s.completedAt || '').slice(0, 10) === dateStr);
+    const crisisEventsToday = [];
+    Clients.list().forEach(c => {
+      (c.crisisEvents || []).forEach(ev => { if (ev.date === dateStr) crisisEventsToday.push(Object.assign({ clientId: c.id, alias: c.alias }, ev)); });
+    });
+    return { date: dateStr, soapsToday, completedFollowUpsToday, completedSchedulesToday, crisisEventsToday };
   }
 };
 
@@ -2233,6 +2291,7 @@ const UI = {
         Views.bindClientDetail(State.currentParams.id);
         if (State.clients.has(State.currentParams.id)) recordRecentClient(State.currentParams.id);
         break;
+      case 'handoverSummary': main.innerHTML = Views.handoverSummary(State.currentParams.id); Views.bindHandoverSummary(State.currentParams.id); break;
       case 'soapList': main.innerHTML = Views.soapList(); Views.bindSoapList(); break;
       case 'soapEditor': main.innerHTML = Views.soapEditor(State.currentParams); Views.bindSoapEditor(State.currentParams); break;
       case 'followUps': main.innerHTML = Views.followUps(); Views.bindFollowUps(); break;
@@ -2706,7 +2765,8 @@ const Views = {
     html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + Utils.escapeHtml(c.id) + (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') +
       (isClosed ? ' <span class="badge badge-closed">종결</span>' : '') +
       ((c.crisisEvents || []).length ? ' <span class="badge badge-crisis-flag">⚠ 위기개입 이력 있음</span>' : '') + '</h1>' +
-      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printClientBtn">🖨️ 인쇄</button>' +
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="handoverBtn">📄 인계서</button>' +
+      '<button class="btn btn-sm" id="printClientBtn">🖨️ 인쇄</button>' +
       '<button class="btn btn-sm" id="backToClientsBtn">← 대상자 목록</button></div></div>';
 
     html += '<div class="panel">' +
@@ -2728,9 +2788,17 @@ const Views = {
       '<button class="btn-quick" id="clNewSchedule">＋ 일정</button>' +
       '</div></div>';
 
+    // ---- 탭별 내용 조립: 아코디언(패널 접기/펼치기)과 별개로, 패널이 14개나
+    // 되어 상위 탭으로 한 번 더 묶는다. 모든 그룹은 DOM에 그대로 남아있고
+    // CSS로만 감췄다 보였다 하므로(인쇄 시 전부 표시), 기존 bindClientDetail의
+    // getElementById 바인딩은 전혀 손댈 필요가 없다.
+    if (Views._clientDetailTabClientId !== id){ Views._clientDetailTab = 'basic'; Views._clientDetailTabClientId = id; }
+    const activeTab = Views._clientDetailTab || 'basic';
+    let basicHtml = '', historyHtml = '', safetyHtml = '', soapHtml = '';
+
     // 등록(인테이크) 정보 — 실제 접수 경로를 기록해 두는 자유 선택 필드일 뿐,
     // 앱이 이를 근거로 무언가를 자동 판단하지 않는다.
-    html += '<div class="panel"><div class="panel-title">등록 정보</div><div class="form-grid">' +
+    basicHtml += '<div class="panel"><div class="panel-title">등록 정보</div><div class="form-grid">' +
       '<div class="field"><label>등록일</label><input type="date" id="clRegDate" value="' + Utils.escapeHtml(c.registrationDate || '') + '"></div>' +
       '<div class="field"><label>의뢰경로</label><select id="clReferral">' +
       '<option value="">(선택 안 함)</option>' +
@@ -2741,7 +2809,7 @@ const Views = {
     // 특성 태그 — 위험도를 추론하지 않는 실무자 지정 자유 라벨(예: "1인가구").
     // 통계 화면에서 태그별 인원 분포로만 활용된다.
     const tags = c.tags || [];
-    html += '<div class="panel"><div class="panel-title">특성 태그</div>' +
+    basicHtml += '<div class="panel"><div class="panel-title">특성 태그</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:' + (tags.length ? '12px' : '0') + ';">' +
       tags.map(t => '<span class="tag">' + Utils.escapeHtml(t) + ' <button class="btn-link" style="color:inherit;text-decoration:none;" data-del-tag="' + Utils.escapeHtml(t) + '">✕</button></span>').join('') +
       '</div>' +
@@ -2750,42 +2818,53 @@ const Views = {
       '<button class="btn btn-sm" id="addTagBtn">추가</button></div></div>';
 
     if (isClosed){
-      html += '<div class="panel"><div class="panel-title">종결 정보</div>' +
+      basicHtml += '<div class="panel"><div class="panel-title">종결 정보</div>' +
         '<p style="font-size:0.88rem;">종결일: ' + (c.closedDate || '-') + ' · 사유: ' + Utils.escapeHtml(c.closedReason || '-') + '</p>' +
         (c.closedNote ? '<p style="font-size:0.85rem;color:var(--text-muted);">' + Utils.nl2br(c.closedNote) + '</p>' : '') +
         '</div>';
     }
 
+    // MSE (정신상태검사) and case goals — free-text fields the caseworker fills in
+    // and edits directly; the app never generates or infers this content.
+    basicHtml += '<div class="panel"><div class="panel-title">MSE(정신상태검사) 및 목표</div>' +
+      '<div class="field full"><label>MSE (정신상태검사)</label>' +
+      '<textarea id="clMse" placeholder="외모, 행동, 언어, 사고, 지각, 인지, 병식 등 관찰 내용을 기록하세요.">' + Utils.escapeHtml(c.mse || '') + '</textarea></div>' +
+      '<div class="field full"><label>장기목표</label>' +
+      '<textarea id="clLongGoal" style="min-height:70px;" placeholder="예: 독립적인 지역사회 생활 유지">' + Utils.escapeHtml(c.longTermGoal || '') + '</textarea></div>' +
+      '<div class="field full"><label>단기목표</label>' +
+      '<textarea id="clShortGoal" style="min-height:70px;" placeholder="예: 정기적인 복약 및 외래 방문 유지">' + Utils.escapeHtml(c.shortTermGoal || '') + '</textarea></div>' +
+      '<button class="btn btn-primary btn-sm" id="saveMseGoalsBtn">저장</button></div>';
+
     if (c.managementHistory && c.managementHistory.length){
-      html += '<details class="panel" open><summary class="panel-title">관리수준 변경 이력</summary>';
+      historyHtml += '<details class="panel" open><summary class="panel-title">관리수준 변경 이력</summary>';
       c.managementHistory.slice().reverse().forEach(h => {
         const fromLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.from] || {}).label || h.from || '(미지정)';
         const toLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.to] || {}).label || h.to;
-        html += '<div class="list-row"><div class="list-row-main">' +
+        historyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + h.date + ' · ' + Utils.escapeHtml(fromLabel) + ' → ' + Utils.escapeHtml(toLabel) + '</div>' +
           (h.reason ? '<div class="row-sub">사유: ' + Utils.escapeHtml(h.reason) + '</div>' : '') +
           '</div></div>';
       });
-      html += '</details>';
+      historyHtml += '</details>';
     }
 
     // 위기개입 기록 — 자살시도/응급입원 동행/112·119 신고 등을 일반 SOAP과 분리해
     // 빠르게 남기는 전용 로그. 위험도를 자동으로 판정하지 않고, 실제 발생한 사건과
     // 실무자가 취한 조치만 그대로 기록한다.
     const crisisEvents = (c.crisisEvents || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    html += '<details class="panel"' + (crisisEvents.length ? ' open' : '') + '><summary class="panel-title">⚠ 위기개입 기록</summary>';
+    safetyHtml += '<details class="panel"' + (crisisEvents.length ? ' open' : '') + '><summary class="panel-title">⚠ 위기개입 기록</summary>';
     if (crisisEvents.length === 0){
-      html += '<div class="empty-msg">기록된 위기개입 사항이 없습니다.</div>';
+      safetyHtml += '<div class="empty-msg">기록된 위기개입 사항이 없습니다.</div>';
     } else {
       crisisEvents.forEach(ev => {
-        html += '<div class="list-row"><div class="list-row-main">' +
+        safetyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + ev.date + ' · <span class="badge badge-crisis">' + Utils.escapeHtml(ev.type) + '</span></div>' +
           (ev.description ? '<div class="row-sub">경위: ' + Utils.escapeHtml(ev.description) + '</div>' : '') +
           (ev.action ? '<div class="row-sub">조치: ' + Utils.escapeHtml(ev.action) + '</div>' : '') +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-crisis="' + ev.id + '">삭제</button></div></div>';
       });
     }
-    html += '<div class="divider"></div><div class="form-grid">' +
+    safetyHtml += '<div class="divider"></div><div class="form-grid">' +
       '<div class="field"><label>유형</label><select id="crisisType">' +
       CONSTANTS.CRISIS_EVENT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
       '<div class="field"><label>날짜</label><input type="date" id="crisisDate" value="' + Utils.todayStr() + '"></div>' +
@@ -2796,18 +2875,18 @@ const Views = {
     // 입퇴원 이력 — 실무자가 알고 있는 입/퇴원 사실을 직접 기록하는 자유 입력
     // 이력이며, 앱이 입원 여부를 추정하거나 진단을 다루지 않는다.
     const admissions = (c.admissions || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    html += '<details class="panel"' + (admissions.length ? ' open' : '') + '><summary class="panel-title">입퇴원 이력</summary>';
+    historyHtml += '<details class="panel"' + (admissions.length ? ' open' : '') + '><summary class="panel-title">입퇴원 이력</summary>';
     if (admissions.length === 0){
-      html += '<div class="empty-msg">기록된 입퇴원 이력이 없습니다.</div>';
+      historyHtml += '<div class="empty-msg">기록된 입퇴원 이력이 없습니다.</div>';
     } else {
       admissions.forEach(a => {
-        html += '<div class="list-row"><div class="list-row-main">' +
+        historyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.type) + (a.hospital ? ' · ' + Utils.escapeHtml(a.hospital) : '') + '</div>' +
           (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-admission="' + a.id + '">삭제</button></div></div>';
       });
     }
-    html += '<div class="divider"></div><div class="form-grid">' +
+    historyHtml += '<div class="divider"></div><div class="form-grid">' +
       '<div class="field"><label>구분</label><select id="admType">' +
       CONSTANTS.ADMISSION_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
       '<div class="field"><label>날짜</label><input type="date" id="admDate" value="' + Utils.todayStr() + '"></div>' +
@@ -2817,18 +2896,18 @@ const Views = {
 
     // 자원연계 현황 — 연계한 기관/자원을 그대로 목록화만 한다.
     const resourceLinks = (c.resourceLinks || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    html += '<details class="panel"' + (resourceLinks.length ? ' open' : '') + '><summary class="panel-title">자원연계 현황</summary>';
+    historyHtml += '<details class="panel"' + (resourceLinks.length ? ' open' : '') + '><summary class="panel-title">자원연계 현황</summary>';
     if (resourceLinks.length === 0){
-      html += '<div class="empty-msg">연계된 자원이 없습니다.</div>';
+      historyHtml += '<div class="empty-msg">연계된 자원이 없습니다.</div>';
     } else {
       resourceLinks.forEach(r => {
-        html += '<div class="list-row"><div class="list-row-main">' +
+        historyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + r.date + ' · ' + Utils.escapeHtml(r.type) + (r.name ? ' · ' + Utils.escapeHtml(r.name) : '') + '</div>' +
           '<div class="row-sub">' + [r.contact, r.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
       });
     }
-    html += '<div class="divider"></div><div class="form-grid">' +
+    historyHtml += '<div class="divider"></div><div class="form-grid">' +
       '<div class="field"><label>유형</label><select id="resType">' +
       CONSTANTS.RESOURCE_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
       '<div class="field"><label>기관/자원명</label><input type="text" id="resName"></div>' +
@@ -2840,18 +2919,18 @@ const Views = {
     // 복약 현황 — SOAP 서술과 별개로 약물명/용량/처방병원 변경 이력을 구조화된
     // 목록으로 남긴다. 가장 최근 항목이 사실상 현재 복약 상태를 나타낸다.
     const medications = (c.medications || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    html += '<details class="panel"' + (medications.length ? ' open' : '') + '><summary class="panel-title">복약 현황</summary>';
+    historyHtml += '<details class="panel"' + (medications.length ? ' open' : '') + '><summary class="panel-title">복약 현황</summary>';
     if (medications.length === 0){
-      html += '<div class="empty-msg">기록된 복약 정보가 없습니다.</div>';
+      historyHtml += '<div class="empty-msg">기록된 복약 정보가 없습니다.</div>';
     } else {
       medications.forEach(m => {
-        html += '<div class="list-row"><div class="list-row-main">' +
+        historyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + m.date + ' · ' + Utils.escapeHtml(m.name) + (m.dose ? ' (' + Utils.escapeHtml(m.dose) + ')' : '') + '</div>' +
           '<div class="row-sub">' + [m.hospital, m.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-medication="' + m.id + '">삭제</button></div></div>';
       });
     }
-    html += '<div class="divider"></div><div class="form-grid">' +
+    historyHtml += '<div class="divider"></div><div class="form-grid">' +
       '<div class="field"><label>약물명</label><input type="text" id="medName"></div>' +
       '<div class="field"><label>용량(선택)</label><input type="text" id="medDose"></div>' +
       '<div class="field"><label>처방 병원(선택)</label><input type="text" id="medHospital"></div>' +
@@ -2861,18 +2940,18 @@ const Views = {
 
     // 보호자/비상연락처 — 위기 상황에서 바로 확인할 수 있도록 복수 등록 가능.
     const emergencyContacts = (c.emergencyContacts || []);
-    html += '<details class="panel"' + (emergencyContacts.length ? ' open' : '') + '><summary class="panel-title">보호자 · 비상연락처</summary>';
+    safetyHtml += '<details class="panel"' + (emergencyContacts.length ? ' open' : '') + '><summary class="panel-title">보호자 · 비상연락처</summary>';
     if (emergencyContacts.length === 0){
-      html += '<div class="empty-msg">등록된 보호자·비상연락처가 없습니다.</div>';
+      safetyHtml += '<div class="empty-msg">등록된 보호자·비상연락처가 없습니다.</div>';
     } else {
       emergencyContacts.forEach(ec => {
-        html += '<div class="list-row"><div class="list-row-main">' +
+        safetyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + Utils.escapeHtml(ec.name || '(이름 미입력)') + ' · ' + Utils.escapeHtml(ec.relation) + '</div>' +
           '<div class="row-sub">' + [ec.phone, ec.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-contact="' + ec.id + '">삭제</button></div></div>';
       });
     }
-    html += '<div class="divider"></div><div class="form-grid">' +
+    safetyHtml += '<div class="divider"></div><div class="form-grid">' +
       '<div class="field"><label>이름</label><input type="text" id="ecName"></div>' +
       '<div class="field"><label>관계</label><select id="ecRelation">' +
       CONSTANTS.CONTACT_RELATIONS.map(r => '<option value="' + r + '">' + r + '</option>').join('') + '</select></div>' +
@@ -2882,19 +2961,19 @@ const Views = {
 
     // 사례회의(수퍼비전) 기록 — 팀 단위로 논의된 내용과 결정사항을 SOAP과 별개로 남긴다.
     const caseConferences = (c.caseConferences || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    html += '<details class="panel"' + (caseConferences.length ? ' open' : '') + '><summary class="panel-title">사례회의 기록</summary>';
+    safetyHtml += '<details class="panel"' + (caseConferences.length ? ' open' : '') + '><summary class="panel-title">사례회의 기록</summary>';
     if (caseConferences.length === 0){
-      html += '<div class="empty-msg">기록된 사례회의가 없습니다.</div>';
+      safetyHtml += '<div class="empty-msg">기록된 사례회의가 없습니다.</div>';
     } else {
       caseConferences.forEach(cf => {
-        html += '<div class="list-row"><div class="list-row-main">' +
+        safetyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + cf.date + (cf.attendees ? ' · 참석자: ' + Utils.escapeHtml(cf.attendees) : '') + '</div>' +
           (cf.discussion ? '<div class="row-sub">논의내용: ' + Utils.escapeHtml(cf.discussion) + '</div>' : '') +
           (cf.decision ? '<div class="row-sub">결정사항: ' + Utils.escapeHtml(cf.decision) + '</div>' : '') +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-conference="' + cf.id + '">삭제</button></div></div>';
       });
     }
-    html += '<div class="divider"></div><div class="form-grid">' +
+    safetyHtml += '<div class="divider"></div><div class="form-grid">' +
       '<div class="field"><label>날짜</label><input type="date" id="confDate" value="' + Utils.todayStr() + '"></div>' +
       '<div class="field"><label>참석자(선택)</label><input type="text" id="confAttendees"></div>' +
       '<div class="field full"><label>논의내용(선택)</label><textarea id="confDiscussion" style="min-height:60px;"></textarea></div>' +
@@ -2904,18 +2983,18 @@ const Views = {
     // 표준화 사정도구 점수 이력 — 척도를 해석하거나 위험을 판정하지 않고, 실무자가
     // 측정한 점수와 날짜만 그대로 목록화해 변화 추이를 눈으로 볼 수 있게 한다.
     const assessments = (c.assessments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    html += '<details class="panel"' + (assessments.length ? ' open' : '') + '><summary class="panel-title">사정도구 점수 이력</summary>';
+    historyHtml += '<details class="panel"' + (assessments.length ? ' open' : '') + '><summary class="panel-title">사정도구 점수 이력</summary>';
     if (assessments.length === 0){
-      html += '<div class="empty-msg">기록된 사정도구 점수가 없습니다.</div>';
+      historyHtml += '<div class="empty-msg">기록된 사정도구 점수가 없습니다.</div>';
     } else {
       assessments.forEach(a => {
-        html += '<div class="list-row"><div class="list-row-main">' +
+        historyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.scale) + (a.score ? ' — ' + Utils.escapeHtml(a.score) + '점' : '') + '</div>' +
           (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-assessment="' + a.id + '">삭제</button></div></div>';
       });
     }
-    html += '<div class="divider"></div><div class="form-grid">' +
+    historyHtml += '<div class="divider"></div><div class="form-grid">' +
       '<div class="field"><label>척도</label><select id="assessScale">' +
       CONSTANTS.ASSESSMENT_SCALES.map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select></div>' +
       '<div class="field hidden" id="assessCustomWrap"><label>척도명 직접 입력</label><input type="text" id="assessCustomScale"></div>' +
@@ -2926,12 +3005,12 @@ const Views = {
 
     // 필수 서류/동의서 체크리스트 — 수령 여부만 토글로 관리한다.
     const documents = (c.documents || []);
-    html += '<details class="panel"' + (documents.length ? ' open' : '') + '><summary class="panel-title">필수 서류·동의서</summary>';
+    historyHtml += '<details class="panel"' + (documents.length ? ' open' : '') + '><summary class="panel-title">필수 서류·동의서</summary>';
     if (documents.length === 0){
-      html += '<div class="empty-msg">등록된 서류 항목이 없습니다.</div>';
+      historyHtml += '<div class="empty-msg">등록된 서류 항목이 없습니다.</div>';
     } else {
       documents.forEach(d => {
-        html += '<div class="list-row"><div class="list-row-main">' +
+        historyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + Utils.escapeHtml(d.name) + '</div>' +
           '<div class="row-sub">' + (d.receivedDate ? '수령일: ' + d.receivedDate : '미수령') + '</div>' +
           '</div><div class="row-actions">' +
@@ -2939,74 +3018,87 @@ const Views = {
           '<button class="btn btn-sm btn-danger" data-del-doc="' + d.id + '">삭제</button></div></div>';
       });
     }
-    html += '<div class="divider"></div><div style="display:flex;gap:8px;max-width:420px;">' +
+    historyHtml += '<div class="divider"></div><div style="display:flex;gap:8px;max-width:420px;">' +
       '<input type="text" id="docNameInput" list="docNameList" placeholder="예: 개인정보 수집·이용 동의서" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);">' +
       '<datalist id="docNameList">' + CONSTANTS.COMMON_DOCUMENTS.map(d => '<option value="' + d + '">').join('') + '</datalist>' +
       '<button class="btn btn-sm" id="addDocBtn">＋ 서류 항목 추가</button></div></details>';
 
     // 대상자 간 가족 관계 — 한쪽에 연결하면 반대쪽에도 자동으로 역관계가 생성된다.
     const familyLinks = (c.familyLinks || []);
-    html += '<details class="panel"' + (familyLinks.length ? ' open' : '') + '><summary class="panel-title">가족 관계</summary>';
+    safetyHtml += '<details class="panel"' + (familyLinks.length ? ' open' : '') + '><summary class="panel-title">가족 관계</summary>';
     if (familyLinks.length === 0){
-      html += '<div class="empty-msg">연결된 가족 관계가 없습니다.</div>';
+      safetyHtml += '<div class="empty-msg">연결된 가족 관계가 없습니다.</div>';
     } else {
       familyLinks.forEach(fl => {
         const relatedClient = Clients.get(fl.relatedClientId);
-        html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + fl.relatedClientId + '" style="cursor:pointer;">' +
+        safetyHtml += '<div class="list-row"><div class="list-row-main" data-goto-client="' + fl.relatedClientId + '" style="cursor:pointer;">' +
           '<div class="row-title">' + Utils.escapeHtml(fl.relatedClientId) + (relatedClient && relatedClient.alias ? ' (' + Utils.escapeHtml(relatedClient.alias) + ')' : '') + ' · ' + Utils.escapeHtml(fl.relation) + '</div>' +
           (fl.note ? '<div class="row-sub">' + Utils.escapeHtml(fl.note) + '</div>' : '') +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-family="' + fl.id + '">삭제</button></div></div>';
       });
     }
-    html += '<div class="divider"></div><div class="form-grid">' +
+    safetyHtml += '<div class="divider"></div><div class="form-grid">' +
       '<div class="field"><label>연결할 대상자</label>' + Views.clientPickerHtml('', 'famClientPicker') + '</div>' +
       '<div class="field"><label>관계 (연결할 대상자가 나에게)</label><select id="famRelation">' +
       Object.keys(CONSTANTS.FAMILY_RELATIONS).map(r => '<option value="' + r + '">' + r + '</option>').join('') + '</select></div>' +
       '<div class="field full"><label>메모(선택)</label><input type="text" id="famNote"></div></div>' +
       '<button class="btn btn-sm" id="addFamilyBtn">＋ 가족 관계 추가</button></details>';
 
-    // MSE (정신상태검사) and case goals — free-text fields the caseworker fills in
-    // and edits directly; the app never generates or infers this content.
-    html += '<div class="panel"><div class="panel-title">MSE(정신상태검사) 및 목표</div>' +
-      '<div class="field full"><label>MSE (정신상태검사)</label>' +
-      '<textarea id="clMse" placeholder="외모, 행동, 언어, 사고, 지각, 인지, 병식 등 관찰 내용을 기록하세요.">' + Utils.escapeHtml(c.mse || '') + '</textarea></div>' +
-      '<div class="field full"><label>장기목표</label>' +
-      '<textarea id="clLongGoal" style="min-height:70px;" placeholder="예: 독립적인 지역사회 생활 유지">' + Utils.escapeHtml(c.longTermGoal || '') + '</textarea></div>' +
-      '<div class="field full"><label>단기목표</label>' +
-      '<textarea id="clShortGoal" style="min-height:70px;" placeholder="예: 정기적인 복약 및 외래 방문 유지">' + Utils.escapeHtml(c.shortTermGoal || '') + '</textarea></div>' +
-      '<button class="btn btn-primary btn-sm" id="saveMseGoalsBtn">저장</button></div>';
-
-    html += '<div class="panel"><div class="panel-title">후속조치 (미완료)</div>';
+    soapHtml += '<div class="panel"><div class="panel-title">후속조치 (미완료)</div>';
     if (pendingFus.length === 0){
-      html += '<div class="empty-msg">미완료 후속조치가 없습니다.</div>';
+      soapHtml += '<div class="empty-msg">미완료 후속조치가 없습니다.</div>';
     } else {
       pendingFus.forEach(f => {
-        html += '<div class="list-row"><div class="list-row-main"><div class="row-title">' + Utils.escapeHtml(f.type) + '</div>' +
+        soapHtml += '<div class="list-row"><div class="list-row-main"><div class="row-title">' + Utils.escapeHtml(f.type) + '</div>' +
           '<div class="row-sub">예정일: ' + f.dueDate + (f.text ? ' · ' + Utils.escapeHtml(f.text) : '') + '</div></div>' +
           '<div class="row-actions"><button class="btn btn-sm" data-complete-fu="' + f.id + '">완료</button></div></div>';
       });
     }
-    html += '</div>';
+    soapHtml += '</div>';
 
-    html += Views.renderSoapSummary(id);
+    soapHtml += Views.renderSoapSummary(id);
 
-    html += '<div class="panel"><div class="panel-title">SOAP 타임라인</div>';
+    soapHtml += '<div class="panel"><div class="panel-title">SOAP 타임라인</div>';
     if (timeline.length === 0){
-      html += '<div class="empty-msg">작성된 SOAP 기록이 없습니다.</div>';
+      soapHtml += '<div class="empty-msg">작성된 SOAP 기록이 없습니다.</div>';
     } else {
       timeline.forEach(s => {
-        html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
+        soapHtml += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
           '<div class="row-title">' + s.date + ' · ' + Utils.escapeHtml(s.contactType) + '상담 ' +
           (s.status === 'draft' ? '<span class="badge badge-draft">임시저장</span>' : '<span class="badge badge-final">완료</span>') + '</div>' +
           '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 70) + '</div></div></div>';
       });
     }
-    html += '</div>';
+    soapHtml += '</div>';
+
+    const tabDefs = [
+      { key: 'basic', label: '기본정보', count: 0 },
+      { key: 'history', label: '이력관리', count: admissions.length + resourceLinks.length + medications.length + assessments.length + documents.length },
+      { key: 'safety', label: '위기·안전', count: crisisEvents.length + emergencyContacts.length + familyLinks.length + caseConferences.length },
+      { key: 'soap', label: 'SOAP', count: pendingFus.length }
+    ];
+    html += '<div class="tabs">' + tabDefs.map(t =>
+      '<button class="tab-btn detail-tab-btn' + (activeTab === t.key ? ' active' : '') + '" data-tab="' + t.key + '">' + t.label + (t.count ? ' (' + t.count + ')' : '') + '</button>'
+    ).join('') + '</div>';
+
+    html += '<div class="detail-tab-group' + (activeTab === 'basic' ? ' active' : '') + '" data-tab-group="basic">' + basicHtml + '</div>';
+    html += '<div class="detail-tab-group' + (activeTab === 'history' ? ' active' : '') + '" data-tab-group="history">' + historyHtml + '</div>';
+    html += '<div class="detail-tab-group' + (activeTab === 'safety' ? ' active' : '') + '" data-tab-group="safety">' + safetyHtml + '</div>';
+    html += '<div class="detail-tab-group' + (activeTab === 'soap' ? ' active' : '') + '" data-tab-group="soap">' + soapHtml + '</div>';
 
     html += Views.printSignatureHtml();
     return html;
   },
   bindClientDetail(id){
+    document.querySelectorAll('.detail-tab-btn').forEach(btn => {
+      btn.onclick = () => {
+        Views._clientDetailTab = btn.dataset.tab;
+        document.querySelectorAll('.detail-tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+        document.querySelectorAll('.detail-tab-group').forEach(g => g.classList.toggle('active', g.dataset.tabGroup === btn.dataset.tab));
+      };
+    });
+
+    document.getElementById('handoverBtn').onclick = () => UI.navigate('handoverSummary', { id });
     document.getElementById('backToClientsBtn').onclick = () => UI.navigate('clients');
     document.getElementById('printClientBtn').onclick = () => {
       // <details> hides its content while closed, so expand every collapsed
@@ -3291,6 +3383,88 @@ const Views = {
     };
     document.querySelectorAll('[data-open-soap]').forEach(el => { el.onclick = () => UI.navigate('soapEditor', { soapId: el.dataset.openSoap }); });
     document.querySelectorAll('[data-complete-fu]').forEach(el => { el.onclick = async () => { await FollowUps.complete(el.dataset.completeFu); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
+  },
+
+  /* ---------------- HANDOVER SUMMARY (사례관리 종합 인계서) ----------------
+     A condensed one-page view for case transfer/handover — latest status
+     only, not full history (full history stays on the regular client detail
+     page). Built for print, but also readable on screen. */
+  handoverSummary(id){
+    const c = Clients.get(id);
+    if (!c) return '<p>대상자를 찾을 수 없습니다.</p><button class="btn" onclick="UI.navigate(\'clients\')">목록으로</button>';
+
+    const latestMgmtChange = (c.managementHistory || []).slice(-1)[0];
+    const latestCrisis = (c.crisisEvents || []).slice().sort((a, b) => b.date.localeCompare(a.date))[0];
+    const latestMed = (c.medications || []).slice().sort((a, b) => b.date.localeCompare(a.date))[0];
+    const recentSoaps = SoapModule.listByClient(id).filter(s => s.status === 'final').slice(0, 2);
+    const pendingFus = FollowUps.list().filter(f => f.clientId === id && f.status === 'pending');
+    const emergencyContacts = c.emergencyContacts || [];
+    const resourceLinks = c.resourceLinks || [];
+
+    let html = Views.printHeaderHtml('사례관리 인계서: ' + c.id);
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">📄 사례관리 인계서 — ' + Utils.escapeHtml(c.id) +
+      (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') + '</h1>' +
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printHandoverBtn">🖨️ 인쇄</button>' +
+      '<button class="btn btn-sm" id="backToClientDetailBtn">← 대상자 상세로</button></div></div>';
+    html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">사례 인계·전출 시 새 담당자가 빠르게 파악할 수 있도록 핵심 정보만 압축한 요약입니다. 전체 이력은 대상자 상세 화면에서 확인하세요.</p>';
+
+    html += '<div class="panel"><div class="panel-title">기본 정보</div>' +
+      '<p style="font-size:0.9rem;line-height:1.9;">' +
+      '사례 상태: ' + (c.status === 'closed' ? '종결 (사유: ' + Utils.escapeHtml(c.closedReason || '-') + ', 종결일: ' + (c.closedDate || '-') + ')' : '활성') + '<br>' +
+      '관리 수준: ' + Views.managementBadge(c.managementLevel) + '<br>' +
+      '등록일: ' + (c.registrationDate || '-') + (c.referralSource ? ' · 의뢰경로: ' + Utils.escapeHtml(c.referralSource) : '') + '<br>' +
+      (c.tags && c.tags.length ? '특성 태그: ' + c.tags.map(t => Utils.escapeHtml(t)).join(', ') : '') +
+      '</p></div>';
+
+    if (latestMgmtChange){
+      html += '<div class="panel"><div class="panel-title">최근 관리수준 변경</div>' +
+        '<p style="font-size:0.9rem;">' + latestMgmtChange.date + ' · ' + (CONSTANTS.MANAGEMENT_LEVELS[latestMgmtChange.from] || {}).label + ' → ' + (CONSTANTS.MANAGEMENT_LEVELS[latestMgmtChange.to] || {}).label +
+        (latestMgmtChange.reason ? ' (사유: ' + Utils.escapeHtml(latestMgmtChange.reason) + ')' : '') + '</p></div>';
+    }
+
+    html += '<div class="panel"><div class="panel-title">위기·안전 정보</div>';
+    html += '<p style="font-weight:600;font-size:0.85rem;margin-bottom:4px;">최근 위기개입</p>';
+    html += latestCrisis
+      ? '<p style="font-size:0.9rem;margin-bottom:10px;">' + latestCrisis.date + ' · <span class="badge badge-crisis">' + Utils.escapeHtml(latestCrisis.type) + '</span>' + (latestCrisis.description ? ' — ' + Utils.escapeHtml(latestCrisis.description) : '') + '</p>'
+      : '<p class="empty-msg" style="padding:0 0 10px 0;">위기개입 이력 없음</p>';
+    html += '<p style="font-weight:600;font-size:0.85rem;margin-bottom:4px;">보호자·비상연락처</p>';
+    html += emergencyContacts.length
+      ? emergencyContacts.map(ec => '<p style="font-size:0.9rem;margin:2px 0;">' + Utils.escapeHtml(ec.name || '(이름 미입력)') + ' · ' + Utils.escapeHtml(ec.relation) + (ec.phone ? ' · ' + Utils.escapeHtml(ec.phone) : '') + '</p>').join('')
+      : '<p class="empty-msg" style="padding:0;">등록된 보호자·비상연락처 없음</p>';
+    html += '</div>';
+
+    html += '<div class="panel"><div class="panel-title">복약 현황 (최신)</div>' +
+      (latestMed
+        ? '<p style="font-size:0.9rem;">' + latestMed.date + ' · ' + Utils.escapeHtml(latestMed.name) + (latestMed.dose ? ' (' + Utils.escapeHtml(latestMed.dose) + ')' : '') + (latestMed.hospital ? ' · ' + Utils.escapeHtml(latestMed.hospital) : '') + '</p>'
+        : '<div class="empty-msg">기록된 복약 정보 없음</div>') + '</div>';
+
+    html += '<div class="panel"><div class="panel-title">자원연계 현황</div>' +
+      (resourceLinks.length
+        ? resourceLinks.map(r => '<p style="font-size:0.9rem;margin:2px 0;">' + Utils.escapeHtml(r.type) + (r.name ? ' · ' + Utils.escapeHtml(r.name) : '') + '</p>').join('')
+        : '<div class="empty-msg">연계된 자원 없음</div>') + '</div>';
+
+    html += '<div class="panel"><div class="panel-title">MSE(정신상태검사) 및 목표</div>' +
+      '<p style="font-size:0.9rem;white-space:pre-line;">' + (Utils.escapeHtml(c.mse || '') || '<span class="empty-msg" style="padding:0;">기록 없음</span>') + '</p>' +
+      (c.longTermGoal ? '<p style="font-size:0.85rem;color:var(--text-muted);"><strong>장기목표:</strong> ' + Utils.nl2br(c.longTermGoal) + '</p>' : '') +
+      (c.shortTermGoal ? '<p style="font-size:0.85rem;color:var(--text-muted);"><strong>단기목표:</strong> ' + Utils.nl2br(c.shortTermGoal) + '</p>' : '') +
+      '</div>';
+
+    html += '<div class="panel"><div class="panel-title">최근 SOAP 사정(A) 요약</div>' +
+      (recentSoaps.length
+        ? recentSoaps.map(s => '<p style="font-size:0.9rem;margin-bottom:8px;"><strong>' + s.date + ' · ' + Utils.escapeHtml(s.contactType) + '</strong><br>' + Utils.escapeHtml(s.A || '') + '</p>').join('')
+        : '<div class="empty-msg">완료된 SOAP 기록 없음</div>') + '</div>';
+
+    html += '<div class="panel"><div class="panel-title">미완료 후속조치</div>' +
+      (pendingFus.length
+        ? pendingFus.map(f => '<p style="font-size:0.9rem;margin:2px 0;">' + f.dueDate + ' · ' + Utils.escapeHtml(f.type) + (f.text ? ' — ' + Utils.escapeHtml(f.text) : '') + '</p>').join('')
+        : '<div class="empty-msg">미완료 후속조치 없음</div>') + '</div>';
+
+    html += Views.printSignatureHtml();
+    return html;
+  },
+  bindHandoverSummary(id){
+    document.getElementById('backToClientDetailBtn').onclick = () => UI.navigate('clientDetail', { id });
+    document.getElementById('printHandoverBtn').onclick = () => window.print();
   },
 
   /* ---------------- SOAP LIST ---------------- */
@@ -3797,8 +3971,23 @@ const Views = {
   },
 
   /* ---------------- SEARCH ---------------- */
+  _searchMode: 'soap',
+
   search(){
     let html = '<h1 class="page-title">🔍 검색</h1>';
+    html += '<div class="tabs">' +
+      '<button class="tab-btn' + (Views._searchMode === 'soap' ? ' active' : '') + '" id="searchModeSoapBtn">SOAP 검색</button>' +
+      '<button class="tab-btn' + (Views._searchMode === 'universal' ? ' active' : '') + '" id="searchModeUniversalBtn">통합검색</button>' +
+      '</div>';
+
+    if (Views._searchMode === 'universal'){
+      html += '<p class="help-text" style="margin-top:-8px;margin-bottom:14px;">보호자 연락처, 자원연계, 위기개입, 복약, 사례회의, 서류, 사정도구, 태그 등 대상자의 모든 하위 기록을 대상으로 검색합니다(SOAP 본문은 SOAP 검색을 이용하세요).</p>';
+      html += '<div class="panel"><div style="display:flex;gap:10px;"><input type="text" id="uniKeyword" placeholder="검색어 입력" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);">' +
+        '<button class="btn btn-primary" id="doUniSearchBtn">검색</button></div></div>';
+      html += '<div class="panel" id="searchResults"><div class="empty-msg">검색어를 입력하고 검색 버튼을 눌러 주세요.</div></div>';
+      return html;
+    }
+
     html += '<div class="panel"><div class="form-grid">';
     html += '<div class="field"><label>대상자 ID</label><select id="sfClient"><option value="">전체</option>' +
       Clients.list().map(c => '<option value="' + c.id + '">' + c.id + (c.alias ? ' - ' + Utils.escapeHtml(c.alias) : '') + '</option>').join('') + '</select></div>';
@@ -3819,6 +4008,26 @@ const Views = {
     return html;
   },
   bindSearch(){
+    document.getElementById('searchModeSoapBtn').onclick = () => { Views._searchMode = 'soap'; UI.renderCurrentView(); };
+    document.getElementById('searchModeUniversalBtn').onclick = () => { Views._searchMode = 'universal'; UI.renderCurrentView(); };
+
+    if (Views._searchMode === 'universal'){
+      document.getElementById('doUniSearchBtn').onclick = () => {
+        const results = Search.runUniversal(document.getElementById('uniKeyword').value);
+        const box = document.getElementById('searchResults');
+        if (results.length === 0){
+          box.innerHTML = '<div class="empty-msg">검색 결과가 없습니다.</div>';
+          return;
+        }
+        box.innerHTML = '<table><thead><tr><th>대상자</th><th>항목</th><th>내용</th></tr></thead><tbody>' +
+          results.map(r => '<tr class="clickable-row" data-goto-client="' + r.clientId + '"><td>' + Utils.escapeHtml(r.clientId) + (r.alias ? ' (' + Utils.escapeHtml(r.alias) + ')' : '') + '</td>' +
+            '<td>' + Utils.escapeHtml(r.section) + '</td><td>' + Utils.truncate(Utils.escapeHtml(r.text), 80) + '</td></tr>').join('') +
+          '</tbody></table>';
+        box.querySelectorAll('[data-goto-client]').forEach(el => { el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient }); });
+      };
+      return;
+    }
+
     document.getElementById('doSearchBtn').onclick = () => {
       const filters = {
         clientId: document.getElementById('sfClient').value,
@@ -3851,6 +4060,72 @@ const Views = {
 
   /* ---------------- STATS ---------------- */
   _reportMonth: null,
+  _journalDate: null,
+
+  renderDailyJournal(dateStr){
+    const j = Stats.dailyJournal(dateStr);
+    let html = '<div class="panel"><div class="page-header" style="margin-bottom:14px;">' +
+      '<div class="panel-title" style="margin:0;">📔 일일 업무일지</div>' +
+      '<div style="display:flex;gap:8px;align-items:center;">' +
+      '<input type="date" id="journalDateInput" value="' + dateStr + '">' +
+      '<button class="btn btn-sm" id="printJournalBtn">🖨️ 인쇄</button>' +
+      '</div></div>';
+
+    html += '<div class="summary-grid">' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + j.soapsToday.length + '</div><div class="label">작성·수정한 SOAP</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + j.completedFollowUpsToday.length + '</div><div class="label">완료한 후속조치</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + j.completedSchedulesToday.length + '</div><div class="label">완료한 일정</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + j.crisisEventsToday.length + '</div><div class="label">위기개입 기록</div></div>' +
+      '</div>';
+
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">작성·수정한 SOAP</p>';
+    if (j.soapsToday.length === 0){
+      html += '<div class="empty-msg">해당일에 작성·수정한 SOAP 기록이 없습니다.</div>';
+    } else {
+      j.soapsToday.forEach(s => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' · ' + Utils.escapeHtml(s.contactType) +
+          (s.status === 'draft' ? ' <span class="badge badge-draft">임시저장</span>' : ' <span class="badge badge-final">완료</span>') + '</div>' +
+          '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 70) + '</div></div></div>';
+      });
+    }
+
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">완료한 후속조치</p>';
+    if (j.completedFollowUpsToday.length === 0){
+      html += '<div class="empty-msg">해당일에 완료 처리한 후속조치가 없습니다.</div>';
+    } else {
+      j.completedFollowUpsToday.forEach(f => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + Utils.escapeHtml(f.clientId) + ' · ' + Utils.escapeHtml(f.type) + '</div>' +
+          (f.text ? '<div class="row-sub">' + Utils.escapeHtml(f.text) + '</div>' : '') + '</div></div>';
+      });
+    }
+
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">완료한 일정</p>';
+    if (j.completedSchedulesToday.length === 0){
+      html += '<div class="empty-msg">해당일에 완료 처리한 일정이 없습니다.</div>';
+    } else {
+      j.completedSchedulesToday.forEach(s => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' · ' + Utils.escapeHtml(s.contactType) + '</div>' +
+          (s.memo ? '<div class="row-sub">' + Utils.escapeHtml(s.memo) + '</div>' : '') + '</div></div>';
+      });
+    }
+
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">위기개입 기록</p>';
+    if (j.crisisEventsToday.length === 0){
+      html += '<div class="empty-msg">해당일에 기록된 위기개입 사항이 없습니다.</div>';
+    } else {
+      j.crisisEventsToday.forEach(ev => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + Utils.escapeHtml(ev.clientId) + (ev.alias ? ' · ' + Utils.escapeHtml(ev.alias) : '') + ' · <span class="badge badge-crisis">' + Utils.escapeHtml(ev.type) + '</span></div>' +
+          (ev.description ? '<div class="row-sub">' + Utils.escapeHtml(ev.description) + '</div>' : '') + '</div></div>';
+      });
+    }
+
+    html += '</div>';
+    return html;
+  },
 
   monthOptionsHtml(selected){
     const opts = [];
@@ -3923,6 +4198,9 @@ const Views = {
       '<div class="summary-card" style="cursor:default;"><div class="num">' + s.fuCompletionRate + '%</div><div class="label">후속조치 완료율</div></div>' +
       '</div>';
 
+    if (!Views._journalDate) Views._journalDate = Utils.todayStr();
+    html += Views.renderDailyJournal(Views._journalDate);
+
     html += '<div class="panel"><div class="panel-title">월별 상담 건수 (최근 6개월)</div>' +
       Views.renderBarChart(s.monthlyCounts.map(m => ({ label: m.month.slice(5) + '월', value: m.count }))) + '</div>';
 
@@ -3955,6 +4233,12 @@ const Views = {
     ).join('') + '</div>';
   },
   bindStats(){
+    document.getElementById('journalDateInput').onchange = (e) => {
+      Views._journalDate = e.target.value;
+      UI.renderCurrentView();
+    };
+    document.getElementById('printJournalBtn').onclick = () => window.print();
+
     document.getElementById('reportMonthSelect').onchange = (e) => {
       Views._reportMonth = e.target.value;
       UI.renderCurrentView();
