@@ -555,19 +555,56 @@ const Utils = {
     const d = new Date(iso);
     return d.toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
   },
-  // Builds the list of dates for a recurring follow-up/schedule: the base
-  // date plus (count - 1) further occurrences spaced by the given pattern.
-  computeRecurringDates(baseDateStr, pattern, count){
+  // The Nth occurrence of `weekday` (0=일 ~ 6=토) in a given month, or the
+  // LAST occurrence when nth is -1 (e.g. "매월 마지막 금요일"). Returns null
+  // if that month has no such Nth weekday (e.g. a rare 5th occurrence).
+  nthWeekdayOfMonth(year, monthIndex0, nth, weekday){
+    if (nth === -1){
+      const lastDate = new Date(year, monthIndex0 + 1, 0).getDate();
+      for (let day = lastDate; day >= lastDate - 6; day--){
+        const dt = new Date(year, monthIndex0, day);
+        if (dt.getDay() === weekday) return dt;
+      }
+      return null;
+    }
+    const firstWeekday = new Date(year, monthIndex0, 1).getDay();
+    const day = 1 + ((weekday - firstWeekday + 7) % 7) + (nth - 1) * 7;
+    const daysInMonth = new Date(year, monthIndex0 + 1, 0).getDate();
+    if (day > daysInMonth) return null;
+    return new Date(year, monthIndex0, day);
+  },
+  // Builds the list of dates for a recurring follow-up/schedule. For the
+  // 'monthlyNth' pattern (e.g. "매월 둘째 주 화요일"), the day-of-month from
+  // baseDateStr is ignored — only its year/month anchors the starting
+  // month, and every occurrence is that month's Nth `extra.weekday`. Other
+  // patterns keep the base date plus (count - 1) further occurrences spaced
+  // by the given pattern.
+  computeRecurringDates(baseDateStr, pattern, count, extra){
+    const [y, m, d] = baseDateStr.split('-').map(Number);
+    const fmt = (dt) => dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+
+    if (pattern === 'monthlyNth' && extra){
+      const dates = [];
+      let year = y, monthIndex0 = m - 1, guard = 0;
+      while (dates.length < count && guard < count + 24){
+        const dt = this.nthWeekdayOfMonth(year, monthIndex0, extra.nth, extra.weekday);
+        if (dt) dates.push(fmt(dt));
+        monthIndex0++;
+        if (monthIndex0 > 11){ monthIndex0 = 0; year++; }
+        guard++;
+      }
+      return dates;
+    }
+
     const dates = [baseDateStr];
     if (!pattern || pattern === 'none' || count <= 1) return dates;
-    const [y, m, d] = baseDateStr.split('-').map(Number);
     for (let i = 1; i < count; i++){
       let dt;
       if (pattern === 'weekly') dt = new Date(y, m - 1, d + 7 * i);
       else if (pattern === 'biweekly') dt = new Date(y, m - 1, d + 14 * i);
       else if (pattern === 'monthly') dt = new Date(y, m - 1 + i, d);
       else break;
-      dates.push(dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0'));
+      dates.push(fmt(dt));
     }
     return dates;
   },
@@ -2482,23 +2519,41 @@ const Views = {
   // Shared recurrence controls for the follow-up / schedule "quick add"
   // modals. Kept as independent records once created (no linked series) —
   // simplest to review, edit, or delete individually afterward.
+  WEEKDAY_LABELS: ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'],
   repeatFieldsHtml(prefix){
     return '<div class="field"><label>반복</label><select id="' + prefix + 'Repeat">' +
       '<option value="none">반복 없음</option><option value="weekly">매주</option>' +
-      '<option value="biweekly">2주마다</option><option value="monthly">매월</option>' +
+      '<option value="biweekly">2주마다</option><option value="monthly">매월(같은 날짜)</option>' +
+      '<option value="monthlyNth">매월 N번째 요일</option>' +
       '</select></div>' +
       '<div class="field hidden" id="' + prefix + 'RepeatCountWrap"><label>반복 횟수</label>' +
-      '<input type="number" id="' + prefix + 'RepeatCount" min="2" max="24" value="4"></div>';
+      '<input type="number" id="' + prefix + 'RepeatCount" min="2" max="24" value="4"></div>' +
+      '<div class="field hidden" id="' + prefix + 'MonthlyNthWrap"><label>매월 몇 번째 · 무슨 요일</label>' +
+      '<div style="display:flex;gap:6px;">' +
+      '<select id="' + prefix + 'NthWeek" style="flex:1;">' +
+      '<option value="1">첫째 주</option><option value="2">둘째 주</option><option value="3">셋째 주</option>' +
+      '<option value="4">넷째 주</option><option value="-1">마지막 주</option></select>' +
+      '<select id="' + prefix + 'Weekday" style="flex:1;">' +
+      Views.WEEKDAY_LABELS.map((w, i) => '<option value="' + i + '">' + w + '</option>').join('') +
+      '</select></div></div>';
   },
   bindRepeatFields(prefix){
     const sel = document.getElementById(prefix + 'Repeat');
-    const wrap = document.getElementById(prefix + 'RepeatCountWrap');
-    sel.onchange = () => wrap.classList.toggle('hidden', sel.value === 'none');
+    const countWrap = document.getElementById(prefix + 'RepeatCountWrap');
+    const nthWrap = document.getElementById(prefix + 'MonthlyNthWrap');
+    sel.onchange = () => {
+      countWrap.classList.toggle('hidden', sel.value === 'none');
+      nthWrap.classList.toggle('hidden', sel.value !== 'monthlyNth');
+    };
   },
   readRepeatDates(prefix, baseDate){
     const pattern = document.getElementById(prefix + 'Repeat').value;
     const count = pattern === 'none' ? 1 : (parseInt(document.getElementById(prefix + 'RepeatCount').value, 10) || 4);
-    return Utils.computeRecurringDates(baseDate, pattern, count);
+    const extra = pattern === 'monthlyNth' ? {
+      nth: parseInt(document.getElementById(prefix + 'NthWeek').value, 10),
+      weekday: parseInt(document.getElementById(prefix + 'Weekday').value, 10)
+    } : null;
+    return Utils.computeRecurringDates(baseDate, pattern, count, extra);
   },
 
   managementBadge(level){
