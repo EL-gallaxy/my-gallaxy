@@ -202,6 +202,14 @@
   .badge-pending{background:var(--warn-soft);color:var(--warn);}
   .badge-completed{background:var(--draft-soft);color:var(--draft);}
   .badge-closed{background:var(--draft-soft);color:var(--draft);}
+  .badge-crisis-flag{background:var(--danger);color:#fff;}
+
+  /* collapsible client-detail panels (입퇴원 이력, 위기개입 기록 등) */
+  details.panel > summary.panel-title{cursor:pointer;list-style:none;margin-bottom:0;}
+  details.panel[open] > summary.panel-title{margin-bottom:12px;}
+  details.panel > summary.panel-title::-webkit-details-marker{display:none;}
+  details.panel > summary.panel-title::after{content:'▸';color:var(--text-faint);font-size:0.75rem;}
+  details.panel[open] > summary.panel-title::after{content:'▾';}
   .tag{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:1px 7px;font-size:0.75rem;margin:0 4px 4px 0;}
 
   /* calendar (일정 tab) */
@@ -302,6 +310,14 @@
     .summary-grid{grid-template-columns:1fr;}
   }
 
+  /* institution header shown only when printing (see OrgInfo settings) */
+  .print-header{display:none;}
+  @media print{
+    .print-header{display:block !important;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #000;}
+    .print-header .org-name{font-size:1.15rem;font-weight:700;}
+    .print-header .meta{font-size:0.85rem;color:#444;margin-top:2px;}
+  }
+
   /* print (인쇄/PDF 저장) — hide chrome, keep just the record content */
   @media print{
     .topbar, .quick-btns, .tabs, #toastContainer, .modal-overlay, .lock-btn,
@@ -309,13 +325,16 @@
     .calendar-grid, #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
     #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #closeClientBtn,
-    #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #reportMonthSelect, #exportReportCsvBtn,
+    #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
+    #addContactBtn, #addConferenceBtn, #reportMonthSelect, #exportReportCsvBtn,
     #printReportBtn, .example-banner{
       display:none !important;
     }
     body{background:#fff;}
     #appMain{padding:0;max-width:100%;}
     .panel{border:none;box-shadow:none;padding:8px 0;}
+    details.panel > summary.panel-title::after{display:none;}
+    details.panel .divider ~ .form-grid{display:none;}
     textarea{border:none;padding:0;resize:none;}
   }
 </style>
@@ -508,16 +527,19 @@ const Utils = {
     }
     return dates;
   },
-  // Full calendar months elapsed between a YYYY-MM-DD date and today (used
-  // for the 4-month 미접촉 대상자 gap check). Counts only complete months —
-  // e.g. exactly 4 months and 0 days returns 4, 4 months minus a day returns 3.
-  monthsSince(dateStr){
+  // Whole calendar days elapsed between a YYYY-MM-DD date and today (used
+  // for the 미접촉 대상자 gap check, whose threshold varies by 관리수준).
+  daysSince(dateStr){
     const [y, m, d] = dateStr.split('-').map(Number);
     const then = new Date(y, m - 1, d);
     const now = new Date();
-    let months = (now.getFullYear() - then.getFullYear()) * 12 + (now.getMonth() - then.getMonth());
-    if (now.getDate() < then.getDate()) months--;
-    return months;
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return Math.round((todayMidnight - then) / 86400000);
+  },
+  // Friendly "약 N일/개월 경과" phrasing for a day count.
+  formatElapsedDays(days){
+    if (days < 60) return days + '일';
+    return Math.floor(days / 30) + '개월';
   }
 };
 
@@ -740,10 +762,13 @@ const CONSTANTS = {
   RESOURCE_TYPES: ['정신재활시설(주간재활 등)', '직업재활시설', '정신의료기관', '사회복지관', '자활센터', '주거지원', '기타'],
   ADMISSION_TYPES: ['입원', '퇴원'],
   SOAP_SUBJECTS: { client: '본인', family: '가족·보호자' },
-  // Used by the 미접촉 대상자 dashboard flag — 방문/내소(대면) 접촉이 이 개월 수
-  // 이상 없으면 짚어준다. 전화·프로그램·기타 접촉은 대상이 아니다.
+  CRISIS_EVENT_TYPES: ['자살시도', '자해', '응급입원 동행', '112 신고', '119 신고', '타해 위험', '기타'],
+  CONTACT_RELATIONS: ['배우자', '부모', '자녀', '형제자매', '기타 보호자', '기타'],
+  // Used by the 미접촉 대상자 dashboard flag — 방문/내소(대면) 접촉이 이 일수 이상
+  // 없으면 짚어준다. 전화·프로그램·기타 접촉은 대상이 아니다. 관리수준이 높을수록
+  // (위기 > 집중 > 유지·일시) 더 짧은 주기로 확인하도록 기준을 차등 적용한다.
   FACE_TO_FACE_TYPES: ['방문', '내소'],
-  CONTACT_GAP_MONTHS: 4
+  CONTACT_GAP_DAYS_BY_LEVEL: { crisis: 14, intensive: 30, maintenance: 120, temporary: 120 }
 };
 
 /* =========================================================================
@@ -869,6 +894,22 @@ const Theme = {
 };
 
 /* =========================================================================
+   ORG INFO  (기관명/담당자명 — plain UI preference like Theme, stored
+   unencrypted since it names the worker's own organization, not a client.
+   Only used to print a letterhead-style header on client/SOAP/report output.)
+   ========================================================================= */
+const OrgInfo = {
+  name: '', worker: '',
+
+  async init(){
+    this.name = (await Storage.getSetting('orgName')) || '';
+    this.worker = (await Storage.getSetting('orgWorker')) || '';
+  },
+  async setName(v){ this.name = v; await Storage.setSetting('orgName', v); },
+  async setWorker(v){ this.worker = v; await Storage.setSetting('orgWorker', v); }
+};
+
+/* =========================================================================
    DATA LOADING
    ========================================================================= */
 async function loadAllDataIntoState(){
@@ -927,7 +968,8 @@ const Clients = {
       status: 'active',
       registrationDate: registrationDate || Utils.todayStr(),
       referralSource: referralSource || '',
-      admissions: [], resourceLinks: []
+      admissions: [], resourceLinks: [],
+      crisisEvents: [], emergencyContacts: [], medications: [], caseConferences: []
     };
     State.clients.set(id, client);
     await Storage.saveEncrypted('clients', client);
@@ -1012,6 +1054,82 @@ const Clients = {
     await Storage.saveEncrypted('clients', client);
   },
 
+  // 위기개입 기록 — 자살시도/응급입원 동행/112·119 신고 등 위기 상황에 대한 대응을
+  // 일반 SOAP과 분리해 빠르게 남기고 나중에 한눈에 찾을 수 있도록 하는 전용 로그.
+  // 입퇴원 이력과 같은 방식(날짜순 목록)이며, 위험도를 자동으로 판정하지 않고
+  // 실무자가 실제로 한 조치만 그대로 기록한다.
+  async addCrisisEvent(id, { type, date, description, action }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.crisisEvents = client.crisisEvents || [];
+    client.crisisEvents.push({
+      id: Utils.uid('crisis'), type: type || CONSTANTS.CRISIS_EVENT_TYPES[0],
+      date: date || Utils.todayStr(), description: (description || '').trim(), action: (action || '').trim()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeCrisisEvent(id, eventId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.crisisEvents = (client.crisisEvents || []).filter(e => e.id !== eventId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // 보호자/비상연락처 — 위기 상황에서 바로 확인할 수 있도록 대상자별로 복수 등록.
+  async addEmergencyContact(id, { name, relation, phone, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.emergencyContacts = client.emergencyContacts || [];
+    client.emergencyContacts.push({
+      id: Utils.uid('ec'), name: (name || '').trim(), relation: relation || CONSTANTS.CONTACT_RELATIONS[0],
+      phone: (phone || '').trim(), note: (note || '').trim()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeEmergencyContact(id, contactId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.emergencyContacts = (client.emergencyContacts || []).filter(c => c.id !== contactId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // 복약 현황 — SOAP 서술과 별개로, 약물명/용량/처방병원의 변경 이력을 구조화된
+  // 목록으로 남긴다. 가장 최근 항목이 사실상 "현재 복약 상태"를 나타낸다.
+  async addMedication(id, { name, dose, hospital, date, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.medications = client.medications || [];
+    client.medications.push({
+      id: Utils.uid('med'), name: (name || '').trim(), dose: (dose || '').trim(),
+      hospital: (hospital || '').trim(), date: date || Utils.todayStr(), note: (note || '').trim()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeMedication(id, medId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.medications = (client.medications || []).filter(m => m.id !== medId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // 사례회의(수퍼비전) 기록 — 팀 단위로 논의된 내용과 결정사항을 SOAP과 별개로 남긴다.
+  async addCaseConference(id, { date, attendees, discussion, decision }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.caseConferences = client.caseConferences || [];
+    client.caseConferences.push({
+      id: Utils.uid('conf'), date: date || Utils.todayStr(), attendees: (attendees || '').trim(),
+      discussion: (discussion || '').trim(), decision: (decision || '').trim()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeCaseConference(id, confId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.caseConferences = (client.caseConferences || []).filter(c => c.id !== confId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
   // Most recent 방문(home visit)/내소(in-person office visit) SOAP date —
   // deliberately narrower than lastRecordDate(), which counts every contact
   // type including phone calls.
@@ -1024,23 +1142,26 @@ const Clients = {
   },
 
   // 미접촉 대상자 판정: 종결된 대상자는 제외. 대면접촉 기록이 있으면 그 날짜부터,
-  // 한 번도 없었으면 등록일부터 개월 수를 센다 — 등록 후 한 번도 대면으로 만난
-  // 적 없는 대상자를 놓치지 않기 위함이다. 임계값을 넘지 않으면 null을 반환한다.
+  // 한 번도 없었으면 등록일부터 경과 일수를 센다 — 등록 후 한 번도 대면으로 만난
+  // 적 없는 대상자를 놓치지 않기 위함이다. 기준 일수는 관리수준별로 다르며(위기관리일수록
+  // 짧게), 이를 넘지 않으면 null을 반환한다.
   getContactGapInfo(clientId){
     const client = this.get(clientId);
     if (!client || client.status === 'closed') return null;
+    const thresholdDays = CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL[client.managementLevel];
+    if (!thresholdDays) return null;
     const lastFace = this.lastFaceToFaceContactDate(clientId);
     const baseDate = lastFace || client.registrationDate;
     if (!baseDate) return null;
-    const months = Utils.monthsSince(baseDate);
-    if (months < CONSTANTS.CONTACT_GAP_MONTHS) return null;
-    return { clientId, lastFaceToFaceDate: lastFace || null, sinceRegistration: !lastFace, months };
+    const days = Utils.daysSince(baseDate);
+    if (days < thresholdDays) return null;
+    return { clientId, lastFaceToFaceDate: lastFace || null, sinceRegistration: !lastFace, days, thresholdDays };
   },
   contactGapList(){
     return this.list()
       .map(c => this.getContactGapInfo(c.id))
       .filter(Boolean)
-      .sort((a, b) => b.months - a.months);
+      .sort((a, b) => (b.days - b.thresholdDays) - (a.days - a.thresholdDays));
   },
 
   // Deleting a client also removes every SOAP/후속조치/일정 record that
@@ -1965,6 +2086,16 @@ const Views = {
     return '<span class="badge ' + m.badgeClass + '">' + m.emoji + ' ' + m.label + '</span>';
   },
 
+  // Letterhead-style header shown only in printed output (설정 > 기관명/담당자명).
+  // Renders nothing if neither field is filled in, so print output is
+  // unchanged for anyone who hasn't set them.
+  printHeaderHtml(docTitle){
+    if (!OrgInfo.name && !OrgInfo.worker) return '';
+    return '<div class="print-header"><div class="org-name">' + Utils.escapeHtml(OrgInfo.name || '') + '</div>' +
+      '<div class="meta">' + (OrgInfo.worker ? '담당자: ' + Utils.escapeHtml(OrgInfo.worker) + ' · ' : '') +
+      '출력일: ' + Utils.todayStr() + (docTitle ? ' · ' + Utils.escapeHtml(docTitle) : '') + '</div></div>';
+  },
+
   directionBadge(direction){
     if (direction === 'decline') return '<span class="badge badge-crisis">감소 추세</span>';
     if (direction === 'improve') return '<span class="badge badge-temporary">개선 추세</span>';
@@ -2064,17 +2195,19 @@ const Views = {
     }
     html += '</div>';
 
-    // 미접촉 대상자 — 종결되지 않은 대상자 중 방문/내소(대면) 상담이 4개월 이상
-    // 없었던 경우만 짚어준다. 전화·프로그램 등 비대면 접촉만으로는 해소되지 않는다.
-    html += '<div class="panel" id="gapSection"><div class="panel-title">🕓 미접촉 대상자 (대면접촉 ' + CONSTANTS.CONTACT_GAP_MONTHS + '개월 이상 없음)</div>';
+    // 미접촉 대상자 — 종결되지 않은 대상자 중 방문/내소(대면) 상담이 관리수준별
+    // 기준 일수 이상 없었던 경우만 짚어준다(위기관리 2주/집중관리 1개월/유지·일시관리
+    // 4개월). 전화·프로그램 등 비대면 접촉만으로는 해소되지 않는다.
+    html += '<div class="panel" id="gapSection"><div class="panel-title">🕓 미접촉 대상자 (관리수준별 기준 이상 대면접촉 없음)</div>';
     if (contactGaps.length === 0){
-      html += '<div class="empty-msg">방문·내소 상담이 ' + CONSTANTS.CONTACT_GAP_MONTHS + '개월 이상 없는 대상자가 없습니다.</div>';
+      html += '<div class="empty-msg">관리수준별 기준(위기 2주·집중 1개월·유지/일시 4개월) 이상 방문·내소 상담이 없는 대상자가 없습니다.</div>';
     } else {
       contactGaps.forEach(g => {
         const gc = Clients.get(g.clientId);
+        const levelLabel = (CONSTANTS.MANAGEMENT_LEVELS[gc && gc.managementLevel] || {}).label || '';
         html += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
-          '<strong>' + Utils.escapeHtml(g.clientId) + '</strong>' + (gc && gc.alias ? ' (' + Utils.escapeHtml(gc.alias) + ')' : '') +
-          '<br><span style="font-size:0.82rem;">' + (g.lastFaceToFaceDate ? '최근 방문·내소 상담: ' + g.lastFaceToFaceDate : '방문·내소 상담 기록 없음(등록일 기준)') + ' · 약 ' + g.months + '개월 경과</span>' +
+          '<strong>' + Utils.escapeHtml(g.clientId) + '</strong>' + (gc && gc.alias ? ' (' + Utils.escapeHtml(gc.alias) + ')' : '') + ' · ' + levelLabel +
+          '<br><span style="font-size:0.82rem;">' + (g.lastFaceToFaceDate ? '최근 방문·내소 상담: ' + g.lastFaceToFaceDate : '방문·내소 상담 기록 없음(등록일 기준)') + ' · 약 ' + Utils.formatElapsedDays(g.days) + ' 경과 (기준: ' + Utils.formatElapsedDays(g.thresholdDays) + ')</span>' +
           '</div>';
       });
     }
@@ -2250,6 +2383,8 @@ const Views = {
       '<button class="btn btn-primary" id="newClientBtn">＋ 새 대상자</button></div></div>';
 
     html += '<div class="panel" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">' +
+      '<div class="field" style="margin:0;max-width:220px;"><label>검색</label>' +
+      '<input type="text" id="clientSearchInput" placeholder="ID 또는 별칭 검색"></div>' +
       '<div class="field" style="margin:0;max-width:200px;"><label>정렬</label><select id="clientSortSelect">' +
       '<option value="id"' + (sort === 'id' ? ' selected' : '') + '>ID순</option>' +
       '<option value="recent"' + (sort === 'recent' ? ' selected' : '') + '>최근 기록일순</option>' +
@@ -2288,6 +2423,17 @@ const Views = {
     return html;
   },
   bindClientsList(){
+    // Client-side row filtering (no re-render) so the search box never loses
+    // focus or cursor position while typing — unlike the sort/level/status
+    // filters above, which each trigger a full UI.navigate() re-render.
+    const searchInput = document.getElementById('clientSearchInput');
+    searchInput.oninput = () => {
+      const q = searchInput.value.trim().toLowerCase();
+      document.querySelectorAll('#appMain table tbody tr[data-client]').forEach(tr => {
+        tr.style.display = (!q || tr.textContent.toLowerCase().includes(q)) ? '' : 'none';
+      });
+    };
+
     document.getElementById('newClientBtn').onclick = () => Views.openNewClientModal();
     document.getElementById('exportClientsCsvBtn').onclick = () => CSV.exportClients();
     document.getElementById('clientSortSelect').onchange = (e) => UI.navigate('clients', { sort: e.target.value, levelFilter: State.currentParams.levelFilter || 'all', statusFilter: State.currentParams.statusFilter || 'active' });
@@ -2321,8 +2467,10 @@ const Views = {
 
     const isClosed = c.status === 'closed';
 
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + Utils.escapeHtml(c.id) + (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') +
-      (isClosed ? ' <span class="badge badge-closed">종결</span>' : '') + '</h1>' +
+    let html = Views.printHeaderHtml('대상자 기록: ' + c.id);
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + Utils.escapeHtml(c.id) + (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') +
+      (isClosed ? ' <span class="badge badge-closed">종결</span>' : '') +
+      ((c.crisisEvents || []).length ? ' <span class="badge badge-crisis-flag">⚠ 위기개입 이력 있음</span>' : '') + '</h1>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printClientBtn">🖨️ 인쇄</button>' +
       '<button class="btn btn-sm" id="backToClientsBtn">← 대상자 목록</button></div></div>';
 
@@ -2363,7 +2511,7 @@ const Views = {
     }
 
     if (c.managementHistory && c.managementHistory.length){
-      html += '<div class="panel"><div class="panel-title">관리수준 변경 이력</div>';
+      html += '<details class="panel" open><summary class="panel-title">관리수준 변경 이력</summary>';
       c.managementHistory.slice().reverse().forEach(h => {
         const fromLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.from] || {}).label || h.from || '(미지정)';
         const toLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.to] || {}).label || h.to;
@@ -2372,13 +2520,37 @@ const Views = {
           (h.reason ? '<div class="row-sub">사유: ' + Utils.escapeHtml(h.reason) + '</div>' : '') +
           '</div></div>';
       });
-      html += '</div>';
+      html += '</details>';
     }
+
+    // 위기개입 기록 — 자살시도/응급입원 동행/112·119 신고 등을 일반 SOAP과 분리해
+    // 빠르게 남기는 전용 로그. 위험도를 자동으로 판정하지 않고, 실제 발생한 사건과
+    // 실무자가 취한 조치만 그대로 기록한다.
+    const crisisEvents = (c.crisisEvents || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    html += '<details class="panel"' + (crisisEvents.length ? ' open' : '') + '><summary class="panel-title">⚠ 위기개입 기록</summary>';
+    if (crisisEvents.length === 0){
+      html += '<div class="empty-msg">기록된 위기개입 사항이 없습니다.</div>';
+    } else {
+      crisisEvents.forEach(ev => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + ev.date + ' · <span class="badge badge-crisis">' + Utils.escapeHtml(ev.type) + '</span></div>' +
+          (ev.description ? '<div class="row-sub">경위: ' + Utils.escapeHtml(ev.description) + '</div>' : '') +
+          (ev.action ? '<div class="row-sub">조치: ' + Utils.escapeHtml(ev.action) + '</div>' : '') +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-crisis="' + ev.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>유형</label><select id="crisisType">' +
+      CONSTANTS.CRISIS_EVENT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>날짜</label><input type="date" id="crisisDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field full"><label>경위(선택)</label><textarea id="crisisDescription" style="min-height:60px;"></textarea></div>' +
+      '<div class="field full"><label>조치 내용(선택)</label><textarea id="crisisAction" style="min-height:60px;"></textarea></div></div>' +
+      '<button class="btn btn-sm" id="addCrisisBtn">＋ 위기개입 기록 추가</button></details>';
 
     // 입퇴원 이력 — 실무자가 알고 있는 입/퇴원 사실을 직접 기록하는 자유 입력
     // 이력이며, 앱이 입원 여부를 추정하거나 진단을 다루지 않는다.
     const admissions = (c.admissions || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    html += '<div class="panel"><div class="panel-title">입퇴원 이력</div>';
+    html += '<details class="panel"' + (admissions.length ? ' open' : '') + '><summary class="panel-title">입퇴원 이력</summary>';
     if (admissions.length === 0){
       html += '<div class="empty-msg">기록된 입퇴원 이력이 없습니다.</div>';
     } else {
@@ -2395,11 +2567,11 @@ const Views = {
       '<div class="field"><label>날짜</label><input type="date" id="admDate" value="' + Utils.todayStr() + '"></div>' +
       '<div class="field"><label>병원(선택)</label><input type="text" id="admHospital"></div>' +
       '<div class="field"><label>메모(선택)</label><input type="text" id="admNote"></div></div>' +
-      '<button class="btn btn-sm" id="addAdmissionBtn">＋ 입퇴원 기록 추가</button></div>';
+      '<button class="btn btn-sm" id="addAdmissionBtn">＋ 입퇴원 기록 추가</button></details>';
 
     // 자원연계 현황 — 연계한 기관/자원을 그대로 목록화만 한다.
     const resourceLinks = (c.resourceLinks || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    html += '<div class="panel"><div class="panel-title">자원연계 현황</div>';
+    html += '<details class="panel"' + (resourceLinks.length ? ' open' : '') + '><summary class="panel-title">자원연계 현황</summary>';
     if (resourceLinks.length === 0){
       html += '<div class="empty-msg">연계된 자원이 없습니다.</div>';
     } else {
@@ -2417,7 +2589,71 @@ const Views = {
       '<div class="field"><label>연락처(선택)</label><input type="text" id="resContact"></div>' +
       '<div class="field"><label>날짜</label><input type="date" id="resDate" value="' + Utils.todayStr() + '"></div>' +
       '<div class="field full"><label>메모(선택)</label><input type="text" id="resNote"></div></div>' +
-      '<button class="btn btn-sm" id="addResourceBtn">＋ 자원연계 추가</button></div>';
+      '<button class="btn btn-sm" id="addResourceBtn">＋ 자원연계 추가</button></details>';
+
+    // 복약 현황 — SOAP 서술과 별개로 약물명/용량/처방병원 변경 이력을 구조화된
+    // 목록으로 남긴다. 가장 최근 항목이 사실상 현재 복약 상태를 나타낸다.
+    const medications = (c.medications || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    html += '<details class="panel"' + (medications.length ? ' open' : '') + '><summary class="panel-title">복약 현황</summary>';
+    if (medications.length === 0){
+      html += '<div class="empty-msg">기록된 복약 정보가 없습니다.</div>';
+    } else {
+      medications.forEach(m => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + m.date + ' · ' + Utils.escapeHtml(m.name) + (m.dose ? ' (' + Utils.escapeHtml(m.dose) + ')' : '') + '</div>' +
+          '<div class="row-sub">' + [m.hospital, m.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-medication="' + m.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>약물명</label><input type="text" id="medName"></div>' +
+      '<div class="field"><label>용량(선택)</label><input type="text" id="medDose"></div>' +
+      '<div class="field"><label>처방 병원(선택)</label><input type="text" id="medHospital"></div>' +
+      '<div class="field"><label>변경일</label><input type="date" id="medDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field full"><label>메모(선택)</label><input type="text" id="medNote"></div></div>' +
+      '<button class="btn btn-sm" id="addMedicationBtn">＋ 복약 정보 추가</button></details>';
+
+    // 보호자/비상연락처 — 위기 상황에서 바로 확인할 수 있도록 복수 등록 가능.
+    const emergencyContacts = (c.emergencyContacts || []);
+    html += '<details class="panel"' + (emergencyContacts.length ? ' open' : '') + '><summary class="panel-title">보호자 · 비상연락처</summary>';
+    if (emergencyContacts.length === 0){
+      html += '<div class="empty-msg">등록된 보호자·비상연락처가 없습니다.</div>';
+    } else {
+      emergencyContacts.forEach(ec => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + Utils.escapeHtml(ec.name || '(이름 미입력)') + ' · ' + Utils.escapeHtml(ec.relation) + '</div>' +
+          '<div class="row-sub">' + [ec.phone, ec.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-contact="' + ec.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>이름</label><input type="text" id="ecName"></div>' +
+      '<div class="field"><label>관계</label><select id="ecRelation">' +
+      CONSTANTS.CONTACT_RELATIONS.map(r => '<option value="' + r + '">' + r + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>연락처</label><input type="text" id="ecPhone"></div>' +
+      '<div class="field full"><label>메모(선택)</label><input type="text" id="ecNote"></div></div>' +
+      '<button class="btn btn-sm" id="addContactBtn">＋ 보호자 연락처 추가</button></details>';
+
+    // 사례회의(수퍼비전) 기록 — 팀 단위로 논의된 내용과 결정사항을 SOAP과 별개로 남긴다.
+    const caseConferences = (c.caseConferences || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    html += '<details class="panel"' + (caseConferences.length ? ' open' : '') + '><summary class="panel-title">사례회의 기록</summary>';
+    if (caseConferences.length === 0){
+      html += '<div class="empty-msg">기록된 사례회의가 없습니다.</div>';
+    } else {
+      caseConferences.forEach(cf => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + cf.date + (cf.attendees ? ' · 참석자: ' + Utils.escapeHtml(cf.attendees) : '') + '</div>' +
+          (cf.discussion ? '<div class="row-sub">논의내용: ' + Utils.escapeHtml(cf.discussion) + '</div>' : '') +
+          (cf.decision ? '<div class="row-sub">결정사항: ' + Utils.escapeHtml(cf.decision) + '</div>' : '') +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-conference="' + cf.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>날짜</label><input type="date" id="confDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field"><label>참석자(선택)</label><input type="text" id="confAttendees"></div>' +
+      '<div class="field full"><label>논의내용(선택)</label><textarea id="confDiscussion" style="min-height:60px;"></textarea></div>' +
+      '<div class="field full"><label>결정사항(선택)</label><textarea id="confDecision" style="min-height:60px;"></textarea></div></div>' +
+      '<button class="btn btn-sm" id="addConferenceBtn">＋ 사례회의 기록 추가</button></details>';
 
     // MSE (정신상태검사) and case goals — free-text fields the caseworker fills in
     // and edits directly; the app never generates or infers this content.
@@ -2461,7 +2697,13 @@ const Views = {
   },
   bindClientDetail(id){
     document.getElementById('backToClientsBtn').onclick = () => UI.navigate('clients');
-    document.getElementById('printClientBtn').onclick = () => window.print();
+    document.getElementById('printClientBtn').onclick = () => {
+      // <details> hides its content while closed, so expand every collapsed
+      // history panel first — otherwise the printed page would silently omit
+      // whichever sections the caseworker happened to leave collapsed.
+      document.querySelectorAll('#appMain details.panel').forEach(d => { d.open = true; });
+      window.print();
+    };
     document.getElementById('mgmtLevelSelect').onchange = (e) => {
       const newLevel = e.target.value;
       const prevLevel = Clients.get(id).managementLevel;
@@ -2575,6 +2817,82 @@ const Views = {
       });
     });
 
+    document.getElementById('addCrisisBtn').onclick = async () => {
+      await Clients.addCrisisEvent(id, {
+        type: document.getElementById('crisisType').value,
+        date: document.getElementById('crisisDate').value,
+        description: document.getElementById('crisisDescription').value,
+        action: document.getElementById('crisisAction').value
+      });
+      toast('위기개입 기록을 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-crisis]').forEach(el => {
+      el.onclick = () => UI.confirm('이 위기개입 기록을 삭제할까요?', async () => {
+        await Clients.removeCrisisEvent(id, el.dataset.delCrisis);
+        toast('삭제했습니다.');
+        UI.renderCurrentView();
+      });
+    });
+
+    document.getElementById('addMedicationBtn').onclick = async () => {
+      const name = document.getElementById('medName').value;
+      if (!name.trim()){ toast('약물명을 입력해 주세요.', 'error'); return; }
+      await Clients.addMedication(id, {
+        name, dose: document.getElementById('medDose').value,
+        hospital: document.getElementById('medHospital').value,
+        date: document.getElementById('medDate').value,
+        note: document.getElementById('medNote').value
+      });
+      toast('복약 정보를 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-medication]').forEach(el => {
+      el.onclick = () => UI.confirm('이 복약 기록을 삭제할까요?', async () => {
+        await Clients.removeMedication(id, el.dataset.delMedication);
+        toast('삭제했습니다.');
+        UI.renderCurrentView();
+      });
+    });
+
+    document.getElementById('addContactBtn').onclick = async () => {
+      const name = document.getElementById('ecName').value;
+      const phone = document.getElementById('ecPhone').value;
+      if (!name.trim() && !phone.trim()){ toast('이름 또는 연락처를 입력해 주세요.', 'error'); return; }
+      await Clients.addEmergencyContact(id, {
+        name, relation: document.getElementById('ecRelation').value,
+        phone, note: document.getElementById('ecNote').value
+      });
+      toast('보호자 연락처를 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-contact]').forEach(el => {
+      el.onclick = () => UI.confirm('이 보호자 연락처를 삭제할까요?', async () => {
+        await Clients.removeEmergencyContact(id, el.dataset.delContact);
+        toast('삭제했습니다.');
+        UI.renderCurrentView();
+      });
+    });
+
+    document.getElementById('addConferenceBtn').onclick = async () => {
+      const date = document.getElementById('confDate').value;
+      if (!date){ toast('날짜를 입력해 주세요.', 'error'); return; }
+      await Clients.addCaseConference(id, {
+        date, attendees: document.getElementById('confAttendees').value,
+        discussion: document.getElementById('confDiscussion').value,
+        decision: document.getElementById('confDecision').value
+      });
+      toast('사례회의 기록을 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-conference]').forEach(el => {
+      el.onclick = () => UI.confirm('이 사례회의 기록을 삭제할까요?', async () => {
+        await Clients.removeCaseConference(id, el.dataset.delConference);
+        toast('삭제했습니다.');
+        UI.renderCurrentView();
+      });
+    });
+
     document.getElementById('saveMseGoalsBtn').onclick = async () => {
       await Clients.update(id, {
         mse: document.getElementById('clMse').value,
@@ -2649,7 +2967,8 @@ const Views = {
     }
     this._draftCache = soap;
 
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📝 SOAP 기록 ' + (soap.id ? '수정' : '작성') + '</h1>' +
+    let html = Views.printHeaderHtml(soap.clientId ? 'SOAP 기록: ' + soap.clientId : 'SOAP 기록');
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">📝 SOAP 기록 ' + (soap.id ? '수정' : '작성') + '</h1>' +
       '<button class="btn btn-sm" id="soapBackBtn">← 뒤로</button></div>';
     if (soap.status !== 'final'){
       html += '<p class="help-text" id="autosaveIndicator" style="margin-top:-10px;margin-bottom:14px;">입력하는 동안 자동으로 임시저장됩니다.</p>';
@@ -3152,7 +3471,8 @@ const Views = {
 
   stats(){
     const s = Stats.compute();
-    let html = '<h1 class="page-title">📊 통계</h1>';
+    let html = Views.printHeaderHtml('통계 및 월간 실적보고서');
+    html += '<h1 class="page-title">📊 통계</h1>';
 
     html += '<div class="summary-grid">' +
       '<div class="summary-card" style="cursor:default;"><div class="num">' + s.totalClients + '</div><div class="label">총 대상자</div></div>' +
@@ -3223,6 +3543,13 @@ const Views = {
       '<input type="file" id="importBackupInput" accept="application/json" class="hidden">' +
       '</div></div>';
 
+    html += '<div class="panel"><div class="panel-title">🖨️ 인쇄 문서 설정</div>' +
+      '<p class="help-text" style="margin-bottom:10px;">여기에 입력하면 대상자 기록·SOAP·통계를 인쇄할 때 문서 상단에 헤더로 표시됩니다. 비워두면 헤더 없이 인쇄됩니다.</p>' +
+      '<div class="form-grid">' +
+      '<div class="field"><label>기관명</label><input type="text" id="orgNameInput" value="' + Utils.escapeHtml(OrgInfo.name) + '"></div>' +
+      '<div class="field"><label>담당자명(선택)</label><input type="text" id="orgWorkerInput" value="' + Utils.escapeHtml(OrgInfo.worker) + '"></div>' +
+      '</div></div>';
+
     html += '<div class="panel"><div class="panel-title">화면 테마</div>' +
       '<div class="field" style="max-width:240px;"><select id="themeModeSelect">' +
       '<option value="light">라이트</option>' +
@@ -3253,6 +3580,9 @@ const Views = {
       const lastBackupAt = await Storage.getSetting('lastBackupAt');
       document.getElementById('lastBackupAtText').textContent = lastBackupAt ? Utils.formatDateTime(lastBackupAt) : '백업한 적 없음';
     })();
+
+    document.getElementById('orgNameInput').onchange = (e) => OrgInfo.setName(e.target.value.trim());
+    document.getElementById('orgWorkerInput').onchange = (e) => OrgInfo.setWorker(e.target.value.trim());
 
     document.getElementById('themeModeSelect').onchange = (e) => Theme.setMode(e.target.value);
     document.getElementById('autoLockSelect').onchange = async (e) => {
@@ -3458,6 +3788,7 @@ async function initApp(){
   }
 
   await Theme.init();
+  await OrgInfo.init();
 
   const firstRun = await Auth.isFirstRun();
 
