@@ -153,7 +153,7 @@
   .page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:18px;}
 
   /* ---------- Cards / dashboard ---------- */
-  .summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
+  .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:24px;}
   .summary-card{
     background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;
     cursor:pointer;transition:box-shadow .12s,transform .12s;text-align:left;
@@ -165,6 +165,7 @@
   .summary-card.today .num{color:var(--warn);}
   .summary-card.draft .num{color:var(--accent);}
   .summary-card.upcoming .num{color:var(--good);}
+  .summary-card.gap .num{color:var(--warn);}
 
   .panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:20px;}
   .panel-title{font-size:1rem;font-weight:600;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;}
@@ -182,6 +183,7 @@
   .row-actions{display:flex;gap:6px;flex-shrink:0;}
 
   .overdue-row{background:var(--danger-soft);border-radius:6px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--danger);}
+  .gap-row{background:var(--warn-soft);border-radius:6px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--warn);}
   .quick-btns{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;}
 
   .example-banner{
@@ -199,6 +201,7 @@
   .badge-final{background:var(--good-soft);color:var(--good);}
   .badge-pending{background:var(--warn-soft);color:var(--warn);}
   .badge-completed{background:var(--draft-soft);color:var(--draft);}
+  .badge-closed{background:var(--draft-soft);color:var(--draft);}
   .tag{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:1px 7px;font-size:0.75rem;margin:0 4px 4px 0;}
 
   /* calendar (일정 tab) */
@@ -302,10 +305,12 @@
   /* print (인쇄/PDF 저장) — hide chrome, keep just the record content */
   @media print{
     .topbar, .quick-btns, .tabs, #toastContainer, .modal-overlay, .lock-btn,
-    .page-header button, .row-actions, #calPrevBtn, #calNextBtn, #calTodayBtn,
+    .page-header button, .page-header select, .row-actions, #calPrevBtn, #calNextBtn, #calTodayBtn,
     .calendar-grid, #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, .example-banner{
+    #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #closeClientBtn,
+    #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #reportMonthSelect, #exportReportCsvBtn,
+    #printReportBtn, .example-banner{
       display:none !important;
     }
     body{background:#fff;}
@@ -502,6 +507,17 @@ const Utils = {
       dates.push(dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0'));
     }
     return dates;
+  },
+  // Full calendar months elapsed between a YYYY-MM-DD date and today (used
+  // for the 4-month 미접촉 대상자 gap check). Counts only complete months —
+  // e.g. exactly 4 months and 0 days returns 4, 4 months minus a day returns 3.
+  monthsSince(dateStr){
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const then = new Date(y, m - 1, d);
+    const now = new Date();
+    let months = (now.getFullYear() - then.getFullYear()) * 12 + (now.getMonth() - then.getMonth());
+    if (now.getDate() < then.getDate()) months--;
+    return months;
   }
 };
 
@@ -718,7 +734,16 @@ const CONSTANTS = {
     temporary:   { label: '일시관리', emoji: '🟢', badgeClass: 'badge-temporary' }
   },
   QUICK_P_ACTIONS: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인'],
-  FOLLOWUP_TYPES: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인', '기타']
+  FOLLOWUP_TYPES: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인', '기타'],
+  REFERRAL_SOURCES: ['본인', '가족', '정신의료기관', '타 기관 의뢰', '행정기관(경찰·소방·주민센터 등)', '기타'],
+  CLOSURE_REASONS: ['자립/목표 달성', '타 기관 이관', '장기 입원', '관할지역 전출', '사망', '연락두절', '본인 거부', '기타'],
+  RESOURCE_TYPES: ['정신재활시설(주간재활 등)', '직업재활시설', '정신의료기관', '사회복지관', '자활센터', '주거지원', '기타'],
+  ADMISSION_TYPES: ['입원', '퇴원'],
+  SOAP_SUBJECTS: { client: '본인', family: '가족·보호자' },
+  // Used by the 미접촉 대상자 dashboard flag — 방문/내소(대면) 접촉이 이 개월 수
+  // 이상 없으면 짚어준다. 전화·프로그램·기타 접촉은 대상이 아니다.
+  FACE_TO_FACE_TYPES: ['방문', '내소'],
+  CONTACT_GAP_MONTHS: 4
 };
 
 /* =========================================================================
@@ -893,11 +918,17 @@ const Clients = {
   },
   get(id){ return State.clients.get(id); },
 
-  async add({ id, alias, managementLevel }){
+  async add({ id, alias, managementLevel, registrationDate, referralSource }){
     id = (id || '').trim();
     if (!id) throw new Error('대상자 ID를 입력해 주세요.');
     if (State.clients.has(id)) throw new Error('이미 존재하는 대상자 ID입니다.');
-    const client = { id, alias: (alias || '').trim(), managementLevel: managementLevel || 'maintenance' };
+    const client = {
+      id, alias: (alias || '').trim(), managementLevel: managementLevel || 'maintenance',
+      status: 'active',
+      registrationDate: registrationDate || Utils.todayStr(),
+      referralSource: referralSource || '',
+      admissions: [], resourceLinks: []
+    };
     State.clients.set(id, client);
     await Storage.saveEncrypted('clients', client);
     return client;
@@ -922,6 +953,94 @@ const Clients = {
     client.managementHistory = client.managementHistory || [];
     client.managementHistory.push({ date: Utils.todayStr(), from, to: level, reason: (reason || '').trim() });
     await Storage.saveEncrypted('clients', client);
+  },
+
+  // 사례 종결/전출 — 대상자는 목록에 남지만 활성 대상자 화면과 미접촉 대상자 알림에서
+  // 제외된다. 재등록(재개)은 언제든 가능하며 종결 이력 자체는 덮어써 보존하지 않는다
+  // (한 번에 하나의 종결 상태만 의미가 있으므로).
+  async close(id, { reason, date, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.status = 'closed';
+    client.closedReason = reason || '';
+    client.closedDate = date || Utils.todayStr();
+    client.closedNote = (note || '').trim();
+    await Storage.saveEncrypted('clients', client);
+  },
+  async reopen(id){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.status = 'active';
+    client.closedReason = '';
+    client.closedDate = '';
+    client.closedNote = '';
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  async addAdmission(id, { type, date, hospital, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.admissions = client.admissions || [];
+    client.admissions.push({
+      id: Utils.uid('adm'), type: type || '입원', date: date || Utils.todayStr(),
+      hospital: (hospital || '').trim(), note: (note || '').trim()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeAdmission(id, admissionId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.admissions = (client.admissions || []).filter(a => a.id !== admissionId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  async addResourceLink(id, { type, name, contact, note, date }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.resourceLinks = client.resourceLinks || [];
+    client.resourceLinks.push({
+      id: Utils.uid('res'), type: type || CONSTANTS.RESOURCE_TYPES[0],
+      name: (name || '').trim(), contact: (contact || '').trim(),
+      note: (note || '').trim(), date: date || Utils.todayStr()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeResourceLink(id, linkId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.resourceLinks = (client.resourceLinks || []).filter(r => r.id !== linkId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // Most recent 방문(home visit)/내소(in-person office visit) SOAP date —
+  // deliberately narrower than lastRecordDate(), which counts every contact
+  // type including phone calls.
+  lastFaceToFaceContactDate(clientId){
+    let latest = null;
+    State.soaps.forEach(s => {
+      if (s.clientId === clientId && CONSTANTS.FACE_TO_FACE_TYPES.includes(s.contactType) && (!latest || s.date > latest)) latest = s.date;
+    });
+    return latest;
+  },
+
+  // 미접촉 대상자 판정: 종결된 대상자는 제외. 대면접촉 기록이 있으면 그 날짜부터,
+  // 한 번도 없었으면 등록일부터 개월 수를 센다 — 등록 후 한 번도 대면으로 만난
+  // 적 없는 대상자를 놓치지 않기 위함이다. 임계값을 넘지 않으면 null을 반환한다.
+  getContactGapInfo(clientId){
+    const client = this.get(clientId);
+    if (!client || client.status === 'closed') return null;
+    const lastFace = this.lastFaceToFaceContactDate(clientId);
+    const baseDate = lastFace || client.registrationDate;
+    if (!baseDate) return null;
+    const months = Utils.monthsSince(baseDate);
+    if (months < CONSTANTS.CONTACT_GAP_MONTHS) return null;
+    return { clientId, lastFaceToFaceDate: lastFace || null, sinceRegistration: !lastFace, months };
+  },
+  contactGapList(){
+    return this.list()
+      .map(c => this.getContactGapInfo(c.id))
+      .filter(Boolean)
+      .sort((a, b) => b.months - a.months);
   },
 
   // Deleting a client also removes every SOAP/후속조치/일정 record that
@@ -969,7 +1088,7 @@ const Clients = {
     // one example finished SOAP record
     const today = Utils.todayStr();
     const exSoap = {
-      id: Utils.uid('soap'), clientId: 'A001', date: today, contactType: '전화',
+      id: Utils.uid('soap'), clientId: 'A001', date: today, contactType: '전화', subject: 'client',
       areas: ['정신건강', '일상생활'],
       S: '(예시) 대상자는 최근 수면 시간이 줄었다고 표현함.',
       O: '(예시) 통화 중 이전보다 말수가 다소 늘어난 모습이 확인됨.',
@@ -1077,9 +1196,11 @@ const SoapModule = {
     const finalList = list.filter(s => s.status === 'final');
     const contactTypeCounts = {};
     const areaCounts = {};
+    const subjectCounts = { client: 0, family: 0 };
     list.forEach(s => {
       contactTypeCounts[s.contactType] = (contactTypeCounts[s.contactType] || 0) + 1;
       (s.areas || []).forEach(a => { areaCounts[a] = (areaCounts[a] || 0) + 1; });
+      subjectCounts[s.subject === 'family' ? 'family' : 'client']++;
     });
 
     const topicStatus = [];
@@ -1097,7 +1218,7 @@ const SoapModule = {
       total: list.length,
       finalCount: finalList.length,
       draftCount: list.length - finalList.length,
-      contactTypeCounts, areaCounts, topicStatus,
+      contactTypeCounts, areaCounts, subjectCounts, topicStatus,
       recentFinal: finalList.slice(0, 3).map(s => ({ date: s.date, contactType: s.contactType, aText: s.A || '' }))
     };
   },
@@ -1112,6 +1233,7 @@ const SoapModule = {
     prefill = prefill || {};
     return {
       id: '', clientId: prefill.clientId || '', date: Utils.todayStr(), contactType: '전화',
+      subject: prefill.subject || 'client',
       areas: [], S: '', O: '', A: '', PText: prefill.PText || '', PActions: [], pDate: '',
       status: 'draft', createdAt: '', updatedAt: ''
     };
@@ -1217,8 +1339,9 @@ const SoapModule = {
     if (soap.PText) parts.push(soap.PText);
     if (soap.pDate) parts.push(soap.pDate + '.');
     const pLine = parts.join(' ');
+    const subjectLabel = CONSTANTS.SOAP_SUBJECTS[soap.subject] || CONSTANTS.SOAP_SUBJECTS.client;
     return [
-      '[' + soap.date + ' / ' + soap.clientId + ' / ' + soap.contactType + areasLine + ']',
+      '[' + soap.date + ' / ' + soap.clientId + ' / ' + soap.contactType + ' / ' + subjectLabel + areasLine + ']',
       'S. ' + (soap.S || ''),
       'O. ' + (soap.O || ''),
       'A. ' + (soap.A || ''),
@@ -1373,6 +1496,7 @@ const Search = {
     if (filters.dateFrom) results = results.filter(s => s.date >= filters.dateFrom);
     if (filters.dateTo) results = results.filter(s => s.date <= filters.dateTo);
     if (filters.contactType) results = results.filter(s => s.contactType === filters.contactType);
+    if (filters.subject) results = results.filter(s => (s.subject || 'client') === filters.subject);
     if (filters.area) results = results.filter(s => s.areas && s.areas.includes(filters.area));
     if (filters.status) results = results.filter(s => s.status === filters.status);
     if (filters.managementLevel){
@@ -1427,6 +1551,41 @@ const Stats = {
       totalFu, completedFu,
       fuCompletionRate: totalFu ? Math.round((completedFu / totalFu) * 100) : 0
     };
+  },
+
+  // Standard monthly figures for a 월간 실적보고서 (monthStr like 'YYYY-MM').
+  // 관리수준별 분포/활성인원은 현재 스냅샷 기준 근사치임을 명시적으로 표기해
+  // 화면에서 과대 해석되지 않도록 한다 (이력 스냅샷을 따로 저장하지 않기 때문).
+  monthlyReport(monthStr){
+    const clients = Clients.list();
+    const soapsInMonth = SoapModule.list().filter(s => s.date.startsWith(monthStr));
+    const newRegistrations = clients.filter(c => (c.registrationDate || '').startsWith(monthStr));
+    const closures = clients.filter(c => c.status === 'closed' && (c.closedDate || '').startsWith(monthStr));
+    const activeClients = clients.filter(c => c.status !== 'closed');
+
+    const levelCounts = { crisis: 0, intensive: 0, maintenance: 0, temporary: 0 };
+    activeClients.forEach(c => { levelCounts[c.managementLevel] = (levelCounts[c.managementLevel] || 0) + 1; });
+
+    const contactTypeCounts = {};
+    soapsInMonth.forEach(s => { contactTypeCounts[s.contactType] = (contactTypeCounts[s.contactType] || 0) + 1; });
+
+    const subjectCounts = { client: 0, family: 0 };
+    soapsInMonth.forEach(s => { subjectCounts[s.subject === 'family' ? 'family' : 'client']++; });
+
+    const closureReasonCounts = {};
+    closures.forEach(c => { closureReasonCounts[c.closedReason || '기타'] = (closureReasonCounts[c.closedReason || '기타'] || 0) + 1; });
+
+    return {
+      month: monthStr,
+      newRegistrationCount: newRegistrations.length,
+      closureCount: closures.length,
+      closureReasonCounts,
+      activeCount: activeClients.length,
+      levelCounts,
+      totalSoaps: soapsInMonth.length,
+      contactTypeCounts,
+      subjectCounts
+    };
   }
 };
 
@@ -1456,12 +1615,32 @@ const CSV = {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
   exportClients(){
-    const headers = ['대상자ID', '별칭', '관리수준', '최근기록일', '미완료후속조치', '예정일정'];
+    const headers = ['대상자ID', '별칭', '관리수준', '사례상태', '등록일', '의뢰경로', '최근기록일', '미완료후속조치', '예정일정'];
     const rows = Clients.list().map(c => [
       c.id, c.alias || '', (CONSTANTS.MANAGEMENT_LEVELS[c.managementLevel] || {}).label || c.managementLevel,
+      c.status === 'closed' ? '종결' : '활성', c.registrationDate || '', c.referralSource || '',
       Clients.lastRecordDate(c.id) || '', Clients.pendingFollowUpCount(c.id), Clients.upcomingScheduleCount(c.id)
     ]);
     this.download('clients_' + Utils.todayStr() + '.csv', this.build(headers, rows));
+  },
+  exportMonthlyReport(report){
+    const headers = ['항목', '값'];
+    const rows = [
+      ['보고월', report.month],
+      ['신규 등록', report.newRegistrationCount],
+      ['종결/전출', report.closureCount],
+      ['현재 활성 인원', report.activeCount],
+      ['위기관리', report.levelCounts.crisis || 0],
+      ['집중관리', report.levelCounts.intensive || 0],
+      ['유지관리', report.levelCounts.maintenance || 0],
+      ['일시관리', report.levelCounts.temporary || 0],
+      ['해당월 총 상담건수', report.totalSoaps],
+      ['본인 상담', report.subjectCounts.client || 0],
+      ['가족·보호자 상담', report.subjectCounts.family || 0]
+    ];
+    Object.keys(report.contactTypeCounts).forEach(k => rows.push([k + ' 상담', report.contactTypeCounts[k]]));
+    Object.keys(report.closureReasonCounts).forEach(k => rows.push(['종결사유: ' + k, report.closureReasonCounts[k]]));
+    this.download('monthly_report_' + report.month + '.csv', this.build(headers, rows));
   },
   exportSoaps(list){
     const headers = ['날짜', '대상자', '접촉유형', '상담영역', '상태', 'S', 'O', 'A', 'P', '예정일'];
@@ -1835,6 +2014,7 @@ const Views = {
     const recentFinal = SoapModule.list().filter(s => s.status === 'final').slice(0, 5);
     const today = Utils.todayStr();
     const upcomingCount = Views.scheduleCombinedItems().filter(it => it.status === 'planned' && it.date >= today).length;
+    const contactGaps = Clients.contactGapList();
 
     const hasSeed = (State.seedClientIds || []).length > 0 && (State.seedClientIds || []).some(id => State.clients.has(id));
 
@@ -1862,6 +2042,7 @@ const Views = {
       '<button class="summary-card today" data-scroll="todaySection"><div class="num">' + (dueToday.length + todaySchedules.length) + '</div><div class="label">🔴 오늘 할 일</div></button>' +
       '<button class="summary-card draft" data-scroll="draftSection"><div class="num">' + draftSoaps.length + '</div><div class="label">📝 미완성 SOAP</div></button>' +
       '<button class="summary-card upcoming" data-goto="schedule" data-filter="upcoming"><div class="num">' + upcomingCount + '</div><div class="label">📅 예정 일정</div></button>' +
+      '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">🕓 미접촉 대상자</div></button>' +
       '</div>';
 
     // Overdue
@@ -1879,6 +2060,22 @@ const Views = {
           '<button class="btn btn-sm" data-complete-fu="' + f.id + '">완료만</button>' +
           '<button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료하고 SOAP 작성</button>' +
           '</div></div>';
+      });
+    }
+    html += '</div>';
+
+    // 미접촉 대상자 — 종결되지 않은 대상자 중 방문/내소(대면) 상담이 4개월 이상
+    // 없었던 경우만 짚어준다. 전화·프로그램 등 비대면 접촉만으로는 해소되지 않는다.
+    html += '<div class="panel" id="gapSection"><div class="panel-title">🕓 미접촉 대상자 (대면접촉 ' + CONSTANTS.CONTACT_GAP_MONTHS + '개월 이상 없음)</div>';
+    if (contactGaps.length === 0){
+      html += '<div class="empty-msg">방문·내소 상담이 ' + CONSTANTS.CONTACT_GAP_MONTHS + '개월 이상 없는 대상자가 없습니다.</div>';
+    } else {
+      contactGaps.forEach(g => {
+        const gc = Clients.get(g.clientId);
+        html += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
+          '<strong>' + Utils.escapeHtml(g.clientId) + '</strong>' + (gc && gc.alias ? ' (' + Utils.escapeHtml(gc.alias) + ')' : '') +
+          '<br><span style="font-size:0.82rem;">' + (g.lastFaceToFaceDate ? '최근 방문·내소 상담: ' + g.lastFaceToFaceDate : '방문·내소 상담 기록 없음(등록일 기준)') + ' · 약 ' + g.months + '개월 경과</span>' +
+          '</div>';
       });
     }
     html += '</div>';
@@ -2024,7 +2221,10 @@ const Views = {
   clientsList(){
     const sort = State.currentParams.sort || 'id';
     const levelFilter = State.currentParams.levelFilter || 'all';
+    const statusFilter = State.currentParams.statusFilter || 'active';
     let clients = Clients.list(); // base order: ID ascending
+    if (statusFilter === 'active') clients = clients.filter(c => c.status !== 'closed');
+    else if (statusFilter === 'closed') clients = clients.filter(c => c.status === 'closed');
     if (levelFilter !== 'all') clients = clients.filter(c => c.managementLevel === levelFilter);
     if (sort === 'level'){
       clients = clients.slice().sort((a, b) => (Views.MANAGEMENT_LEVEL_RANK[a.managementLevel] ?? 9) - (Views.MANAGEMENT_LEVEL_RANK[b.managementLevel] ?? 9));
@@ -2048,18 +2248,24 @@ const Views = {
       '<option value="all"' + (levelFilter === 'all' ? ' selected' : '') + '>전체</option>' +
       Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => '<option value="' + k + '"' + (levelFilter === k ? ' selected' : '') + '>' + CONSTANTS.MANAGEMENT_LEVELS[k].emoji + ' ' + CONSTANTS.MANAGEMENT_LEVELS[k].label + '</option>').join('') +
       '</select></div>' +
+      '<div class="field" style="margin:0;max-width:200px;"><label>사례 상태</label><select id="clientStatusFilterSelect">' +
+      '<option value="active"' + (statusFilter === 'active' ? ' selected' : '') + '>활성</option>' +
+      '<option value="closed"' + (statusFilter === 'closed' ? ' selected' : '') + '>종결</option>' +
+      '<option value="all"' + (statusFilter === 'all' ? ' selected' : '') + '>전체</option>' +
+      '</select></div>' +
       '</div>';
 
     html += '<div class="panel">';
     if (clients.length === 0){
       html += '<div class="empty-msg">해당 조건의 대상자가 없습니다.</div>';
     } else {
-      html += '<table><thead><tr><th>ID</th><th>별칭</th><th>관리 수준</th><th>최근 기록일</th><th>미완료 후속조치</th><th>예정 일정</th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>ID</th><th>별칭</th><th>관리 수준</th><th>상태</th><th>최근 기록일</th><th>미완료 후속조치</th><th>예정 일정</th></tr></thead><tbody>';
       clients.forEach(c => {
         html += '<tr class="clickable-row" data-client="' + Utils.escapeHtml(c.id) + '">' +
           '<td><strong>' + Utils.escapeHtml(c.id) + '</strong></td>' +
           '<td>' + Utils.escapeHtml(c.alias || '-') + '</td>' +
           '<td>' + Views.managementBadge(c.managementLevel) + '</td>' +
+          '<td>' + (c.status === 'closed' ? '<span class="badge badge-closed">종결</span>' : '<span class="badge badge-final">활성</span>') + '</td>' +
           '<td>' + (Clients.lastRecordDate(c.id) || '-') + '</td>' +
           '<td>' + Clients.pendingFollowUpCount(c.id) + '</td>' +
           '<td>' + Clients.upcomingScheduleCount(c.id) + '</td>' +
@@ -2073,8 +2279,9 @@ const Views = {
   bindClientsList(){
     document.getElementById('newClientBtn').onclick = () => Views.openNewClientModal();
     document.getElementById('exportClientsCsvBtn').onclick = () => CSV.exportClients();
-    document.getElementById('clientSortSelect').onchange = (e) => UI.navigate('clients', { sort: e.target.value, levelFilter: State.currentParams.levelFilter || 'all' });
-    document.getElementById('clientLevelFilterSelect').onchange = (e) => UI.navigate('clients', { sort: State.currentParams.sort || 'id', levelFilter: e.target.value });
+    document.getElementById('clientSortSelect').onchange = (e) => UI.navigate('clients', { sort: e.target.value, levelFilter: State.currentParams.levelFilter || 'all', statusFilter: State.currentParams.statusFilter || 'active' });
+    document.getElementById('clientLevelFilterSelect').onchange = (e) => UI.navigate('clients', { sort: State.currentParams.sort || 'id', levelFilter: e.target.value, statusFilter: State.currentParams.statusFilter || 'active' });
+    document.getElementById('clientStatusFilterSelect').onchange = (e) => UI.navigate('clients', { sort: State.currentParams.sort || 'id', levelFilter: State.currentParams.levelFilter || 'all', statusFilter: e.target.value });
     const importInput = document.getElementById('importClientsCsvInput');
     document.getElementById('importClientsCsvBtn').onclick = () => importInput.click();
     importInput.onchange = async (e) => {
@@ -2101,7 +2308,10 @@ const Views = {
     const pendingFus = FollowUps.list().filter(f => f.clientId === id && f.status === 'pending');
     const timeline = SoapModule.listByClient(id);
 
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + Utils.escapeHtml(c.id) + (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') + '</h1>' +
+    const isClosed = c.status === 'closed';
+
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + Utils.escapeHtml(c.id) + (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') +
+      (isClosed ? ' <span class="badge badge-closed">종결</span>' : '') + '</h1>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printClientBtn">🖨️ 인쇄</button>' +
       '<button class="btn btn-sm" id="backToClientsBtn">← 대상자 목록</button></div></div>';
 
@@ -2112,13 +2322,34 @@ const Views = {
       Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => '<option value="' + k + '"' + (k === c.managementLevel ? ' selected' : '') + '>' + CONSTANTS.MANAGEMENT_LEVELS[k].emoji + ' ' + CONSTANTS.MANAGEMENT_LEVELS[k].label + '</option>').join('') +
       '</select>' +
       '<span class="help-text" style="margin-left:6px;">관리 수준은 담당자가 직접 지정합니다.</span>' +
-      '<button class="btn btn-sm btn-danger" id="deleteClientBtn" style="margin-left:auto;">대상자 삭제</button>' +
-      '</div>' +
+      '<div style="margin-left:auto;display:flex;gap:8px;">' +
+      (isClosed
+        ? '<button class="btn btn-sm" id="reopenClientBtn">↩ 재등록</button>'
+        : '<button class="btn btn-sm" id="closeClientBtn">🏁 사례 종결</button>') +
+      '<button class="btn btn-sm btn-danger" id="deleteClientBtn">대상자 삭제</button>' +
+      '</div></div>' +
       '<div class="quick-btns" style="margin-top:14px;">' +
       '<button class="btn-quick" id="clNewSoap">＋ 새 SOAP</button>' +
       '<button class="btn-quick" id="clNewFollowUp">＋ 후속조치</button>' +
       '<button class="btn-quick" id="clNewSchedule">＋ 일정</button>' +
       '</div></div>';
+
+    // 등록(인테이크) 정보 — 실제 접수 경로를 기록해 두는 자유 선택 필드일 뿐,
+    // 앱이 이를 근거로 무언가를 자동 판단하지 않는다.
+    html += '<div class="panel"><div class="panel-title">등록 정보</div><div class="form-grid">' +
+      '<div class="field"><label>등록일</label><input type="date" id="clRegDate" value="' + Utils.escapeHtml(c.registrationDate || '') + '"></div>' +
+      '<div class="field"><label>의뢰경로</label><select id="clReferral">' +
+      '<option value="">(선택 안 함)</option>' +
+      CONSTANTS.REFERRAL_SOURCES.map(r => '<option value="' + r + '"' + (r === c.referralSource ? ' selected' : '') + '>' + r + '</option>').join('') +
+      '</select></div></div>' +
+      '<button class="btn btn-primary btn-sm" id="saveRegInfoBtn">저장</button></div>';
+
+    if (isClosed){
+      html += '<div class="panel"><div class="panel-title">종결 정보</div>' +
+        '<p style="font-size:0.88rem;">종결일: ' + (c.closedDate || '-') + ' · 사유: ' + Utils.escapeHtml(c.closedReason || '-') + '</p>' +
+        (c.closedNote ? '<p style="font-size:0.85rem;color:var(--text-muted);">' + Utils.nl2br(c.closedNote) + '</p>' : '') +
+        '</div>';
+    }
 
     if (c.managementHistory && c.managementHistory.length){
       html += '<div class="panel"><div class="panel-title">관리수준 변경 이력</div>';
@@ -2132,6 +2363,50 @@ const Views = {
       });
       html += '</div>';
     }
+
+    // 입퇴원 이력 — 실무자가 알고 있는 입/퇴원 사실을 직접 기록하는 자유 입력
+    // 이력이며, 앱이 입원 여부를 추정하거나 진단을 다루지 않는다.
+    const admissions = (c.admissions || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    html += '<div class="panel"><div class="panel-title">입퇴원 이력</div>';
+    if (admissions.length === 0){
+      html += '<div class="empty-msg">기록된 입퇴원 이력이 없습니다.</div>';
+    } else {
+      admissions.forEach(a => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.type) + (a.hospital ? ' · ' + Utils.escapeHtml(a.hospital) : '') + '</div>' +
+          (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-admission="' + a.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>구분</label><select id="admType">' +
+      CONSTANTS.ADMISSION_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>날짜</label><input type="date" id="admDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field"><label>병원(선택)</label><input type="text" id="admHospital"></div>' +
+      '<div class="field"><label>메모(선택)</label><input type="text" id="admNote"></div></div>' +
+      '<button class="btn btn-sm" id="addAdmissionBtn">＋ 입퇴원 기록 추가</button></div>';
+
+    // 자원연계 현황 — 연계한 기관/자원을 그대로 목록화만 한다.
+    const resourceLinks = (c.resourceLinks || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    html += '<div class="panel"><div class="panel-title">자원연계 현황</div>';
+    if (resourceLinks.length === 0){
+      html += '<div class="empty-msg">연계된 자원이 없습니다.</div>';
+    } else {
+      resourceLinks.forEach(r => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + r.date + ' · ' + Utils.escapeHtml(r.type) + (r.name ? ' · ' + Utils.escapeHtml(r.name) : '') + '</div>' +
+          '<div class="row-sub">' + [r.contact, r.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>유형</label><select id="resType">' +
+      CONSTANTS.RESOURCE_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>기관/자원명</label><input type="text" id="resName"></div>' +
+      '<div class="field"><label>연락처(선택)</label><input type="text" id="resContact"></div>' +
+      '<div class="field"><label>날짜</label><input type="date" id="resDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field full"><label>메모(선택)</label><input type="text" id="resNote"></div></div>' +
+      '<button class="btn btn-sm" id="addResourceBtn">＋ 자원연계 추가</button></div>';
 
     // MSE (정신상태검사) and case goals — free-text fields the caseworker fills in
     // and edits directly; the app never generates or infers this content.
@@ -2212,6 +2487,83 @@ const Views = {
     document.getElementById('clNewSoap').onclick = () => UI.navigate('soapEditor', { prefillClientId: id });
     document.getElementById('clNewFollowUp').onclick = () => Views.openFollowUpModal(id);
     document.getElementById('clNewSchedule').onclick = () => Views.openScheduleModal(id);
+
+    document.getElementById('saveRegInfoBtn').onclick = async () => {
+      await Clients.update(id, {
+        registrationDate: document.getElementById('clRegDate').value,
+        referralSource: document.getElementById('clReferral').value
+      });
+      toast('등록 정보를 저장했습니다.');
+      UI.renderCurrentView();
+    };
+
+    const closeBtn = document.getElementById('closeClientBtn');
+    if (closeBtn) closeBtn.onclick = () => {
+      UI.openModal(
+        '<h3>사례 종결 / 전출 처리</h3>' +
+        '<div class="field"><label>사유</label><select id="closeReasonInput">' +
+        CONSTANTS.CLOSURE_REASONS.map(r => '<option value="' + r + '">' + r + '</option>').join('') + '</select></div>' +
+        '<div class="field"><label>종결일</label><input type="date" id="closeDateInput" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field"><label>메모(선택)</label><textarea id="closeNoteInput" style="min-height:70px;"></textarea></div>' +
+        '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="closeCancel">취소</button><button class="btn btn-danger" id="closeSubmit">종결 처리</button></div>'
+      );
+      document.getElementById('closeCancel').onclick = () => UI.closeModal();
+      document.getElementById('closeSubmit').onclick = async () => {
+        const reason = document.getElementById('closeReasonInput').value;
+        const date = document.getElementById('closeDateInput').value;
+        const note = document.getElementById('closeNoteInput').value;
+        UI.closeModal();
+        await Clients.close(id, { reason, date, note });
+        toast('사례를 종결 처리했습니다.');
+        UI.renderCurrentView();
+      };
+    };
+    const reopenBtn = document.getElementById('reopenClientBtn');
+    if (reopenBtn) reopenBtn.onclick = () => UI.confirm('이 대상자를 다시 활성 상태로 재등록할까요?', async () => {
+      await Clients.reopen(id);
+      toast('재등록했습니다.');
+      UI.renderCurrentView();
+    });
+
+    document.getElementById('addAdmissionBtn').onclick = async () => {
+      const date = document.getElementById('admDate').value;
+      if (!date){ toast('날짜를 입력해 주세요.', 'error'); return; }
+      await Clients.addAdmission(id, {
+        type: document.getElementById('admType').value,
+        date, hospital: document.getElementById('admHospital').value,
+        note: document.getElementById('admNote').value
+      });
+      toast('입퇴원 기록을 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-admission]').forEach(el => {
+      el.onclick = () => UI.confirm('이 입퇴원 기록을 삭제할까요?', async () => {
+        await Clients.removeAdmission(id, el.dataset.delAdmission);
+        toast('삭제했습니다.');
+        UI.renderCurrentView();
+      });
+    });
+
+    document.getElementById('addResourceBtn').onclick = async () => {
+      const name = document.getElementById('resName').value;
+      if (!name.trim()){ toast('기관/자원명을 입력해 주세요.', 'error'); return; }
+      await Clients.addResourceLink(id, {
+        type: document.getElementById('resType').value,
+        name, contact: document.getElementById('resContact').value,
+        date: document.getElementById('resDate').value,
+        note: document.getElementById('resNote').value
+      });
+      toast('자원연계를 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-resource]').forEach(el => {
+      el.onclick = () => UI.confirm('이 자원연계 기록을 삭제할까요?', async () => {
+        await Clients.removeResourceLink(id, el.dataset.delResource);
+        toast('삭제했습니다.');
+        UI.renderCurrentView();
+      });
+    });
+
     document.getElementById('saveMseGoalsBtn').onclick = async () => {
       await Clients.update(id, {
         mse: document.getElementById('clMse').value,
@@ -2243,10 +2595,11 @@ const Views = {
     if (items.length === 0){
       html += '<div class="empty-msg">해당 조건의 SOAP 기록이 없습니다.</div>';
     } else {
-      html += '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담영역</th><th>상태</th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담대상</th><th>상담영역</th><th>상태</th></tr></thead><tbody>';
       items.forEach(s => {
         html += '<tr class="clickable-row" data-open-soap="' + s.id + '">' +
           '<td>' + s.date + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td><td>' + Utils.escapeHtml(s.contactType) + '</td>' +
+          '<td>' + Utils.escapeHtml(CONSTANTS.SOAP_SUBJECTS[s.subject] || CONSTANTS.SOAP_SUBJECTS.client) + '</td>' +
           '<td>' + (s.areas || []).map(a => '<span class="tag">' + Utils.escapeHtml(a) + '</span>').join('') + '</td>' +
           '<td>' + (s.status === 'draft' ? '<span class="badge badge-draft">임시저장</span>' : '<span class="badge badge-final">완료</span>') + '</td>' +
           '</tr>';
@@ -2300,6 +2653,8 @@ const Views = {
     html += '<div class="field"><label>날짜</label><input type="date" id="soapDate" value="' + soap.date + '"></div>';
     html += '<div class="field"><label>접촉 유형</label><select id="soapContactType">' +
       CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '"' + (t === soap.contactType ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>';
+    html += '<div class="field"><label>상담 대상</label><select id="soapSubject">' +
+      Object.keys(CONSTANTS.SOAP_SUBJECTS).map(k => '<option value="' + k + '"' + (k === (soap.subject || 'client') ? ' selected' : '') + '>' + CONSTANTS.SOAP_SUBJECTS[k] + '</option>').join('') + '</select></div>';
     html += '<div class="field full"><label>상담 영역 (복수 선택 가능)</label><div class="checkbox-group">' +
       CONSTANTS.AREAS.map(a => '<label class="chip-check' + (soap.areas.includes(a) ? ' checked' : '') + '"><input type="checkbox" class="areaChk" value="' + a + '"' + (soap.areas.includes(a) ? ' checked' : '') + '>' + a + '</label>').join('') +
       '</div></div>';
@@ -2351,6 +2706,7 @@ const Views = {
     soap.clientId = Views.resolveClientPickerValue(document.getElementById('soapClientPicker').value);
     soap.date = document.getElementById('soapDate').value;
     soap.contactType = document.getElementById('soapContactType').value;
+    soap.subject = document.getElementById('soapSubject').value;
     soap.areas = Array.from(document.querySelectorAll('.areaChk:checked')).map(el => el.value);
     soap.S = document.getElementById('soapS').value;
     soap.O = document.getElementById('soapO').value;
@@ -2362,7 +2718,15 @@ const Views = {
   },
 
   bindSoapEditor(params){
+    // Auto-save while composing: debounced so it fires ~1.5s after the user
+    // stops typing, and only for drafts (never silently rewrites a
+    // final/completed record). Cleared on every navigate-away below so a
+    // pending timer never fires against a soapEditor DOM that's gone.
+    let autosaveTimer = null;
+    const cancelAutosave = () => { if (autosaveTimer) clearTimeout(autosaveTimer); autosaveTimer = null; };
+
     document.getElementById('soapBackBtn').onclick = () => {
+      cancelAutosave();
       Views._draftCache = null;
       if (params.prefillClientId) UI.navigate('clientDetail', { id: params.prefillClientId });
       else UI.navigate('soapList', {});
@@ -2372,10 +2736,6 @@ const Views = {
       chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
     });
 
-    // Auto-save while composing: debounced so it fires ~1.5s after the user
-    // stops typing, and only for drafts (never silently rewrites a
-    // final/completed record).
-    let autosaveTimer = null;
     const scheduleAutosave = () => {
       if (Views._draftCache.status === 'final') return;
       if (autosaveTimer) clearTimeout(autosaveTimer);
@@ -2431,6 +2791,7 @@ const Views = {
       try{
         const soap = Views._readSoapForm();
         await SoapModule.save(soap, false);
+        cancelAutosave();
         Views._draftCache = null;
         toast('임시저장했습니다.');
         UI.navigate('clientDetail', { id: soap.clientId });
@@ -2442,6 +2803,7 @@ const Views = {
         if (!soap.A || !soap.A.trim()){
           UI.confirm('A(사정) 내용이 비어 있습니다. 그대로 최종저장할까요?', async () => {
             await SoapModule.save(soap, true);
+            cancelAutosave();
             Views._draftCache = null;
             toast('SOAP 기록을 저장했습니다.');
             UI.navigate('clientDetail', { id: soap.clientId });
@@ -2449,6 +2811,7 @@ const Views = {
           return;
         }
         await SoapModule.save(soap, true);
+        cancelAutosave();
         Views._draftCache = null;
         toast('SOAP 기록을 저장했습니다.');
         UI.navigate('clientDetail', { id: soap.clientId });
@@ -2456,6 +2819,7 @@ const Views = {
     };
     const delBtn = document.getElementById('deleteSoapBtn');
     if (delBtn) delBtn.onclick = () => UI.confirm('이 SOAP 기록을 삭제할까요?', async () => {
+      cancelAutosave();
       await SoapModule.remove(params.soapId);
       Views._draftCache = null;
       toast('삭제했습니다.');
@@ -2673,6 +3037,8 @@ const Views = {
     html += '<div class="field"><label>날짜(종료)</label><input type="date" id="sfDateTo"></div>';
     html += '<div class="field"><label>접촉 유형</label><select id="sfContactType"><option value="">전체</option>' +
       CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>';
+    html += '<div class="field"><label>상담 대상</label><select id="sfSubject"><option value="">전체</option>' +
+      Object.keys(CONSTANTS.SOAP_SUBJECTS).map(k => '<option value="' + k + '">' + CONSTANTS.SOAP_SUBJECTS[k] + '</option>').join('') + '</select></div>';
     html += '<div class="field"><label>상담 영역</label><select id="sfArea"><option value="">전체</option>' +
       CONSTANTS.AREAS.map(a => '<option value="' + a + '">' + a + '</option>').join('') + '</select></div>';
     html += '<div class="field"><label>기록 상태</label><select id="sfStatus"><option value="">전체</option><option value="draft">임시저장</option><option value="final">완료</option></select></div>';
@@ -2689,6 +3055,7 @@ const Views = {
         dateFrom: document.getElementById('sfDateFrom').value,
         dateTo: document.getElementById('sfDateTo').value,
         contactType: document.getElementById('sfContactType').value,
+        subject: document.getElementById('sfSubject').value,
         area: document.getElementById('sfArea').value,
         status: document.getElementById('sfStatus').value,
         keyword: document.getElementById('sfKeyword').value.trim()
@@ -2712,6 +3079,66 @@ const Views = {
   },
 
   /* ---------------- STATS ---------------- */
+  _reportMonth: null,
+
+  monthOptionsHtml(selected){
+    const opts = [];
+    const cursor = new Date();
+    cursor.setDate(1);
+    for (let i = 0; i < 12; i++){
+      const d = new Date(cursor.getFullYear(), cursor.getMonth() - i, 1);
+      const m = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+      opts.push('<option value="' + m + '"' + (m === selected ? ' selected' : '') + '>' + m + '</option>');
+    }
+    return opts.join('');
+  },
+
+  renderMonthlyReport(monthStr){
+    const r = Stats.monthlyReport(monthStr);
+    let html = '<div class="panel"><div class="page-header" style="margin-bottom:14px;">' +
+      '<div class="panel-title" style="margin:0;">📋 월간 실적보고서</div>' +
+      '<div style="display:flex;gap:8px;align-items:center;">' +
+      '<select id="reportMonthSelect">' + Views.monthOptionsHtml(monthStr) + '</select>' +
+      '<button class="btn btn-sm" id="exportReportCsvBtn">⬇ CSV 내보내기</button>' +
+      '<button class="btn btn-sm" id="printReportBtn">🖨️ 인쇄</button>' +
+      '</div></div>';
+
+    html += '<div class="summary-grid">' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + r.newRegistrationCount + '</div><div class="label">신규 등록</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + r.closureCount + '</div><div class="label">종결/전출</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + r.activeCount + '</div><div class="label">현재 활성 인원</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + r.totalSoaps + '</div><div class="label">해당월 총 상담건수</div></div>' +
+      '</div>';
+    html += '<p class="help-text" style="margin-top:-6px;">활성 인원·관리수준별 분포는 해당월 시점의 이력이 아닌 현재 스냅샷 기준입니다.</p>';
+
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">관리수준별 분포 (현재 기준)</p>' +
+      Views.renderBarChart([
+        { label: '위기관리', value: r.levelCounts.crisis || 0, color: 'var(--danger)' },
+        { label: '집중관리', value: r.levelCounts.intensive || 0, color: 'var(--warn)' },
+        { label: '유지관리', value: r.levelCounts.maintenance || 0, color: 'var(--accent)' },
+        { label: '일시관리', value: r.levelCounts.temporary || 0, color: 'var(--good)' }
+      ]);
+
+    const contactBars = Object.keys(r.contactTypeCounts).map(k => ({ label: k, value: r.contactTypeCounts[k] }));
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">접촉유형별 상담건수</p>' +
+      (contactBars.length ? Views.renderBarChart(contactBars) : '<div class="empty-msg">해당월 상담 기록이 없습니다.</div>');
+
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">본인/가족·보호자 상담 구분</p>' +
+      Views.renderBarChart([
+        { label: '본인', value: r.subjectCounts.client || 0 },
+        { label: '가족·보호자', value: r.subjectCounts.family || 0 }
+      ]);
+
+    const reasonKeys = Object.keys(r.closureReasonCounts);
+    if (reasonKeys.length){
+      html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">종결 사유</p>' +
+        Views.renderBarChart(reasonKeys.map(k => ({ label: k, value: r.closureReasonCounts[k] })));
+    }
+
+    html += '</div>';
+    return html;
+  },
+
   stats(){
     const s = Stats.compute();
     let html = '<h1 class="page-title">📊 통계</h1>';
@@ -2741,6 +3168,9 @@ const Views = {
     html += '<div class="panel"><div class="panel-title">후속조치 현황</div>' +
       '<p style="font-size:0.88rem;">전체 ' + s.totalFu + '건 중 완료 ' + s.completedFu + '건 (' + s.fuCompletionRate + '%)</p></div>';
 
+    if (!Views._reportMonth) Views._reportMonth = Utils.todayStr().slice(0, 7);
+    html += Views.renderMonthlyReport(Views._reportMonth);
+
     return html;
   },
   renderBarChart(items){
@@ -2751,7 +3181,14 @@ const Views = {
       '<div class="barchart-value">' + i.value + '</div></div>'
     ).join('') + '</div>';
   },
-  bindStats(){ /* stats page is read-only; nothing to bind */ },
+  bindStats(){
+    document.getElementById('reportMonthSelect').onchange = (e) => {
+      Views._reportMonth = e.target.value;
+      UI.renderCurrentView();
+    };
+    document.getElementById('exportReportCsvBtn').onclick = () => CSV.exportMonthlyReport(Stats.monthlyReport(Views._reportMonth));
+    document.getElementById('printReportBtn').onclick = () => window.print();
+  },
 
   /* ---------------- SETTINGS ---------------- */
   settings(){
@@ -2822,6 +3259,9 @@ const Views = {
       '<div class="field"><label>관리 수준</label><select id="ncLevel">' +
       Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => '<option value="' + k + '"' + (k === 'maintenance' ? ' selected' : '') + '>' + CONSTANTS.MANAGEMENT_LEVELS[k].emoji + ' ' + CONSTANTS.MANAGEMENT_LEVELS[k].label + '</option>').join('') +
       '</select></div>' +
+      '<div class="field"><label>등록일</label><input type="date" id="ncRegDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field"><label>의뢰경로 (선택)</label><select id="ncReferral"><option value="">(선택 안 함)</option>' +
+      CONSTANTS.REFERRAL_SOURCES.map(r => '<option value="' + r + '">' + r + '</option>').join('') + '</select></div>' +
       '<div class="error-msg hidden" id="ncError"></div>' +
       '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="ncCancel">취소</button><button class="btn btn-primary" id="ncSubmit">추가</button></div>'
     );
@@ -2831,7 +3271,9 @@ const Views = {
         const c = await Clients.add({
           id: document.getElementById('ncId').value,
           alias: document.getElementById('ncAlias').value,
-          managementLevel: document.getElementById('ncLevel').value
+          managementLevel: document.getElementById('ncLevel').value,
+          registrationDate: document.getElementById('ncRegDate').value,
+          referralSource: document.getElementById('ncReferral').value
         });
         UI.closeModal();
         toast('대상자를 추가했습니다.');
