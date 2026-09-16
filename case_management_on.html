@@ -236,7 +236,12 @@
      the same as before. */
   .detail-tab-group{display:none;}
   .detail-tab-group.active{display:block;}
-  @media print{ .detail-tab-group{display:block !important;} }
+  @media print{
+    .detail-tab-group{display:block !important;}
+    /* 인쇄 항목 선택 모달에서 체크 해제한 탭 — 인쇄에서만 제외되고 화면
+       표시에는 영향 없음(다음 렌더링 시 클래스가 다시 계산되어 사라짐). */
+    .detail-tab-group.print-excluded{display:none !important;}
+  }
 
   /* calendar (일정 tab) */
   .calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
@@ -394,7 +399,7 @@
     #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
     #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #closeClientBtn,
+    #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
@@ -526,7 +531,7 @@
       <button class="nav-btn" data-view="soapList">📝 <span class="nav-label">SOAP 기록</span></button>
       <button class="nav-btn" data-view="followUps">🔔 <span class="nav-label">후속조치</span></button>
       <button class="nav-btn" data-view="schedule">📅 <span class="nav-label">일정</span></button>
-      <button class="nav-btn" data-view="resourceDirectory">🏢 <span class="nav-label">기관주소록</span></button>
+      <button class="nav-btn" id="navResourceDirectory" data-view="resourceDirectory">🏢 <span class="nav-label">기관주소록</span></button>
       <button class="nav-btn" data-view="search">🔍 <span class="nav-label">검색</span></button>
       <button class="nav-btn" data-view="stats">📊 <span class="nav-label">통계</span></button>
       <button class="nav-btn" data-view="settings">⚙️ <span class="nav-label">설정</span></button>
@@ -836,7 +841,7 @@ const CryptoModule = {
    ========================================================================= */
 const Storage = {
   DB_NAME: 'case_management_on_db',
-  DB_VERSION: 2,
+  DB_VERSION: 3,
   _dbPromise: null,
 
   openDB(){
@@ -846,7 +851,7 @@ const Storage = {
       req.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
-        ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory'].forEach(name => {
+        ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes'].forEach(name => {
           if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
         });
       };
@@ -944,6 +949,7 @@ const State = {
   followUps: new Map(),
   schedules: new Map(),
   resourceDirectory: new Map(),
+  selfCareNotes: new Map(),
   currentView: 'dashboard',
   currentParams: {},
   seedClientIds: [],
@@ -956,6 +962,7 @@ const State = {
     this.followUps.clear();
     this.schedules.clear();
     this.resourceDirectory.clear();
+    this.selfCareNotes.clear();
   }
 };
 
@@ -988,6 +995,14 @@ const CONSTANTS = {
     achieved:     { label: '✅ 달성',   badgeClass: 'badge-temporary' },
     on_hold:      { label: '⏸ 보류',   badgeClass: 'badge-draft' },
     discontinued: { label: '🛑 중단',   badgeClass: 'badge-crisis' }
+  },
+  // 실무자 자기돌봄 메모의 소진(stress) 정도 — 대상자에 대한 판단이 아니라
+  // 실무자 본인의 상태를 스스로 기록하는 용도.
+  STRESS_LEVELS: {
+    low: { label: '낮음', badgeClass: 'badge-temporary' },
+    medium: { label: '보통', badgeClass: 'badge-pending' },
+    high: { label: '높음', badgeClass: 'badge-intensive' },
+    veryHigh: { label: '매우 높음', badgeClass: 'badge-crisis' }
   },
   // 대상자 간 가족 관계 연결에 쓰는 관계→반대쪽 관계 매핑. A에 "B는 나의 부모"를
   // 추가하면 B 쪽에는 자동으로 "A는 나의 자녀"가 생성된다(배우자·형제자매는 대칭).
@@ -1069,6 +1084,7 @@ const Auth = {
     for (const f of State.followUps.values()) await Storage.saveEncrypted('followUps', f);
     for (const s of State.schedules.values()) await Storage.saveEncrypted('schedules', s);
     for (const r of State.resourceDirectory.values()) await Storage.saveEncrypted('resourceDirectory', r);
+    for (const n of State.selfCareNotes.values()) await Storage.saveEncrypted('selfCareNotes', n);
 
     const { iv, cipher } = await CryptoModule.encryptJSON(newKey, { v: CryptoModule.VERIFIER_TEXT });
     await Storage.setSetting('authSalt', newSaltB64);
@@ -1174,7 +1190,7 @@ const DashboardPrefs = {
   WIDGETS: {
     crisis: '🚨 위기관리 대상자 현황', overdue: '⚠ 기한 초과 후속조치', gap: '🕓 미접촉 대상자',
     medRenewal: '💊 복약 갱신 임박', today: '🔴 오늘 할 일', draft: '📝 미완성 SOAP',
-    recent: '최근 기록', dataManage: '데이터 관리'
+    recent: '최근 기록', selfCare: '🧘 자기돌봄 메모', dataManage: '데이터 관리'
   },
   hidden: {},
 
@@ -1189,6 +1205,24 @@ const DashboardPrefs = {
 };
 
 /* =========================================================================
+   SIMPLE MODE  (신입 직원용 간소화 모드) — 아직 손에 익지 않은 실무자를 위해
+   상대적으로 덜 급한 고급 패널들을 화면에서 숨긴다. 데이터는 그대로 남아있고
+   삭제되지 않으며, 언제든 설정에서 다시 켜면 그대로 보인다. 방문 전 안전
+   체크처럼 실무자 본인의 안전과 직결된 항목은 간소화 모드에서도 숨기지 않는다.
+   ========================================================================= */
+const SimpleMode = {
+  enabled: false,
+  async init(){
+    this.enabled = !!(await Storage.getSetting('simpleModeEnabled'));
+  },
+  isSimple(){ return this.enabled; },
+  async setEnabled(v){
+    this.enabled = !!v;
+    await Storage.setSetting('simpleModeEnabled', this.enabled);
+  }
+};
+
+/* =========================================================================
    DATA LOADING
    ========================================================================= */
 async function loadAllDataIntoState(){
@@ -1197,6 +1231,7 @@ async function loadAllDataIntoState(){
   State.followUps.clear();
   State.schedules.clear();
   State.resourceDirectory.clear();
+  State.selfCareNotes.clear();
 
   const clients = await Storage.loadAllDecrypted('clients');
   clients.forEach(c => State.clients.set(c.id, c));
@@ -1213,6 +1248,9 @@ async function loadAllDataIntoState(){
 
   const resourceDirectory = await Storage.loadAllDecrypted('resourceDirectory');
   resourceDirectory.forEach(r => State.resourceDirectory.set(r.id, r));
+
+  const selfCareNotes = await Storage.loadAllDecrypted('selfCareNotes');
+  selfCareNotes.forEach(n => State.selfCareNotes.set(n.id, n));
 
   State.seedClientIds = (await Storage.getSetting('seedClientIds')) || [];
   State.recentClientIds = (await Storage.getSetting('recentClientIds')) || [];
@@ -2324,6 +2362,45 @@ const ResourceDirectory = {
 };
 
 /* =========================================================================
+   SELF CARE  (실무자 자기돌봄 메모) — 특정 대상자와 무관하게, 위기 상황을
+   겪거나 소진을 느낀 실무자 본인을 위한 개인 기록. 사례관리 데이터와 완전히
+   분리된 독립 저장소이며, 통계·리포트 어디에도 집계되지 않는다.
+   ========================================================================= */
+const SelfCare = {
+  list(){
+    return Array.from(State.selfCareNotes.values()).sort((a, b) => b.date.localeCompare(a.date));
+  },
+  get(id){ return State.selfCareNotes.get(id); },
+
+  async add({ date, stressLevel, note }){
+    note = (note || '').trim();
+    if (!note) throw new Error('내용을 입력해 주세요.');
+    const entry = {
+      id: Utils.uid('sc'), date: date || Utils.todayStr(),
+      stressLevel: CONSTANTS.STRESS_LEVELS[stressLevel] ? stressLevel : 'medium',
+      note
+    };
+    State.selfCareNotes.set(entry.id, entry);
+    await Storage.saveEncrypted('selfCareNotes', entry);
+    return entry;
+  },
+  async remove(id){
+    State.selfCareNotes.delete(id);
+    await Storage.idbDelete('selfCareNotes', id);
+  },
+
+  snapshot(id){
+    const n = State.selfCareNotes.get(id);
+    return n ? JSON.parse(JSON.stringify(n)) : null;
+  },
+  async restoreSnapshot(snap){
+    if (!snap) return;
+    State.selfCareNotes.set(snap.id, snap);
+    await Storage.saveEncrypted('selfCareNotes', snap);
+  }
+};
+
+/* =========================================================================
    SEARCH
    ========================================================================= */
 const Search = {
@@ -2372,6 +2449,10 @@ const Search = {
       push(c, 'MSE/목표', c.mse);
       push(c, 'MSE/목표', c.longTermGoal);
       push(c, 'MSE/목표', c.shortTermGoal);
+      if (c.intakeAssessment){
+        const ia = c.intakeAssessment;
+        push(c, '초기사정지', [ia.chiefComplaint, ia.presentIllness, ia.psychiatricHistory, ia.familyHistory, ia.socialHistory, ia.economicStatus, ia.strengths].filter(Boolean).join(' · '));
+      }
       push(c, '종결정보', c.closedReason);
       push(c, '종결정보', c.closedNote);
       (c.managementHistory || []).forEach(h => push(c, '관리수준 이력', h.reason));
@@ -2672,6 +2753,7 @@ const Backup = {
     data.followUps = await Storage.idbGetAll('followUps');
     data.schedules = await Storage.idbGetAll('schedules');
     data.resourceDirectory = await Storage.idbGetAll('resourceDirectory');
+    data.selfCareNotes = await Storage.idbGetAll('selfCareNotes');
     return data;
   },
 
@@ -2697,7 +2779,7 @@ const Backup = {
     if (!data || data.app !== 'case_management_on' || !data.settings || !data.settings.authSalt){
       throw new Error('INVALID_FILE');
     }
-    for (const store of ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory']){
+    for (const store of ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes']){
       const existing = await Storage.idbGetAll(store);
       for (const row of existing) await Storage.idbDelete(store, row.id);
     }
@@ -2709,6 +2791,7 @@ const Backup = {
     for (const row of (data.followUps || [])) await Storage.idbPut('followUps', row);
     for (const row of (data.schedules || [])) await Storage.idbPut('schedules', row);
     for (const row of (data.resourceDirectory || [])) await Storage.idbPut('resourceDirectory', row);
+    for (const row of (data.selfCareNotes || [])) await Storage.idbPut('selfCareNotes', row);
   }
 };
 
@@ -2775,6 +2858,13 @@ const Notifications = {
    UI — routing, rendering, modal & general DOM glue
    ========================================================================= */
 const UI = {
+  // 간소화 모드에서는 상단 고정 네비게이션(뷰마다 다시 그리지 않는 정적
+  // 마크업)의 "기관주소록" 항목도 함께 숨긴다.
+  applySimpleModeNav(){
+    const btn = document.getElementById('navResourceDirectory');
+    if (btn) btn.classList.toggle('hidden', SimpleMode.isSimple());
+  },
+
   showFatal(msg){
     document.getElementById('fatalMessage').textContent = msg;
     document.getElementById('fatalScreen').classList.remove('hidden');
@@ -3227,6 +3317,31 @@ const Views = {
       html += '</div>';
     }
 
+    // 실무자 자기돌봄 메모 — 특정 대상자와 무관한, 실무자 본인을 위한 기록.
+    // 통계나 리포트 어디에도 집계되지 않고, 오직 실무자 자신만 본다.
+    if (!hide('selfCare')){
+      const recentSelfCare = SelfCare.list().slice(0, 3);
+      html += '<div class="panel"><div class="panel-title">🧘 자기돌봄 메모</div>' +
+        '<p class="help-text" style="margin-bottom:10px;">특정 대상자와 무관하게, 위기 상황을 겪거나 소진을 느낀 스스로를 위해 남기는 개인 기록입니다. 통계에는 집계되지 않습니다.</p>';
+      if (recentSelfCare.length === 0){
+        html += '<div class="empty-msg">작성된 자기돌봄 메모가 없습니다.</div>';
+      } else {
+        recentSelfCare.forEach(n => {
+          const st = CONSTANTS.STRESS_LEVELS[n.stressLevel] || CONSTANTS.STRESS_LEVELS.medium;
+          html += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + n.date + ' · <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span></div>' +
+            '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(n.note), 70) + '</div>' +
+            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
+        });
+      }
+      html += '<div class="divider"></div><div class="form-grid">' +
+        '<div class="field"><label>날짜</label><input type="date" id="scDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field"><label>소진도</label><select id="scStress">' +
+        Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '"' + (k === 'medium' ? ' selected' : '') + '>' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>' +
+        '<div class="field full"><label>내용</label><textarea id="scNote" style="min-height:60px;" placeholder="오늘 힘들었던 점, 스스로에게 필요한 것 등을 자유롭게 적어보세요."></textarea></div></div>' +
+        '<button class="btn btn-sm" id="addSelfCareBtn">＋ 기록하기</button></div>';
+    }
+
     // Quick buttons
     html += '<div class="quick-btns">' +
       '<button class="btn-quick" id="qbNewSoap">＋ 새 SOAP 기록</button>' +
@@ -3320,6 +3435,27 @@ const Views = {
     document.getElementById('qbNewSoap').onclick = () => UI.navigate('soapEditor', {});
     document.getElementById('qbNewFollowUp').onclick = () => Views.openFollowUpModal();
     document.getElementById('qbNewSchedule').onclick = () => Views.openScheduleModal();
+
+    const addSelfCareBtn = document.getElementById('addSelfCareBtn');
+    if (addSelfCareBtn) addSelfCareBtn.onclick = async () => {
+      const note = document.getElementById('scNote').value;
+      if (!note.trim()){ toast('내용을 입력해 주세요.', 'error'); return; }
+      await SelfCare.add({
+        date: document.getElementById('scDate').value,
+        stressLevel: document.getElementById('scStress').value,
+        note
+      });
+      toast('자기돌봄 메모를 기록했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-selfcare]').forEach(el => {
+      el.onclick = () => UI.confirm('이 자기돌봄 메모를 삭제할까요?', async () => {
+        const snap = SelfCare.snapshot(el.dataset.delSelfcare);
+        await SelfCare.remove(el.dataset.delSelfcare);
+        toastUndo('삭제했습니다.', async () => { await SelfCare.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
 
     Views.bindBackupControls();
   },
@@ -3470,7 +3606,8 @@ const Views = {
     // CSS로만 감췄다 보였다 하므로(인쇄 시 전부 표시), 기존 bindClientDetail의
     // getElementById 바인딩은 전혀 손댈 필요가 없다.
     if (Views._clientDetailTabClientId !== id){ Views._clientDetailTab = 'basic'; Views._clientDetailTabClientId = id; }
-    const activeTab = Views._clientDetailTab || 'basic';
+    let activeTab = Views._clientDetailTab || 'basic';
+    if (SimpleMode.isSimple() && activeTab === 'timeline') activeTab = 'basic';
     let basicHtml = '', historyHtml = '', safetyHtml = '', soapHtml = '';
 
     // 등록(인테이크) 정보 — 실제 접수 경로를 기록해 두는 자유 선택 필드일 뿐,
@@ -3482,6 +3619,23 @@ const Views = {
       CONSTANTS.REFERRAL_SOURCES.map(r => '<option value="' + r + '"' + (r === c.referralSource ? ' selected' : '') + '>' + r + '</option>').join('') +
       '</select></div></div>' +
       '<button class="btn btn-primary btn-sm" id="saveRegInfoBtn">저장</button></div>';
+
+    // 초기사정지 — 등록 직후 첫 상담에서 받는 표준 인테이크 정보. 정신과적
+    // 병력·진단은 이미 병원에서 내려진 것을 실무자가 그대로 옮겨 적는 항목일
+    // 뿐, 앱이 진단을 추론하거나 판단하지 않는다.
+    if (!SimpleMode.isSimple()){
+      const ia = c.intakeAssessment || {};
+      const hasIntake = !!(ia.chiefComplaint || ia.presentIllness || ia.psychiatricHistory || ia.familyHistory || ia.socialHistory || ia.economicStatus || ia.strengths);
+      basicHtml += '<details class="panel"' + (hasIntake ? ' open' : '') + '><summary class="panel-title">초기사정지 (인테이크)</summary>' +
+        '<div class="field full"><label>주호소문제</label><textarea id="iaChiefComplaint" style="min-height:60px;">' + Utils.escapeHtml(ia.chiefComplaint || '') + '</textarea></div>' +
+        '<div class="field full"><label>현병력</label><textarea id="iaPresentIllness" style="min-height:60px;">' + Utils.escapeHtml(ia.presentIllness || '') + '</textarea></div>' +
+        '<div class="field full"><label>정신과적 병력·진단(병원에서 받은 내용을 그대로 기록)</label><textarea id="iaPsychiatricHistory" style="min-height:60px;">' + Utils.escapeHtml(ia.psychiatricHistory || '') + '</textarea></div>' +
+        '<div class="field full"><label>가족력</label><textarea id="iaFamilyHistory" style="min-height:60px;">' + Utils.escapeHtml(ia.familyHistory || '') + '</textarea></div>' +
+        '<div class="field full"><label>사회력(학력·직업·결혼·거주 형태 등)</label><textarea id="iaSocialHistory" style="min-height:60px;">' + Utils.escapeHtml(ia.socialHistory || '') + '</textarea></div>' +
+        '<div class="field full"><label>경제 상황</label><textarea id="iaEconomicStatus" style="min-height:60px;">' + Utils.escapeHtml(ia.economicStatus || '') + '</textarea></div>' +
+        '<div class="field full"><label>강점 및 자원</label><textarea id="iaStrengths" style="min-height:60px;">' + Utils.escapeHtml(ia.strengths || '') + '</textarea></div>' +
+        '<button class="btn btn-primary btn-sm" id="saveIntakeBtn">저장</button></details>';
+    }
 
     // 특성 태그 — 위험도를 추론하지 않는 실무자 지정 자유 라벨(예: "1인가구").
     // 통계 화면에서 태그별 인원 분포로만 활용된다.
@@ -3514,31 +3668,34 @@ const Views = {
 
     // 목표 진행 상황 — 위 장/단기 목표 서술과 별개로, 목표를 항목별로 나눠
     // 상태(진행중/달성/보류/중단)만 추적한다. 퍼센트 등 임의 수치는 쓰지 않는다.
-    const goals = (c.goals || []);
-    basicHtml += '<details class="panel"' + (goals.length ? ' open' : '') + '><summary class="panel-title">목표 진행 상황</summary>';
-    if (goals.length === 0){
-      basicHtml += '<div class="empty-msg">등록된 목표 항목이 없습니다.</div>';
-    } else {
-      ['long', 'short'].forEach(term => {
-        const termGoals = goals.filter(g => g.term === term);
-        if (!termGoals.length) return;
-        basicHtml += '<div class="row-sub" style="margin:8px 0 4px;font-weight:600;">' + (term === 'long' ? '장기목표' : '단기목표') + '</div>';
-        termGoals.forEach(g => {
-          const st = CONSTANTS.GOAL_STATUSES[g.status] || CONSTANTS.GOAL_STATUSES.in_progress;
-          basicHtml += '<div class="list-row"><div class="list-row-main">' +
-            '<div class="row-title">' + Utils.escapeHtml(g.text) + ' <span class="badge ' + st.badgeClass + '">' + st.label + '</span></div>' +
-            '</div><div class="row-actions">' +
-            '<select class="goalStatusSelect" data-goal="' + g.id + '">' +
-            Object.keys(CONSTANTS.GOAL_STATUSES).map(k => '<option value="' + k + '"' + (k === g.status ? ' selected' : '') + '>' + CONSTANTS.GOAL_STATUSES[k].label + '</option>').join('') +
-            '</select>' +
-            '<button class="btn btn-sm btn-danger" data-del-goal="' + g.id + '">삭제</button></div></div>';
+    // 신입 직원에게는 당장 급하지 않은 고급 기능이라 간소화 모드에서 숨긴다.
+    if (!SimpleMode.isSimple()){
+      const goals = (c.goals || []);
+      basicHtml += '<details class="panel"' + (goals.length ? ' open' : '') + '><summary class="panel-title">목표 진행 상황</summary>';
+      if (goals.length === 0){
+        basicHtml += '<div class="empty-msg">등록된 목표 항목이 없습니다.</div>';
+      } else {
+        ['long', 'short'].forEach(term => {
+          const termGoals = goals.filter(g => g.term === term);
+          if (!termGoals.length) return;
+          basicHtml += '<div class="row-sub" style="margin:8px 0 4px;font-weight:600;">' + (term === 'long' ? '장기목표' : '단기목표') + '</div>';
+          termGoals.forEach(g => {
+            const st = CONSTANTS.GOAL_STATUSES[g.status] || CONSTANTS.GOAL_STATUSES.in_progress;
+            basicHtml += '<div class="list-row"><div class="list-row-main">' +
+              '<div class="row-title">' + Utils.escapeHtml(g.text) + ' <span class="badge ' + st.badgeClass + '">' + st.label + '</span></div>' +
+              '</div><div class="row-actions">' +
+              '<select class="goalStatusSelect" data-goal="' + g.id + '">' +
+              Object.keys(CONSTANTS.GOAL_STATUSES).map(k => '<option value="' + k + '"' + (k === g.status ? ' selected' : '') + '>' + CONSTANTS.GOAL_STATUSES[k].label + '</option>').join('') +
+              '</select>' +
+              '<button class="btn btn-sm btn-danger" data-del-goal="' + g.id + '">삭제</button></div></div>';
+          });
         });
-      });
+      }
+      basicHtml += '<div class="divider"></div><div class="form-grid">' +
+        '<div class="field"><label>구분</label><select id="goalTerm"><option value="long">장기목표</option><option value="short">단기목표</option></select></div>' +
+        '<div class="field full"><label>목표 내용</label><input type="text" id="goalText" placeholder="예: 정기적인 복약 및 외래 방문 유지"></div></div>' +
+        '<button class="btn btn-sm" id="addGoalBtn">＋ 목표 추가</button></details>';
     }
-    basicHtml += '<div class="divider"></div><div class="form-grid">' +
-      '<div class="field"><label>구분</label><select id="goalTerm"><option value="long">장기목표</option><option value="short">단기목표</option></select></div>' +
-      '<div class="field full"><label>목표 내용</label><input type="text" id="goalText" placeholder="예: 정기적인 복약 및 외래 방문 유지"></div></div>' +
-      '<button class="btn btn-sm" id="addGoalBtn">＋ 목표 추가</button></details>';
 
     if (c.managementHistory && c.managementHistory.length){
       historyHtml += '<details class="panel" open><summary class="panel-title">관리수준 변경 이력</summary>';
@@ -3636,29 +3793,32 @@ const Views = {
       '<div class="field"><label>메모(선택)</label><input type="text" id="admNote"></div></div>' +
       '<button class="btn btn-sm" id="addAdmissionBtn">＋ 입퇴원 기록 추가</button></details>';
 
-    // 자원연계 현황 — 연계한 기관/자원을 그대로 목록화만 한다.
+    // 자원연계 현황 — 연계한 기관/자원을 그대로 목록화만 한다. 신입 직원에게는
+    // 당장 급하지 않으므로 간소화 모드에서 숨긴다(집계용 변수는 계속 계산됨).
     const resourceLinks = (c.resourceLinks || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    historyHtml += '<details class="panel"' + (resourceLinks.length ? ' open' : '') + '><summary class="panel-title">자원연계 현황</summary>';
-    if (resourceLinks.length === 0){
-      historyHtml += '<div class="empty-msg">연계된 자원이 없습니다.</div>';
-    } else {
-      resourceLinks.forEach(r => {
-        historyHtml += '<div class="list-row"><div class="list-row-main">' +
-          '<div class="row-title">' + r.date + ' · ' + Utils.escapeHtml(r.type) + (r.name ? ' · ' + Utils.escapeHtml(r.name) : '') + '</div>' +
-          '<div class="row-sub">' + [r.contact, r.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
-      });
+    if (!SimpleMode.isSimple()){
+      historyHtml += '<details class="panel"' + (resourceLinks.length ? ' open' : '') + '><summary class="panel-title">자원연계 현황</summary>';
+      if (resourceLinks.length === 0){
+        historyHtml += '<div class="empty-msg">연계된 자원이 없습니다.</div>';
+      } else {
+        resourceLinks.forEach(r => {
+          historyHtml += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + r.date + ' · ' + Utils.escapeHtml(r.type) + (r.name ? ' · ' + Utils.escapeHtml(r.name) : '') + '</div>' +
+            '<div class="row-sub">' + [r.contact, r.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
+            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
+        });
+      }
+      historyHtml += '<div class="divider"></div><div class="form-grid">' +
+        '<div class="field"><label>유형</label><select id="resType">' +
+        CONSTANTS.RESOURCE_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
+        '<div class="field"><label>기관/자원명</label><input type="text" id="resName" list="resDirNameList">' +
+        '<datalist id="resDirNameList">' + ResourceDirectory.list().map(r => '<option value="' + Utils.escapeHtml(r.name) + '">').join('') + '</datalist></div>' +
+        '<div class="field"><label>연락처(선택)</label><input type="text" id="resContact"></div>' +
+        '<div class="field"><label>날짜</label><input type="date" id="resDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field full"><label>메모(선택)</label><input type="text" id="resNote"></div></div>' +
+        (ResourceDirectory.list().length ? '<p class="help-text" style="margin:-4px 0 10px;">기관명을 입력하면 기관주소록에 등록된 연락처가 자동으로 채워집니다.</p>' : '') +
+        '<button class="btn btn-sm" id="addResourceBtn">＋ 자원연계 추가</button></details>';
     }
-    historyHtml += '<div class="divider"></div><div class="form-grid">' +
-      '<div class="field"><label>유형</label><select id="resType">' +
-      CONSTANTS.RESOURCE_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
-      '<div class="field"><label>기관/자원명</label><input type="text" id="resName" list="resDirNameList">' +
-      '<datalist id="resDirNameList">' + ResourceDirectory.list().map(r => '<option value="' + Utils.escapeHtml(r.name) + '">').join('') + '</datalist></div>' +
-      '<div class="field"><label>연락처(선택)</label><input type="text" id="resContact"></div>' +
-      '<div class="field"><label>날짜</label><input type="date" id="resDate" value="' + Utils.todayStr() + '"></div>' +
-      '<div class="field full"><label>메모(선택)</label><input type="text" id="resNote"></div></div>' +
-      (ResourceDirectory.list().length ? '<p class="help-text" style="margin:-4px 0 10px;">기관명을 입력하면 기관주소록에 등록된 연락처가 자동으로 채워집니다.</p>' : '') +
-      '<button class="btn btn-sm" id="addResourceBtn">＋ 자원연계 추가</button></details>';
 
     // 복약 현황 — SOAP 서술과 별개로 약물명/용량/처방병원 변경 이력을 구조화된
     // 목록으로 남긴다. 가장 최근 항목이 사실상 현재 복약 상태를 나타낸다.
@@ -3706,78 +3866,86 @@ const Views = {
       '<button class="btn btn-sm" id="addContactBtn">＋ 보호자 연락처 추가</button></details>';
 
     // 사례회의(수퍼비전) 기록 — 팀 단위로 논의된 내용과 결정사항을 SOAP과 별개로 남긴다.
+    // 이 아래 세 패널(사례회의/사정도구/서류)은 신입 직원에게 당장 급하지
+    // 않은 고급 기능이라 간소화 모드에서 숨긴다.
     const caseConferences = (c.caseConferences || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    safetyHtml += '<details class="panel"' + (caseConferences.length ? ' open' : '') + '><summary class="panel-title">사례회의 기록</summary>';
-    if (caseConferences.length === 0){
-      safetyHtml += '<div class="empty-msg">기록된 사례회의가 없습니다.</div>';
-    } else {
-      caseConferences.forEach(cf => {
-        safetyHtml += '<div class="list-row"><div class="list-row-main">' +
-          '<div class="row-title">' + cf.date + (cf.attendees ? ' · 참석자: ' + Utils.escapeHtml(cf.attendees) : '') + '</div>' +
-          (cf.discussion ? '<div class="row-sub">논의내용: ' + Utils.escapeHtml(cf.discussion) + '</div>' : '') +
-          (cf.decision ? '<div class="row-sub">결정사항: ' + Utils.escapeHtml(cf.decision) + '</div>' : '') +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-conference="' + cf.id + '">삭제</button></div></div>';
-      });
+    if (!SimpleMode.isSimple()){
+      safetyHtml += '<details class="panel"' + (caseConferences.length ? ' open' : '') + '><summary class="panel-title">사례회의 기록</summary>';
+      if (caseConferences.length === 0){
+        safetyHtml += '<div class="empty-msg">기록된 사례회의가 없습니다.</div>';
+      } else {
+        caseConferences.forEach(cf => {
+          safetyHtml += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + cf.date + (cf.attendees ? ' · 참석자: ' + Utils.escapeHtml(cf.attendees) : '') + '</div>' +
+            (cf.discussion ? '<div class="row-sub">논의내용: ' + Utils.escapeHtml(cf.discussion) + '</div>' : '') +
+            (cf.decision ? '<div class="row-sub">결정사항: ' + Utils.escapeHtml(cf.decision) + '</div>' : '') +
+            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-conference="' + cf.id + '">삭제</button></div></div>';
+        });
+      }
+      safetyHtml += '<div class="divider"></div><div class="form-grid">' +
+        '<div class="field"><label>날짜</label><input type="date" id="confDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field"><label>참석자(선택)</label><input type="text" id="confAttendees"></div>' +
+        '<div class="field full"><label>논의내용(선택)</label><textarea id="confDiscussion" style="min-height:60px;"></textarea></div>' +
+        '<div class="field full"><label>결정사항(선택)</label><textarea id="confDecision" style="min-height:60px;"></textarea></div></div>' +
+        '<button class="btn btn-sm" id="addConferenceBtn">＋ 사례회의 기록 추가</button></details>';
     }
-    safetyHtml += '<div class="divider"></div><div class="form-grid">' +
-      '<div class="field"><label>날짜</label><input type="date" id="confDate" value="' + Utils.todayStr() + '"></div>' +
-      '<div class="field"><label>참석자(선택)</label><input type="text" id="confAttendees"></div>' +
-      '<div class="field full"><label>논의내용(선택)</label><textarea id="confDiscussion" style="min-height:60px;"></textarea></div>' +
-      '<div class="field full"><label>결정사항(선택)</label><textarea id="confDecision" style="min-height:60px;"></textarea></div></div>' +
-      '<button class="btn btn-sm" id="addConferenceBtn">＋ 사례회의 기록 추가</button></details>';
 
     // 표준화 사정도구 점수 이력 — 척도를 해석하거나 위험을 판정하지 않고, 실무자가
     // 측정한 점수와 날짜만 그대로 목록화해 변화 추이를 눈으로 볼 수 있게 한다.
     const assessments = (c.assessments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    historyHtml += '<details class="panel"' + (assessments.length ? ' open' : '') + '><summary class="panel-title">사정도구 점수 이력</summary>';
-    if (assessments.length === 0){
-      historyHtml += '<div class="empty-msg">기록된 사정도구 점수가 없습니다.</div>';
-    } else {
-      assessments.forEach(a => {
-        historyHtml += '<div class="list-row"><div class="list-row-main">' +
-          '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.scale) + (a.score ? ' — ' + Utils.escapeHtml(a.score) + '점' : '') + '</div>' +
-          (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-assessment="' + a.id + '">삭제</button></div></div>';
-      });
+    if (!SimpleMode.isSimple()){
+      historyHtml += '<details class="panel"' + (assessments.length ? ' open' : '') + '><summary class="panel-title">사정도구 점수 이력</summary>';
+      if (assessments.length === 0){
+        historyHtml += '<div class="empty-msg">기록된 사정도구 점수가 없습니다.</div>';
+      } else {
+        assessments.forEach(a => {
+          historyHtml += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.scale) + (a.score ? ' — ' + Utils.escapeHtml(a.score) + '점' : '') + '</div>' +
+            (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
+            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-assessment="' + a.id + '">삭제</button></div></div>';
+        });
+      }
+      historyHtml += '<div class="divider"></div><div class="form-grid">' +
+        '<div class="field"><label>척도</label><select id="assessScale">' +
+        CONSTANTS.ASSESSMENT_SCALES.map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select></div>' +
+        '<div class="field hidden" id="assessCustomWrap"><label>척도명 직접 입력</label><input type="text" id="assessCustomScale"></div>' +
+        '<div class="field"><label>점수</label><input type="text" id="assessScore" placeholder="예: 65"></div>' +
+        '<div class="field"><label>날짜</label><input type="date" id="assessDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field full"><label>메모(선택)</label><input type="text" id="assessNote"></div></div>' +
+        '<button class="btn btn-sm" id="addAssessmentBtn">＋ 사정도구 점수 추가</button></details>';
     }
-    historyHtml += '<div class="divider"></div><div class="form-grid">' +
-      '<div class="field"><label>척도</label><select id="assessScale">' +
-      CONSTANTS.ASSESSMENT_SCALES.map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select></div>' +
-      '<div class="field hidden" id="assessCustomWrap"><label>척도명 직접 입력</label><input type="text" id="assessCustomScale"></div>' +
-      '<div class="field"><label>점수</label><input type="text" id="assessScore" placeholder="예: 65"></div>' +
-      '<div class="field"><label>날짜</label><input type="date" id="assessDate" value="' + Utils.todayStr() + '"></div>' +
-      '<div class="field full"><label>메모(선택)</label><input type="text" id="assessNote"></div></div>' +
-      '<button class="btn btn-sm" id="addAssessmentBtn">＋ 사정도구 점수 추가</button></details>';
 
     // 필수 서류/동의서 체크리스트 — 수령 여부만 토글로 관리한다.
     const documents = (c.documents || []);
-    historyHtml += '<details class="panel"' + (documents.length ? ' open' : '') + '><summary class="panel-title">필수 서류·동의서</summary>';
-    if (documents.length === 0){
-      historyHtml += '<div class="empty-msg">등록된 서류 항목이 없습니다.</div>';
-    } else {
-      documents.forEach(d => {
-        const attachments = d.attachments || [];
-        historyHtml += '<div class="list-row"><div class="list-row-main">' +
-          '<div class="row-title">' + Utils.escapeHtml(d.name) + '</div>' +
-          '<div class="row-sub">' + (d.receivedDate ? '수령일: ' + d.receivedDate : '미수령') + '</div>' +
-          (attachments.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">' +
-            attachments.map(a => (a.mimeType && a.mimeType.startsWith('image/')
-              ? '<img src="' + a.dataUrl + '" data-view-attachment="' + a.id + '" data-view-attachment-doc="' + d.id + '" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid var(--border-strong);" title="' + Utils.escapeHtml(a.filename) + '">'
-              : '<span data-view-attachment="' + a.id + '" data-view-attachment-doc="' + d.id + '" style="cursor:pointer;padding:6px 8px;border:1px solid var(--border-strong);border-radius:6px;font-size:0.78rem;" title="' + Utils.escapeHtml(a.filename) + '">📄 ' + Utils.truncate(Utils.escapeHtml(a.filename), 14) + '</span>'
-            ) + '<button class="btn-link" style="color:var(--danger);" data-del-attachment="' + a.id + '" data-del-attachment-doc="' + d.id + '" title="첨부파일 삭제">✕</button>').join('') +
-            '</div>' : '') +
-          '</div><div class="row-actions">' +
-          '<button class="btn btn-sm' + (d.receivedDate ? '' : ' btn-primary') + '" data-toggle-doc="' + d.id + '">' + (d.receivedDate ? '미수령으로 변경' : '수령 확인') + '</button>' +
-          '<button class="btn btn-sm" data-attach-doc="' + d.id + '">📎 첨부</button>' +
-          '<button class="btn btn-sm btn-danger" data-del-doc="' + d.id + '">삭제</button></div></div>';
-      });
+    if (!SimpleMode.isSimple()){
+      historyHtml += '<details class="panel"' + (documents.length ? ' open' : '') + '><summary class="panel-title">필수 서류·동의서</summary>';
+      if (documents.length === 0){
+        historyHtml += '<div class="empty-msg">등록된 서류 항목이 없습니다.</div>';
+      } else {
+        documents.forEach(d => {
+          const attachments = d.attachments || [];
+          historyHtml += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + Utils.escapeHtml(d.name) + '</div>' +
+            '<div class="row-sub">' + (d.receivedDate ? '수령일: ' + d.receivedDate : '미수령') + '</div>' +
+            (attachments.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">' +
+              attachments.map(a => (a.mimeType && a.mimeType.startsWith('image/')
+                ? '<img src="' + a.dataUrl + '" data-view-attachment="' + a.id + '" data-view-attachment-doc="' + d.id + '" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid var(--border-strong);" title="' + Utils.escapeHtml(a.filename) + '">'
+                : '<span data-view-attachment="' + a.id + '" data-view-attachment-doc="' + d.id + '" style="cursor:pointer;padding:6px 8px;border:1px solid var(--border-strong);border-radius:6px;font-size:0.78rem;" title="' + Utils.escapeHtml(a.filename) + '">📄 ' + Utils.truncate(Utils.escapeHtml(a.filename), 14) + '</span>'
+              ) + '<button class="btn-link" style="color:var(--danger);" data-del-attachment="' + a.id + '" data-del-attachment-doc="' + d.id + '" title="첨부파일 삭제">✕</button>').join('') +
+              '</div>' : '') +
+            '</div><div class="row-actions">' +
+            '<button class="btn btn-sm' + (d.receivedDate ? '' : ' btn-primary') + '" data-toggle-doc="' + d.id + '">' + (d.receivedDate ? '미수령으로 변경' : '수령 확인') + '</button>' +
+            '<button class="btn btn-sm" data-attach-doc="' + d.id + '">📎 첨부</button>' +
+            '<button class="btn btn-sm btn-danger" data-del-doc="' + d.id + '">삭제</button></div></div>';
+        });
+      }
+      historyHtml += '<div class="divider"></div><div style="display:flex;gap:8px;max-width:420px;">' +
+        '<input type="text" id="docNameInput" list="docNameList" placeholder="예: 개인정보 수집·이용 동의서" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);">' +
+        '<datalist id="docNameList">' + CONSTANTS.COMMON_DOCUMENTS.map(d => '<option value="' + d + '">').join('') + '</datalist>' +
+        '<button class="btn btn-sm" id="addDocBtn">＋ 서류 항목 추가</button></div>' +
+        '<input type="file" id="docAttachFileInput" accept="image/*,application/pdf" multiple style="display:none;">' +
+        '</details>';
     }
-    historyHtml += '<div class="divider"></div><div style="display:flex;gap:8px;max-width:420px;">' +
-      '<input type="text" id="docNameInput" list="docNameList" placeholder="예: 개인정보 수집·이용 동의서" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);">' +
-      '<datalist id="docNameList">' + CONSTANTS.COMMON_DOCUMENTS.map(d => '<option value="' + d + '">').join('') + '</datalist>' +
-      '<button class="btn btn-sm" id="addDocBtn">＋ 서류 항목 추가</button></div>' +
-      '<input type="file" id="docAttachFileInput" accept="image/*,application/pdf" multiple style="display:none;">' +
-      '</details>';
 
     // 대상자 간 가족 관계 — 한쪽에 연결하면 반대쪽에도 자동으로 역관계가 생성된다.
     const familyLinks = (c.familyLinks || []);
@@ -3846,9 +4014,11 @@ const Views = {
       { key: 'basic', label: '기본정보', count: 0 },
       { key: 'history', label: '이력관리', count: admissions.length + resourceLinks.length + medications.length + assessments.length + documents.length },
       { key: 'safety', label: '위기·안전', count: crisisEvents.length + emergencyContacts.length + familyLinks.length + caseConferences.length },
-      { key: 'soap', label: 'SOAP', count: pendingFus.length },
-      { key: 'timeline', label: '통합 타임라인', count: timelineEvents.length }
+      { key: 'soap', label: 'SOAP', count: pendingFus.length }
     ];
+    // 통합 타임라인은 여러 하위 기록을 종합해 보는 고급 기능이라 간소화
+    // 모드에서는 탭 자체를 숨긴다(내용은 그대로 DOM에 남아 인쇄에는 영향 없음).
+    if (!SimpleMode.isSimple()) tabDefs.push({ key: 'timeline', label: '통합 타임라인', count: timelineEvents.length });
     html += '<div class="tabs">' + tabDefs.map(t =>
       '<button class="tab-btn detail-tab-btn' + (activeTab === t.key ? ' active' : '') + '" data-tab="' + t.key + '">' + t.label + (t.count ? ' (' + t.count + ')' : '') + '</button>'
     ).join('') + '</div>';
@@ -3874,13 +4044,7 @@ const Views = {
     document.getElementById('handoverBtn').onclick = () => UI.navigate('handoverSummary', { id });
     document.getElementById('emergencyInfoBtn').onclick = () => Views.openEmergencyInfoModal(id);
     document.getElementById('backToClientsBtn').onclick = () => UI.navigate('clients');
-    document.getElementById('printClientBtn').onclick = () => {
-      // <details> hides its content while closed, so expand every collapsed
-      // history panel first — otherwise the printed page would silently omit
-      // whichever sections the caseworker happened to leave collapsed.
-      document.querySelectorAll('#appMain details.panel').forEach(d => { d.open = true; });
-      window.print();
-    };
+    document.getElementById('printClientBtn').onclick = () => Views.openPrintOptionsModal();
     document.getElementById('mgmtLevelSelect').onchange = (e) => {
       const newLevel = e.target.value;
       const prevLevel = Clients.get(id).managementLevel;
@@ -3928,6 +4092,21 @@ const Views = {
       });
       toast('등록 정보를 저장했습니다.');
       UI.renderCurrentView();
+    };
+    const saveIntakeBtn = document.getElementById('saveIntakeBtn');
+    if (saveIntakeBtn) saveIntakeBtn.onclick = async () => {
+      await Clients.update(id, {
+        intakeAssessment: {
+          chiefComplaint: document.getElementById('iaChiefComplaint').value,
+          presentIllness: document.getElementById('iaPresentIllness').value,
+          psychiatricHistory: document.getElementById('iaPsychiatricHistory').value,
+          familyHistory: document.getElementById('iaFamilyHistory').value,
+          socialHistory: document.getElementById('iaSocialHistory').value,
+          economicStatus: document.getElementById('iaEconomicStatus').value,
+          strengths: document.getElementById('iaStrengths').value
+        }
+      });
+      toast('초기사정지를 저장했습니다.');
     };
 
     const closeBtn = document.getElementById('closeClientBtn');
@@ -3979,13 +4158,14 @@ const Views = {
     });
 
     const resNameInput = document.getElementById('resName');
-    resNameInput.addEventListener('input', () => {
+    if (resNameInput) resNameInput.addEventListener('input', () => {
       const entry = ResourceDirectory.findByName(resNameInput.value.trim());
       if (!entry) return;
       document.getElementById('resType').value = entry.type;
       if (entry.phone) document.getElementById('resContact').value = entry.phone;
     });
-    document.getElementById('addResourceBtn').onclick = async () => {
+    const addResourceBtn = document.getElementById('addResourceBtn');
+    if (addResourceBtn) addResourceBtn.onclick = async () => {
       const name = document.getElementById('resName').value;
       if (!name.trim()){ toast('기관/자원명을 입력해 주세요.', 'error'); return; }
       await Clients.addResourceLink(id, {
@@ -4067,7 +4247,8 @@ const Views = {
       });
     });
 
-    document.getElementById('addConferenceBtn').onclick = async () => {
+    const addConferenceBtn = document.getElementById('addConferenceBtn');
+    if (addConferenceBtn) addConferenceBtn.onclick = async () => {
       const date = document.getElementById('confDate').value;
       if (!date){ toast('날짜를 입력해 주세요.', 'error'); return; }
       await Clients.addCaseConference(id, {
@@ -4089,8 +4270,9 @@ const Views = {
 
     const assessScaleSelect = document.getElementById('assessScale');
     const assessCustomWrap = document.getElementById('assessCustomWrap');
-    assessScaleSelect.onchange = () => assessCustomWrap.classList.toggle('hidden', assessScaleSelect.value !== '기타');
-    document.getElementById('addAssessmentBtn').onclick = async () => {
+    if (assessScaleSelect) assessScaleSelect.onchange = () => assessCustomWrap.classList.toggle('hidden', assessScaleSelect.value !== '기타');
+    const addAssessmentBtn = document.getElementById('addAssessmentBtn');
+    if (addAssessmentBtn) addAssessmentBtn.onclick = async () => {
       await Clients.addAssessment(id, {
         scale: assessScaleSelect.value,
         customScale: document.getElementById('assessCustomScale').value,
@@ -4110,7 +4292,8 @@ const Views = {
       });
     });
 
-    document.getElementById('addDocBtn').onclick = async () => {
+    const addDocBtn = document.getElementById('addDocBtn');
+    if (addDocBtn) addDocBtn.onclick = async () => {
       const name = document.getElementById('docNameInput').value;
       if (!name.trim()){ toast('서류 이름을 입력해 주세요.', 'error'); return; }
       await Clients.addDocumentItem(id, name);
@@ -5422,6 +5605,11 @@ const Views = {
       '<div class="field"><label>담당자명(선택)</label><input type="text" id="orgWorkerInput" value="' + Utils.escapeHtml(OrgInfo.worker) + '"></div>' +
       '</div></div>';
 
+    html += '<div class="panel"><div class="panel-title">🧩 간소화 모드 (신입 직원용)</div>' +
+      '<p class="help-text" style="margin-bottom:10px;">켜면 목표 진행 상황·사정도구·필수 서류·자원연계·사례회의·초기사정지·통합 타임라인 등 당장 필요하지 않을 수 있는 고급 패널을 화면에서 숨깁니다. 데이터는 삭제되지 않으며, 방문 전 안전 체크처럼 안전과 직결된 항목은 계속 표시됩니다. 언제든 다시 끌 수 있습니다.</p>' +
+      '<label class="field-inline"><input type="checkbox" id="simpleModeChk"' + (SimpleMode.isSimple() ? ' checked' : '') + '> 간소화 모드 사용</label>' +
+      '</div>';
+
     html += '<div class="panel"><div class="panel-title">🏠 대시보드 위젯 표시</div>' +
       '<p class="help-text" style="margin-bottom:10px;">체크를 해제하면 해당 패널(및 상단 요약 카드)이 대시보드에서 보이지 않습니다.</p>' +
       '<div class="checkbox-group">' +
@@ -5477,6 +5665,13 @@ const Views = {
         chk.closest('.chip-check').classList.toggle('checked', chk.checked);
         DashboardPrefs.setHidden(chk.dataset.widget, !chk.checked);
       });
+    });
+
+    document.getElementById('simpleModeChk').addEventListener('change', async (e) => {
+      await SimpleMode.setEnabled(e.target.checked);
+      UI.applySimpleModeNav();
+      toast(e.target.checked ? '간소화 모드를 켰습니다.' : '간소화 모드를 껐습니다.');
+      UI.renderCurrentView();
     });
 
     document.getElementById('themeModeSelect').onchange = (e) => Theme.setMode(e.target.value);
@@ -5545,6 +5740,37 @@ const Views = {
         err.textContent = e.message;
         err.classList.remove('hidden');
       }
+    };
+  },
+
+  // 인쇄 항목 선택 — 대상자 기록은 탭이 5개나 되어 통째로 인쇄하면 필요
+  //없는 내용까지 다 나온다. 인쇄 직전에 어떤 탭을 포함할지 고르게 한다.
+  PRINT_SECTION_LABELS: { basic: '기본정보', history: '이력관리', safety: '위기·안전', soap: 'SOAP', timeline: '통합 타임라인' },
+  openPrintOptionsModal(){
+    const labels = Views.PRINT_SECTION_LABELS;
+    let html = '<h3>인쇄할 항목 선택</h3>' +
+      '<p class="help-text" style="margin-bottom:12px;">체크한 탭의 내용만 인쇄됩니다. 서명란은 항상 함께 인쇄됩니다.</p>' +
+      '<div class="checkbox-group">' +
+      Object.keys(labels).map(k => '<label class="chip-check checked"><input type="checkbox" class="printSectionChk" value="' + k + '" checked>' + labels[k] + '</label>').join('') +
+      '</div>' +
+      '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">' +
+      '<button class="btn" id="printOptCancelBtn">취소</button>' +
+      '<button class="btn btn-primary" id="printOptGoBtn">인쇄하기</button></div>';
+    UI.openModal(html);
+    document.querySelectorAll('#modalBox .chip-check input[type=checkbox]').forEach(chk => {
+      chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
+    });
+    document.getElementById('printOptCancelBtn').onclick = () => UI.closeModal();
+    document.getElementById('printOptGoBtn').onclick = () => {
+      const selected = Array.from(document.querySelectorAll('.printSectionChk:checked')).map(el => el.value);
+      // <details>가 접혀 있으면 인쇄에서 내용이 빠지므로 먼저 모두 펼치고,
+      // 선택하지 않은 탭 그룹에는 인쇄용 숨김 클래스를 붙인다.
+      document.querySelectorAll('#appMain details.panel').forEach(d => { d.open = true; });
+      document.querySelectorAll('.detail-tab-group').forEach(g => {
+        g.classList.toggle('print-excluded', !selected.includes(g.dataset.tabGroup));
+      });
+      UI.closeModal();
+      window.print();
     };
   },
 
@@ -5755,6 +5981,8 @@ async function initApp(){
   await OrgInfo.init();
   await FontSize.init();
   await DashboardPrefs.init();
+  await SimpleMode.init();
+  UI.applySimpleModeNav();
 
   const firstRun = await Auth.isFirstRun();
 
