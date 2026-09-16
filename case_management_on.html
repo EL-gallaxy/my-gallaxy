@@ -613,6 +613,27 @@ function toast(msg, type){
   setTimeout(() => el.remove(), 3200);
 }
 
+// Deletion is already delete-and-gone by the time this is called (simpler
+// and avoids delayed-write edge cases), so "실행취소" restores from a
+// snapshot taken just before the delete rather than cancelling a pending
+// operation. Scoped to SOAP/후속조치/일정 and their sub-records — 대상자
+// 삭제 already has its own explicit count-based warning dialog instead.
+function toastUndo(msg, onUndo){
+  const el = document.createElement('div');
+  el.className = 'toast';
+  const span = document.createElement('span');
+  span.textContent = msg;
+  const btn = document.createElement('button');
+  btn.textContent = '실행취소';
+  btn.className = 'btn-link';
+  btn.style.cssText = 'color:#fff;text-decoration:underline;margin-left:10px;background:none;border:none;cursor:pointer;font-size:inherit;padding:0;';
+  btn.onclick = async () => { el.remove(); await onUndo(); };
+  el.appendChild(span);
+  el.appendChild(btn);
+  document.getElementById('toastContainer').appendChild(el);
+  setTimeout(() => el.remove(), 6000);
+}
+
 function copyToClipboard(text){
   const done = () => toast('복사되었습니다.');
   const fail = () => {
@@ -1001,6 +1022,28 @@ const FontSize = {
 };
 
 /* =========================================================================
+   DASHBOARD PREFS  (which dashboard panels/summary-cards to show — a plain
+   UI preference like Theme, cached in memory since Views.dashboard() builds
+   its HTML synchronously)
+   ========================================================================= */
+const DashboardPrefs = {
+  WIDGETS: {
+    crisis: '🚨 위기관리 대상자 현황', overdue: '⚠ 기한 초과 후속조치', gap: '🕓 미접촉 대상자',
+    today: '🔴 오늘 할 일', draft: '📝 미완성 SOAP', recent: '최근 기록', dataManage: '데이터 관리'
+  },
+  hidden: {},
+
+  async init(){
+    this.hidden = (await Storage.getSetting('dashboardHiddenWidgets')) || {};
+  },
+  isHidden(key){ return !!this.hidden[key]; },
+  async setHidden(key, isHidden){
+    this.hidden[key] = isHidden;
+    await Storage.setSetting('dashboardHiddenWidgets', this.hidden);
+  }
+};
+
+/* =========================================================================
    DATA LOADING
    ========================================================================= */
 async function loadAllDataIntoState(){
@@ -1059,6 +1102,21 @@ const Clients = {
     return Array.from(State.clients.values()).sort((a, b) => a.id.localeCompare(b.id));
   },
   get(id){ return State.clients.get(id); },
+
+  // Deep-clone snapshot/restore pair backing the "실행취소" toasts on the
+  // client's sub-record deletes (입퇴원/자원연계/위기개입/복약/보호자연락처/
+  // 사례회의/사정도구/서류/가족관계/태그). Restoring replaces the whole
+  // client object, which is simplest and always correct regardless of which
+  // field the delete touched.
+  snapshot(id){
+    const c = State.clients.get(id);
+    return c ? JSON.parse(JSON.stringify(c)) : null;
+  },
+  async restoreSnapshot(snap){
+    if (!snap) return;
+    State.clients.set(snap.id, snap);
+    await Storage.saveEncrypted('clients', snap);
+  },
 
   async add({ id, alias, managementLevel, registrationDate, referralSource }){
     id = (id || '').trim();
@@ -1718,6 +1776,16 @@ const SoapModule = {
   async remove(id){
     State.soaps.delete(id);
     await Storage.idbDelete('soaps', id);
+  },
+
+  snapshot(id){
+    const s = State.soaps.get(id);
+    return s ? JSON.parse(JSON.stringify(s)) : null;
+  },
+  async restoreSnapshot(snap){
+    if (!snap) return;
+    State.soaps.set(snap.id, snap);
+    await Storage.saveEncrypted('soaps', snap);
   }
 };
 
@@ -1768,6 +1836,16 @@ const FollowUps = {
   async remove(id){
     State.followUps.delete(id);
     await Storage.idbDelete('followUps', id);
+  },
+
+  snapshot(id){
+    const f = State.followUps.get(id);
+    return f ? JSON.parse(JSON.stringify(f)) : null;
+  },
+  async restoreSnapshot(snap){
+    if (!snap) return;
+    State.followUps.set(snap.id, snap);
+    await Storage.saveEncrypted('followUps', snap);
   }
 };
 
@@ -1808,6 +1886,16 @@ const Schedules = {
   async remove(id){
     State.schedules.delete(id);
     await Storage.idbDelete('schedules', id);
+  },
+
+  snapshot(id){
+    const s = State.schedules.get(id);
+    return s ? JSON.parse(JSON.stringify(s)) : null;
+  },
+  async restoreSnapshot(snap){
+    if (!snap) return;
+    State.schedules.set(snap.id, snap);
+    await Storage.saveEncrypted('schedules', snap);
   }
 };
 
@@ -2449,119 +2537,133 @@ const Views = {
         : '<button class="btn btn-sm" id="enableNotifBtn">🔔 브라우저 알림 사용</button>') +
       '</div>';
 
+    const hide = (key) => DashboardPrefs.isHidden(key);
+
     html += '<div class="summary-grid">' +
-      '<button class="summary-card overdue" data-goto="followUps" data-filter="overdue"><div class="num">' + overdue.length + '</div><div class="label">⚠ 기한 초과</div></button>' +
-      '<button class="summary-card today" data-scroll="todaySection"><div class="num">' + (dueToday.length + todaySchedules.length) + '</div><div class="label">🔴 오늘 할 일</div></button>' +
-      '<button class="summary-card draft" data-scroll="draftSection"><div class="num">' + draftSoaps.length + '</div><div class="label">📝 미완성 SOAP</div></button>' +
+      (hide('overdue') ? '' : '<button class="summary-card overdue" data-goto="followUps" data-filter="overdue"><div class="num">' + overdue.length + '</div><div class="label">⚠ 기한 초과</div></button>') +
+      (hide('today') ? '' : '<button class="summary-card today" data-scroll="todaySection"><div class="num">' + (dueToday.length + todaySchedules.length) + '</div><div class="label">🔴 오늘 할 일</div></button>') +
+      (hide('draft') ? '' : '<button class="summary-card draft" data-scroll="draftSection"><div class="num">' + draftSoaps.length + '</div><div class="label">📝 미완성 SOAP</div></button>') +
       '<button class="summary-card upcoming" data-goto="schedule" data-filter="upcoming"><div class="num">' + upcomingCount + '</div><div class="label">📅 예정 일정</div></button>' +
-      '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">🕓 미접촉 대상자</div></button>' +
-      '<button class="summary-card overdue" data-scroll="crisisSection"><div class="num">' + crisisClients.length + '</div><div class="label">🚨 위기관리 대상자</div></button>' +
+      (hide('gap') ? '' : '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">🕓 미접촉 대상자</div></button>') +
+      (hide('crisis') ? '' : '<button class="summary-card overdue" data-scroll="crisisSection"><div class="num">' + crisisClients.length + '</div><div class="label">🚨 위기관리 대상자</div></button>') +
       '</div>';
 
     // 위기관리 대상자 현황판 — 관리수준을 필터링해서 목록을 찾아가지 않아도,
     // 현재 위기관리 등급인 활성 대상자를 대시보드에서 바로 한눈에 볼 수 있게 한다.
-    html += '<div class="panel" id="crisisSection"><div class="panel-title">🚨 위기관리 대상자 현황</div>';
-    if (crisisClients.length === 0){
-      html += '<div class="empty-msg">현재 위기관리 등급의 활성 대상자가 없습니다.</div>';
-    } else {
-      crisisClients.forEach(c => {
-        const lastFace = Clients.lastFaceToFaceContactDate(c.id);
-        html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + c.id + '">' +
-          '<div class="row-title">' + Utils.escapeHtml(c.id) + (c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') +
-          ((c.crisisEvents || []).length ? ' <span class="badge badge-crisis-flag">⚠ 위기개입 이력</span>' : '') + '</div>' +
-          '<div class="row-sub">' + (lastFace ? '최근 방문·내소 상담: ' + lastFace : '방문·내소 상담 기록 없음') +
-          ' · 미완료 후속조치 ' + Clients.pendingFollowUpCount(c.id) + '건</div></div></div>';
-      });
+    if (!hide('crisis')){
+      html += '<div class="panel" id="crisisSection"><div class="panel-title">🚨 위기관리 대상자 현황</div>';
+      if (crisisClients.length === 0){
+        html += '<div class="empty-msg">현재 위기관리 등급의 활성 대상자가 없습니다.</div>';
+      } else {
+        crisisClients.forEach(c => {
+          const lastFace = Clients.lastFaceToFaceContactDate(c.id);
+          html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + c.id + '">' +
+            '<div class="row-title">' + Utils.escapeHtml(c.id) + (c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') +
+            ((c.crisisEvents || []).length ? ' <span class="badge badge-crisis-flag">⚠ 위기개입 이력</span>' : '') + '</div>' +
+            '<div class="row-sub">' + (lastFace ? '최근 방문·내소 상담: ' + lastFace : '방문·내소 상담 기록 없음') +
+            ' · 미완료 후속조치 ' + Clients.pendingFollowUpCount(c.id) + '건</div></div></div>';
+        });
+      }
+      html += '</div>';
     }
-    html += '</div>';
 
     // Overdue
-    html += '<div class="panel"><div class="panel-title">⚠ 기한 초과 후속조치</div>';
-    if (overdue.length === 0){
-      html += '<div class="empty-msg">기한이 지난 후속조치가 없습니다.</div>';
-    } else {
-      overdue.forEach(f => {
-        const c = Clients.get(f.clientId);
-        html += '<div class="overdue-row">' +
-          '<strong>' + Utils.escapeHtml(f.clientId) + '</strong>' + (c && c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') +
-          ' — ' + Utils.escapeHtml(f.type) + '<br>' +
-          '<span style="font-size:0.82rem;">기한: ' + f.dueDate + ' · 상태: 미완료</span>' +
-          '<div class="row-actions" style="margin-top:6px;">' +
-          '<button class="btn btn-sm" data-complete-fu="' + f.id + '">완료만</button>' +
-          '<button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료하고 SOAP 작성</button>' +
-          '</div></div>';
-      });
+    if (!hide('overdue')){
+      html += '<div class="panel"><div class="panel-title">⚠ 기한 초과 후속조치</div>';
+      if (overdue.length === 0){
+        html += '<div class="empty-msg">기한이 지난 후속조치가 없습니다.</div>';
+      } else {
+        overdue.forEach(f => {
+          const c = Clients.get(f.clientId);
+          html += '<div class="overdue-row">' +
+            '<strong>' + Utils.escapeHtml(f.clientId) + '</strong>' + (c && c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') +
+            ' — ' + Utils.escapeHtml(f.type) + '<br>' +
+            '<span style="font-size:0.82rem;">기한: ' + f.dueDate + ' · 상태: 미완료</span>' +
+            '<div class="row-actions" style="margin-top:6px;">' +
+            '<button class="btn btn-sm" data-complete-fu="' + f.id + '">완료만</button>' +
+            '<button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료하고 SOAP 작성</button>' +
+            '</div></div>';
+        });
+      }
+      html += '</div>';
     }
-    html += '</div>';
 
     // 미접촉 대상자 — 종결되지 않은 대상자 중 방문/내소(대면) 상담이 관리수준별
     // 기준 일수 이상 없었던 경우만 짚어준다(위기관리 2주/집중관리 1개월/유지·일시관리
     // 4개월). 전화·프로그램 등 비대면 접촉만으로는 해소되지 않는다.
-    html += '<div class="panel" id="gapSection"><div class="panel-title">🕓 미접촉 대상자 (관리수준별 기준 이상 대면접촉 없음)</div>';
-    if (contactGaps.length === 0){
-      html += '<div class="empty-msg">관리수준별 기준(위기 2주·집중 1개월·유지/일시 4개월) 이상 방문·내소 상담이 없는 대상자가 없습니다.</div>';
-    } else {
-      contactGaps.forEach(g => {
-        const gc = Clients.get(g.clientId);
-        const levelLabel = (CONSTANTS.MANAGEMENT_LEVELS[gc && gc.managementLevel] || {}).label || '';
-        html += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
-          '<strong>' + Utils.escapeHtml(g.clientId) + '</strong>' + (gc && gc.alias ? ' (' + Utils.escapeHtml(gc.alias) + ')' : '') + ' · ' + levelLabel +
-          '<br><span style="font-size:0.82rem;">' + (g.lastFaceToFaceDate ? '최근 방문·내소 상담: ' + g.lastFaceToFaceDate : '방문·내소 상담 기록 없음(등록일 기준)') + ' · 약 ' + Utils.formatElapsedDays(g.days) + ' 경과 (기준: ' + Utils.formatElapsedDays(g.thresholdDays) + ')</span>' +
-          '</div>';
-      });
+    if (!hide('gap')){
+      html += '<div class="panel" id="gapSection"><div class="panel-title">🕓 미접촉 대상자 (관리수준별 기준 이상 대면접촉 없음)</div>';
+      if (contactGaps.length === 0){
+        html += '<div class="empty-msg">관리수준별 기준(위기 2주·집중 1개월·유지/일시 4개월) 이상 방문·내소 상담이 없는 대상자가 없습니다.</div>';
+      } else {
+        contactGaps.forEach(g => {
+          const gc = Clients.get(g.clientId);
+          const levelLabel = (CONSTANTS.MANAGEMENT_LEVELS[gc && gc.managementLevel] || {}).label || '';
+          html += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
+            '<strong>' + Utils.escapeHtml(g.clientId) + '</strong>' + (gc && gc.alias ? ' (' + Utils.escapeHtml(gc.alias) + ')' : '') + ' · ' + levelLabel +
+            '<br><span style="font-size:0.82rem;">' + (g.lastFaceToFaceDate ? '최근 방문·내소 상담: ' + g.lastFaceToFaceDate : '방문·내소 상담 기록 없음(등록일 기준)') + ' · 약 ' + Utils.formatElapsedDays(g.days) + ' 경과 (기준: ' + Utils.formatElapsedDays(g.thresholdDays) + ')</span>' +
+            '</div>';
+        });
+      }
+      html += '</div>';
     }
-    html += '</div>';
 
     // Today
-    html += '<div class="panel" id="todaySection"><div class="panel-title">🔴 오늘 할 일</div>';
-    if (dueToday.length === 0 && todaySchedules.length === 0){
-      html += '<div class="empty-msg">오늘 예정된 일정이나 후속조치가 없습니다.</div>';
-    } else {
-      todaySchedules.forEach(s => {
-        const c = Clients.get(s.clientId);
-        html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + s.clientId + '">' +
-          '<div class="row-title">' + (s.time ? '<strong>' + s.time + '</strong> ' : '') + Utils.escapeHtml(s.clientId) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + ' — ' + Utils.escapeHtml(s.contactType) + '</div>' +
-          '<div class="row-sub">' + Utils.escapeHtml(s.memo || '일정') + '</div></div>' +
-          '<div class="row-actions"><button class="btn btn-sm" data-complete-schedule="' + s.id + '">완료</button></div></div>';
-      });
-      dueToday.forEach(f => {
-        const c = Clients.get(f.clientId);
-        html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + f.clientId + '">' +
-          '<div class="row-title">' + Utils.escapeHtml(f.clientId) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + ' — ' + Utils.escapeHtml(f.type) + '</div>' +
-          '<div class="row-sub">후속조치 · 오늘 기한</div></div>' +
-          '<div class="row-actions">' +
-          '<button class="btn btn-sm" data-complete-fu="' + f.id + '">완료만</button>' +
-          '<button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료+SOAP</button>' +
-          '</div></div>';
-      });
+    if (!hide('today')){
+      html += '<div class="panel" id="todaySection"><div class="panel-title">🔴 오늘 할 일</div>';
+      if (dueToday.length === 0 && todaySchedules.length === 0){
+        html += '<div class="empty-msg">오늘 예정된 일정이나 후속조치가 없습니다.</div>';
+      } else {
+        todaySchedules.forEach(s => {
+          const c = Clients.get(s.clientId);
+          html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + s.clientId + '">' +
+            '<div class="row-title">' + (s.time ? '<strong>' + s.time + '</strong> ' : '') + Utils.escapeHtml(s.clientId) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + ' — ' + Utils.escapeHtml(s.contactType) + '</div>' +
+            '<div class="row-sub">' + Utils.escapeHtml(s.memo || '일정') + '</div></div>' +
+            '<div class="row-actions"><button class="btn btn-sm" data-complete-schedule="' + s.id + '">완료</button></div></div>';
+        });
+        dueToday.forEach(f => {
+          const c = Clients.get(f.clientId);
+          html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + f.clientId + '">' +
+            '<div class="row-title">' + Utils.escapeHtml(f.clientId) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + ' — ' + Utils.escapeHtml(f.type) + '</div>' +
+            '<div class="row-sub">후속조치 · 오늘 기한</div></div>' +
+            '<div class="row-actions">' +
+            '<button class="btn btn-sm" data-complete-fu="' + f.id + '">완료만</button>' +
+            '<button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료+SOAP</button>' +
+            '</div></div>';
+        });
+      }
+      html += '</div>';
     }
-    html += '</div>';
 
     // Draft SOAPs
-    html += '<div class="panel" id="draftSection"><div class="panel-title">📝 미완성 SOAP</div>';
-    if (draftSoaps.length === 0){
-      html += '<div class="empty-msg">임시저장된 SOAP 기록이 없습니다.</div>';
-    } else {
-      draftSoaps.forEach(s => {
-        html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
-          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + Utils.formatSoapDate(s) + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
-          '<div class="row-sub">' + SoapModule.describeMissingParts(s) + '</div></div></div>';
-      });
+    if (!hide('draft')){
+      html += '<div class="panel" id="draftSection"><div class="panel-title">📝 미완성 SOAP</div>';
+      if (draftSoaps.length === 0){
+        html += '<div class="empty-msg">임시저장된 SOAP 기록이 없습니다.</div>';
+      } else {
+        draftSoaps.forEach(s => {
+          html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
+            '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + Utils.formatSoapDate(s) + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
+            '<div class="row-sub">' + SoapModule.describeMissingParts(s) + '</div></div></div>';
+        });
+      }
+      html += '</div>';
     }
-    html += '</div>';
 
     // Recent records
-    html += '<div class="panel"><div class="panel-title">최근 기록</div>';
-    if (recentFinal.length === 0){
-      html += '<div class="empty-msg">완료된 SOAP 기록이 아직 없습니다.</div>';
-    } else {
-      recentFinal.forEach(s => {
-        html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
-          '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + Utils.formatSoapDate(s) + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
-          '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 60) + '</div></div></div>';
-      });
+    if (!hide('recent')){
+      html += '<div class="panel"><div class="panel-title">최근 기록</div>';
+      if (recentFinal.length === 0){
+        html += '<div class="empty-msg">완료된 SOAP 기록이 아직 없습니다.</div>';
+      } else {
+        recentFinal.forEach(s => {
+          html += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
+            '<div class="row-title">' + Utils.escapeHtml(s.clientId) + ' / ' + Utils.formatSoapDate(s) + ' / ' + Utils.escapeHtml(s.contactType) + '</div>' +
+            '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 60) + '</div></div></div>';
+        });
+      }
+      html += '</div>';
     }
-    html += '</div>';
 
     // Quick buttons
     html += '<div class="quick-btns">' +
@@ -2570,13 +2672,15 @@ const Views = {
       '<button class="btn-quick" id="qbNewSchedule">＋ 일정 등록</button>' +
       '</div>';
 
-    html += '<div class="panel" style="margin-top:20px;"><div class="panel-title">데이터 관리</div>' +
-      '<p class="help-text" style="margin-bottom:10px;">암호화된 상태 그대로 전체 데이터를 파일로 내보내거나, 저장해둔 백업 파일에서 불러올 수 있습니다. 자세한 방법은 ⚙️ 설정 탭의 "데이터 백업 및 복원"을 확인하세요.</p>' +
-      '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
-      '<button class="btn btn-sm" id="exportBackupBtn">⬇ 백업 파일 내보내기</button>' +
-      '<button class="btn btn-sm" id="importBackupBtn">⬆ 백업 파일 불러오기</button>' +
-      '<input type="file" id="importBackupInput" accept="application/json" class="hidden">' +
-      '</div></div>';
+    if (!hide('dataManage')){
+      html += '<div class="panel" style="margin-top:20px;"><div class="panel-title">데이터 관리</div>' +
+        '<p class="help-text" style="margin-bottom:10px;">암호화된 상태 그대로 전체 데이터를 파일로 내보내거나, 저장해둔 백업 파일에서 불러올 수 있습니다. 자세한 방법은 ⚙️ 설정 탭의 "데이터 백업 및 복원"을 확인하세요.</p>' +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+        '<button class="btn btn-sm" id="exportBackupBtn">⬇ 백업 파일 내보내기</button>' +
+        '<button class="btn btn-sm" id="importBackupBtn">⬆ 백업 파일 불러오기</button>' +
+        '<input type="file" id="importBackupInput" accept="application/json" class="hidden">' +
+        '</div></div>';
+    }
 
     return html;
   },
@@ -3202,8 +3306,9 @@ const Views = {
     };
     document.querySelectorAll('[data-del-admission]').forEach(el => {
       el.onclick = () => UI.confirm('이 입퇴원 기록을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
         await Clients.removeAdmission(id, el.dataset.delAdmission);
-        toast('삭제했습니다.');
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
     });
@@ -3222,8 +3327,9 @@ const Views = {
     };
     document.querySelectorAll('[data-del-resource]').forEach(el => {
       el.onclick = () => UI.confirm('이 자원연계 기록을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
         await Clients.removeResourceLink(id, el.dataset.delResource);
-        toast('삭제했습니다.');
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
     });
@@ -3240,8 +3346,9 @@ const Views = {
     };
     document.querySelectorAll('[data-del-crisis]').forEach(el => {
       el.onclick = () => UI.confirm('이 위기개입 기록을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
         await Clients.removeCrisisEvent(id, el.dataset.delCrisis);
-        toast('삭제했습니다.');
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
     });
@@ -3260,8 +3367,9 @@ const Views = {
     };
     document.querySelectorAll('[data-del-medication]').forEach(el => {
       el.onclick = () => UI.confirm('이 복약 기록을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
         await Clients.removeMedication(id, el.dataset.delMedication);
-        toast('삭제했습니다.');
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
     });
@@ -3279,8 +3387,9 @@ const Views = {
     };
     document.querySelectorAll('[data-del-contact]').forEach(el => {
       el.onclick = () => UI.confirm('이 보호자 연락처를 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
         await Clients.removeEmergencyContact(id, el.dataset.delContact);
-        toast('삭제했습니다.');
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
     });
@@ -3298,8 +3407,9 @@ const Views = {
     };
     document.querySelectorAll('[data-del-conference]').forEach(el => {
       el.onclick = () => UI.confirm('이 사례회의 기록을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
         await Clients.removeCaseConference(id, el.dataset.delConference);
-        toast('삭제했습니다.');
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
     });
@@ -3320,8 +3430,9 @@ const Views = {
     };
     document.querySelectorAll('[data-del-assessment]').forEach(el => {
       el.onclick = () => UI.confirm('이 사정도구 점수 기록을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
         await Clients.removeAssessment(id, el.dataset.delAssessment);
-        toast('삭제했습니다.');
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
     });
@@ -3338,8 +3449,9 @@ const Views = {
     });
     document.querySelectorAll('[data-del-doc]').forEach(el => {
       el.onclick = () => UI.confirm('이 서류 항목을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
         await Clients.removeDocumentItem(id, el.dataset.delDoc);
-        toast('삭제했습니다.');
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
     });
@@ -3358,8 +3470,15 @@ const Views = {
     };
     document.querySelectorAll('[data-del-family]').forEach(el => {
       el.onclick = () => UI.confirm('이 가족 관계 연결을 삭제할까요? 상대방 대상자 쪽의 연결도 함께 삭제됩니다.', async () => {
+        const link = (Clients.get(id).familyLinks || []).find(l => l.id === el.dataset.delFamily);
+        const snapSelf = Clients.snapshot(id);
+        const snapOther = link ? Clients.snapshot(link.relatedClientId) : null;
         await Clients.removeFamilyLink(id, el.dataset.delFamily);
-        toast('삭제했습니다.');
+        toastUndo('삭제했습니다.', async () => {
+          await Clients.restoreSnapshot(snapSelf);
+          await Clients.restoreSnapshot(snapOther);
+          UI.renderCurrentView();
+        });
         UI.renderCurrentView();
       });
     });
@@ -3375,7 +3494,12 @@ const Views = {
       UI.renderCurrentView();
     };
     document.querySelectorAll('[data-del-tag]').forEach(el => {
-      el.onclick = async () => { await Clients.removeTag(id, el.dataset.delTag); UI.renderCurrentView(); };
+      el.onclick = async () => {
+        const snap = Clients.snapshot(id);
+        await Clients.removeTag(id, el.dataset.delTag);
+        toastUndo('태그를 삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      };
     });
 
     document.getElementById('saveMseGoalsBtn').onclick = async () => {
@@ -3538,7 +3662,7 @@ const Views = {
     html += '<div class="page-header"><h1 class="page-title" style="margin:0;">📝 SOAP 기록 ' + (soap.id ? '수정' : '작성') + '</h1>' +
       '<button class="btn btn-sm" id="soapBackBtn">← 뒤로</button></div>';
     if (soap.status !== 'final'){
-      html += '<p class="help-text" id="autosaveIndicator" style="margin-top:-10px;margin-bottom:14px;">입력하는 동안 자동으로 임시저장됩니다.</p>';
+      html += '<p class="help-text" id="autosaveIndicator" style="margin-top:-10px;margin-bottom:14px;">입력하는 동안 자동으로 임시저장됩니다. (Ctrl/Cmd+S로 바로 임시저장할 수 있습니다)</p>';
     }
 
     if (params.relatedFollowUp){
@@ -3637,9 +3761,13 @@ const Views = {
     });
 
     const scheduleAutosave = () => {
-      if (Views._draftCache.status === 'final') return;
+      // Guards against a stray input/change event firing from a detached
+      // form left over from a previous soapEditor visit (e.g. via a leftover
+      // event listener) after Views._draftCache has already been cleared.
+      if (!Views._draftCache || Views._draftCache.status === 'final') return;
       if (autosaveTimer) clearTimeout(autosaveTimer);
       autosaveTimer = setTimeout(async () => {
+        if (!Views._draftCache) return;
         const current = Views._readSoapForm();
         const hasContent = (current.S || '').trim() || (current.O || '').trim() || (current.A || '').trim();
         if (!current.clientId || !hasContent) return;
@@ -3720,9 +3848,13 @@ const Views = {
     const delBtn = document.getElementById('deleteSoapBtn');
     if (delBtn) delBtn.onclick = () => UI.confirm('이 SOAP 기록을 삭제할까요?', async () => {
       cancelAutosave();
+      const snap = SoapModule.snapshot(params.soapId);
       await SoapModule.remove(params.soapId);
       Views._draftCache = null;
-      toast('삭제했습니다.');
+      toastUndo('삭제했습니다.', async () => {
+        await SoapModule.restoreSnapshot(snap);
+        UI.navigate('soapEditor', { soapId: snap.id });
+      });
       UI.navigate('soapList', {});
     });
   },
@@ -3779,7 +3911,12 @@ const Views = {
       };
     });
     document.querySelectorAll('[data-del-fu]').forEach(el => {
-      el.onclick = () => UI.confirm('이 후속조치를 삭제할까요?', async () => { await FollowUps.remove(el.dataset.delFu); toast('삭제했습니다.'); UI.renderCurrentView(); });
+      el.onclick = () => UI.confirm('이 후속조치를 삭제할까요?', async () => {
+        const snap = FollowUps.snapshot(el.dataset.delFu);
+        await FollowUps.remove(el.dataset.delFu);
+        toastUndo('삭제했습니다.', async () => { await FollowUps.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
     });
   },
 
@@ -3973,8 +4110,22 @@ const Views = {
     document.getElementById('viewModeWeekBtn').onclick = () => { Views._scheduleViewMode = 'week'; UI.renderCurrentView(); };
     document.querySelectorAll('[data-done-sch]').forEach(el => { el.onclick = async () => { await Schedules.setStatus(el.dataset.doneSch, 'completed'); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
     document.querySelectorAll('[data-done-fu]').forEach(el => { el.onclick = async () => { await FollowUps.complete(el.dataset.doneFu); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
-    document.querySelectorAll('[data-del-sch]').forEach(el => { el.onclick = () => UI.confirm('이 일정을 삭제할까요?', async () => { await Schedules.remove(el.dataset.delSch); toast('삭제했습니다.'); UI.renderCurrentView(); }); });
-    document.querySelectorAll('[data-del-fu2]').forEach(el => { el.onclick = () => UI.confirm('이 후속조치를 삭제할까요?', async () => { await FollowUps.remove(el.dataset.delFu2); toast('삭제했습니다.'); UI.renderCurrentView(); }); });
+    document.querySelectorAll('[data-del-sch]').forEach(el => {
+      el.onclick = () => UI.confirm('이 일정을 삭제할까요?', async () => {
+        const snap = Schedules.snapshot(el.dataset.delSch);
+        await Schedules.remove(el.dataset.delSch);
+        toastUndo('삭제했습니다.', async () => { await Schedules.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
+    document.querySelectorAll('[data-del-fu2]').forEach(el => {
+      el.onclick = () => UI.confirm('이 후속조치를 삭제할까요?', async () => {
+        const snap = FollowUps.snapshot(el.dataset.delFu2);
+        await FollowUps.remove(el.dataset.delFu2);
+        toastUndo('삭제했습니다.', async () => { await FollowUps.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
   },
 
   /* ---------------- SEARCH ---------------- */
@@ -4283,6 +4434,14 @@ const Views = {
       '<div class="field"><label>담당자명(선택)</label><input type="text" id="orgWorkerInput" value="' + Utils.escapeHtml(OrgInfo.worker) + '"></div>' +
       '</div></div>';
 
+    html += '<div class="panel"><div class="panel-title">🏠 대시보드 위젯 표시</div>' +
+      '<p class="help-text" style="margin-bottom:10px;">체크를 해제하면 해당 패널(및 상단 요약 카드)이 대시보드에서 보이지 않습니다.</p>' +
+      '<div class="checkbox-group">' +
+      Object.keys(DashboardPrefs.WIDGETS).map(key =>
+        '<label class="chip-check' + (DashboardPrefs.isHidden(key) ? '' : ' checked') + '"><input type="checkbox" class="dashWidgetChk" data-widget="' + key + '"' + (DashboardPrefs.isHidden(key) ? '' : ' checked') + '>' + DashboardPrefs.WIDGETS[key] + '</label>'
+      ).join('') +
+      '</div></div>';
+
     html += '<div class="panel"><div class="panel-title">화면 테마</div>' +
       '<div class="field" style="max-width:240px;"><select id="themeModeSelect">' +
       '<option value="light">라이트</option>' +
@@ -4324,6 +4483,13 @@ const Views = {
 
     document.getElementById('orgNameInput').onchange = (e) => OrgInfo.setName(e.target.value.trim());
     document.getElementById('orgWorkerInput').onchange = (e) => OrgInfo.setWorker(e.target.value.trim());
+
+    document.querySelectorAll('.dashWidgetChk').forEach(chk => {
+      chk.addEventListener('change', () => {
+        chk.closest('.chip-check').classList.toggle('checked', chk.checked);
+        DashboardPrefs.setHidden(chk.dataset.widget, !chk.checked);
+      });
+    });
 
     document.getElementById('themeModeSelect').onchange = (e) => Theme.setMode(e.target.value);
     document.getElementById('fontSizeSelect').onchange = (e) => FontSize.setMode(e.target.value);
@@ -4504,6 +4670,24 @@ async function bootstrapApp(){
     if (e.target.id === 'modalOverlay') UI.closeModal();
   });
 
+  // Keyboard shortcuts: Esc closes an open modal from anywhere; Ctrl/Cmd+S
+  // saves the current SOAP as a draft while on the SOAP editor (never
+  // finalizes — that still requires the explicit 최종저장 button/confirm).
+  // Bound once here rather than per-view so it survives every re-render.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape'){
+      if (!document.getElementById('modalOverlay').classList.contains('hidden')) UI.closeModal();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){
+      if (State.currentView === 'soapEditor'){
+        e.preventDefault();
+        const saveDraftBtn = document.getElementById('saveDraftBtn');
+        if (saveDraftBtn) saveDraftBtn.click();
+      }
+    }
+  });
+
   Auth.startIdleWatcher();
   Notifications.start();
   Backup.overdueCached = await Backup.isBackupOverdue();
@@ -4534,6 +4718,7 @@ async function initApp(){
   await Theme.init();
   await OrgInfo.init();
   await FontSize.init();
+  await DashboardPrefs.init();
 
   const firstRun = await Auth.isFirstRun();
 
