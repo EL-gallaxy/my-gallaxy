@@ -60,6 +60,9 @@
     --notice-text:#e6c98f;
     color-scheme:dark;
   }
+  /* 글자 크기 설정(설정 > 글자 크기) — 라이트/다크 테마와 독립적으로 적용된다 */
+  :root[data-fontsize="small"]{font-size:13px;}
+  :root[data-fontsize="large"]{font-size:17px;}
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;height:100%;}
   body{
@@ -148,6 +151,14 @@
   }
   .lock-btn:hover{background:var(--danger-soft);border-color:var(--danger);color:var(--danger);}
 
+  .recent-clients{padding:0 18px 10px 18px;}
+  .recent-clients .recent-title{font-size:0.72rem;color:var(--text-faint);margin-bottom:6px;}
+  .recent-clients .recent-item{
+    display:block;width:100%;text-align:left;background:none;border:none;color:var(--text-muted);
+    font-size:0.82rem;padding:4px 0;cursor:pointer;
+  }
+  .recent-clients .recent-item:hover{color:var(--accent);}
+
   #appMain{flex:1;min-width:0;padding:26px 32px;max-width:1100px;box-sizing:border-box;}
   .page-title{font-size:1.35rem;margin-bottom:18px;}
   .page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:18px;}
@@ -228,6 +239,19 @@
     background:var(--danger);color:#fff;border-radius:10px;font-size:0.65rem;padding:0 5px;line-height:1.4;min-width:16px;text-align:center;
   }
   .calendar-cell.selected .calendar-dot{background:#fff;color:var(--accent);}
+
+  /* week view (일정 탭 주간 보기) */
+  .week-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+  .week-day-col{border:1px solid var(--border);border-radius:6px;padding:6px;min-height:100px;cursor:pointer;background:var(--surface);}
+  .week-day-col:hover{background:var(--surface-alt);border-color:var(--border-strong);}
+  .week-day-col.today{border-color:var(--accent);}
+  .week-day-col.selected{background:var(--accent);border-color:var(--accent);}
+  .week-day-col.selected .week-day-head, .week-day-col.selected .week-item{color:#fff;}
+  .week-day-head{font-size:0.78rem;font-weight:600;margin-bottom:4px;}
+  .week-item{font-size:0.72rem;color:var(--text-muted);padding:1px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  @media (max-width:820px){
+    .week-grid{grid-template-columns:repeat(7,minmax(70px,1fr));overflow-x:auto;}
+  }
 
   /* stats bar chart (CSS-only — no chart library / CDN) */
   .barchart{display:flex;flex-direction:column;gap:10px;}
@@ -318,15 +342,26 @@
     .print-header .meta{font-size:0.85rem;color:#444;margin-top:2px;}
   }
 
+  /* signature lines shown only when printing */
+  .print-signature{display:none;}
+  @media print{
+    .print-signature{display:flex !important;gap:40px;margin-top:32px;padding-top:16px;border-top:1px solid #999;}
+    .print-signature .sig-line{flex:1;font-size:0.85rem;color:#333;}
+    .print-signature .sig-line .sig-label{display:inline-block;min-width:110px;}
+    .print-signature .sig-line .sig-blank{display:inline-block;border-bottom:1px solid #333;width:160px;height:1.4em;}
+  }
+
   /* print (인쇄/PDF 저장) — hide chrome, keep just the record content */
   @media print{
     .topbar, .quick-btns, .tabs, #toastContainer, .modal-overlay, .lock-btn,
     .page-header button, .page-header select, .row-actions, #calPrevBtn, #calNextBtn, #calTodayBtn,
-    .calendar-grid, #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
+    #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
+    #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
     #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
-    #addContactBtn, #addConferenceBtn, #reportMonthSelect, #exportReportCsvBtn,
+    #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
+    #addTagBtn, #newTagInput, [data-del-tag], [data-toggle-doc], #reportMonthSelect, #exportReportCsvBtn,
     #printReportBtn, .example-banner{
       display:none !important;
     }
@@ -455,6 +490,7 @@
       <button class="nav-btn" data-view="stats">📊 <span class="nav-label">통계</span></button>
       <button class="nav-btn" data-view="settings">⚙️ <span class="nav-label">설정</span></button>
     </nav>
+    <div id="recentClientsBox" class="recent-clients"></div>
     <button class="lock-btn" id="lockNowBtn">🔐 <span class="nav-label">잠금</span></button>
   </div>
   <main id="appMain"></main>
@@ -540,6 +576,19 @@ const Utils = {
   formatElapsedDays(days){
     if (days < 60) return days + '일';
     return Math.floor(days / 30) + '개월';
+  },
+  // 'YYYY-MM-DD' of the Sunday starting the week containing dateStr — used by
+  // the 일정 tab's 주간 보기.
+  startOfWeekStr(dateStr){
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    dt.setDate(dt.getDate() - dt.getDay());
+    return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+  },
+  addDaysStr(dateStr, days){
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d + days);
+    return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
   }
 };
 
@@ -734,6 +783,7 @@ const State = {
   currentView: 'dashboard',
   currentParams: {},
   seedClientIds: [],
+  recentClientIds: [],
 
   clear(){
     this.unlocked = false;
@@ -764,6 +814,11 @@ const CONSTANTS = {
   SOAP_SUBJECTS: { client: '본인', family: '가족·보호자' },
   CRISIS_EVENT_TYPES: ['자살시도', '자해', '응급입원 동행', '112 신고', '119 신고', '타해 위험', '기타'],
   CONTACT_RELATIONS: ['배우자', '부모', '자녀', '형제자매', '기타 보호자', '기타'],
+  ASSESSMENT_SCALES: ['GAF (전반적 기능평가)', 'K-MMSE (간이정신상태검사)', 'K-BDI (벡 우울척도)', 'BPRS (간이정신병리평가척도)', '기타'],
+  COMMON_DOCUMENTS: ['개인정보 수집·이용 동의서', '사례관리 서비스 이용 동의서', '응급 시 연락 동의서', '정보공유 동의서'],
+  // 대상자 간 가족 관계 연결에 쓰는 관계→반대쪽 관계 매핑. A에 "B는 나의 부모"를
+  // 추가하면 B 쪽에는 자동으로 "A는 나의 자녀"가 생성된다(배우자·형제자매는 대칭).
+  FAMILY_RELATIONS: { '배우자': '배우자', '부모': '자녀', '자녀': '부모', '형제자매': '형제자매', '기타 가족': '기타 가족' },
   // Used by the 미접촉 대상자 dashboard flag — 방문/내소(대면) 접촉이 이 일수 이상
   // 없으면 짚어준다. 전화·프로그램·기타 접촉은 대상이 아니다. 관리수준이 높을수록
   // (위기 > 집중 > 유지·일시) 더 짧은 주기로 확인하도록 기준을 차등 적용한다.
@@ -910,6 +965,29 @@ const OrgInfo = {
 };
 
 /* =========================================================================
+   FONT SIZE  (작게/보통/크게 — a plain UI preference like Theme)
+   ========================================================================= */
+const FontSize = {
+  currentMode: 'medium',
+
+  async init(){
+    this.currentMode = (await Storage.getSetting('fontSizeMode')) || 'medium';
+    this.apply(this.currentMode);
+  },
+  apply(mode){
+    const root = document.documentElement;
+    if (mode === 'small') root.setAttribute('data-fontsize', 'small');
+    else if (mode === 'large') root.setAttribute('data-fontsize', 'large');
+    else root.removeAttribute('data-fontsize');
+  },
+  async setMode(mode){
+    this.currentMode = mode;
+    this.apply(mode);
+    await Storage.setSetting('fontSizeMode', mode);
+  }
+};
+
+/* =========================================================================
    DATA LOADING
    ========================================================================= */
 async function loadAllDataIntoState(){
@@ -932,7 +1010,17 @@ async function loadAllDataIntoState(){
   schedules.forEach(s => State.schedules.set(s.id, s));
 
   State.seedClientIds = (await Storage.getSetting('seedClientIds')) || [];
+  State.recentClientIds = (await Storage.getSetting('recentClientIds')) || [];
   State.unlocked = true;
+}
+
+// Tracks the last few viewed client IDs for the sidebar's quick-access list.
+// Stored unencrypted like seedClientIds — client IDs are already
+// non-identifying labels by design (see CLIENTS spec), never real names.
+async function recordRecentClient(id){
+  State.recentClientIds = [id, ...State.recentClientIds.filter(x => x !== id)].slice(0, 5);
+  await Storage.setSetting('recentClientIds', State.recentClientIds);
+  UI.renderRecentClients();
 }
 
 // One-time carry-over for the older 3-tier scheme (intensive/normal/stable)
@@ -969,7 +1057,8 @@ const Clients = {
       registrationDate: registrationDate || Utils.todayStr(),
       referralSource: referralSource || '',
       admissions: [], resourceLinks: [],
-      crisisEvents: [], emergencyContacts: [], medications: [], caseConferences: []
+      crisisEvents: [], emergencyContacts: [], medications: [], caseConferences: [],
+      assessments: [], documents: [], familyLinks: [], tags: []
     };
     State.clients.set(id, client);
     await Storage.saveEncrypted('clients', client);
@@ -1127,6 +1216,99 @@ const Clients = {
     const client = State.clients.get(id);
     if (!client) return;
     client.caseConferences = (client.caseConferences || []).filter(c => c.id !== confId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // 표준화 사정도구 점수 이력 — 척도 해석이나 위험 판정은 하지 않고, 실무자가
+  // 측정한 점수와 날짜만 그대로 기록해 변화 추이를 나중에 눈으로 확인할 수 있게 한다.
+  async addAssessment(id, { scale, customScale, score, date, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.assessments = client.assessments || [];
+    const scaleName = scale === '기타' ? ((customScale || '').trim() || '기타') : scale;
+    client.assessments.push({
+      id: Utils.uid('as'), scale: scaleName, score: (score || '').trim(),
+      date: date || Utils.todayStr(), note: (note || '').trim()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeAssessment(id, assessmentId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.assessments = (client.assessments || []).filter(a => a.id !== assessmentId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // 필수 서류/동의서 체크리스트 — 수령 여부와 날짜만 토글로 관리한다.
+  async addDocumentItem(id, name){
+    const client = State.clients.get(id);
+    if (!client) return;
+    name = (name || '').trim();
+    if (!name) return;
+    client.documents = client.documents || [];
+    client.documents.push({ id: Utils.uid('doc'), name, receivedDate: '' });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async toggleDocumentReceived(id, docId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    const doc = (client.documents || []).find(d => d.id === docId);
+    if (!doc) return;
+    doc.receivedDate = doc.receivedDate ? '' : Utils.todayStr();
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeDocumentItem(id, docId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.documents = (client.documents || []).filter(d => d.id !== docId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // 대상자 간 가족 관계 연결 — 한쪽에 추가하면 관계표(FAMILY_RELATIONS)에 따라
+  // 반대쪽에도 자동으로 역관계가 생성된다. 같은 pairId를 공유해 두 쪽 다 한 번에
+  // 지울 수 있게 한다.
+  async addFamilyLink(id, { relatedClientId, relation, note }){
+    const client = State.clients.get(id);
+    const related = State.clients.get(relatedClientId);
+    if (!client || !related || relatedClientId === id) throw new Error('연결할 대상자를 올바르게 선택해 주세요.');
+    const inverseRelation = CONSTANTS.FAMILY_RELATIONS[relation] || relation;
+    const pairId = Utils.uid('pair');
+    client.familyLinks = client.familyLinks || [];
+    related.familyLinks = related.familyLinks || [];
+    client.familyLinks.push({ id: Utils.uid('fam'), pairId, relatedClientId, relation, note: (note || '').trim() });
+    related.familyLinks.push({ id: Utils.uid('fam'), pairId, relatedClientId: id, relation: inverseRelation, note: (note || '').trim() });
+    await Storage.saveEncrypted('clients', client);
+    await Storage.saveEncrypted('clients', related);
+  },
+  async removeFamilyLink(id, linkId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    const link = (client.familyLinks || []).find(l => l.id === linkId);
+    if (!link) return;
+    client.familyLinks = client.familyLinks.filter(l => l.id !== linkId);
+    await Storage.saveEncrypted('clients', client);
+    const related = State.clients.get(link.relatedClientId);
+    if (related){
+      related.familyLinks = (related.familyLinks || []).filter(l => l.pairId !== link.pairId);
+      await Storage.saveEncrypted('clients', related);
+    }
+  },
+
+  // 대상자 특성 태그 — 위험도를 추론하지 않는 자유 라벨(예: "1인가구",
+  // "기초생활수급"). 통계에서 태그별 인원 분포를 볼 때만 쓰인다.
+  async addTag(id, tag){
+    const client = State.clients.get(id);
+    if (!client) return;
+    tag = (tag || '').trim();
+    if (!tag) return;
+    client.tags = client.tags || [];
+    if (!client.tags.includes(tag)) client.tags.push(tag);
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeTag(id, tag){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.tags = (client.tags || []).filter(t => t !== tag);
     await Storage.saveEncrypted('clients', client);
   },
 
@@ -2020,12 +2202,30 @@ const UI = {
     });
   },
 
+  renderRecentClients(){
+    const box = document.getElementById('recentClientsBox');
+    if (!box) return;
+    const ids = (State.recentClientIds || []).filter(id => State.clients.has(id));
+    if (ids.length === 0){ box.innerHTML = ''; return; }
+    box.innerHTML = '<div class="recent-title">최근 열람</div>' + ids.map(id => {
+      const c = Clients.get(id);
+      return '<button class="recent-item" data-recent-client="' + Utils.escapeHtml(id) + '">' + Utils.escapeHtml(id) + (c && c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') + '</button>';
+    }).join('');
+    box.querySelectorAll('[data-recent-client]').forEach(el => {
+      el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.recentClient });
+    });
+  },
+
   renderCurrentView(){
     const main = document.getElementById('appMain');
     switch (State.currentView){
       case 'dashboard': main.innerHTML = Views.dashboard(); Views.bindDashboard(); break;
       case 'clients': main.innerHTML = Views.clientsList(); Views.bindClientsList(); break;
-      case 'clientDetail': main.innerHTML = Views.clientDetail(State.currentParams.id); Views.bindClientDetail(State.currentParams.id); break;
+      case 'clientDetail':
+        main.innerHTML = Views.clientDetail(State.currentParams.id);
+        Views.bindClientDetail(State.currentParams.id);
+        if (State.clients.has(State.currentParams.id)) recordRecentClient(State.currentParams.id);
+        break;
       case 'soapList': main.innerHTML = Views.soapList(); Views.bindSoapList(); break;
       case 'soapEditor': main.innerHTML = Views.soapEditor(State.currentParams); Views.bindSoapEditor(State.currentParams); break;
       case 'followUps': main.innerHTML = Views.followUps(); Views.bindFollowUps(); break;
@@ -2096,6 +2296,15 @@ const Views = {
       '출력일: ' + Utils.todayStr() + (docTitle ? ' · ' + Utils.escapeHtml(docTitle) : '') + '</div></div>';
   },
 
+  // 서명란 — 인쇄물을 공식 문서로 바로 활용할 수 있도록 작성자/확인자 서명 줄을
+  // 붙인다. 항상 표시되며(기관명 설정 여부와 무관), 화면에서는 보이지 않는다.
+  printSignatureHtml(){
+    return '<div class="print-signature">' +
+      '<div class="sig-line"><span class="sig-label">작성자 서명:</span><span class="sig-blank"></span></div>' +
+      '<div class="sig-line"><span class="sig-label">확인자(팀장) 서명:</span><span class="sig-blank"></span></div>' +
+      '</div>';
+  },
+
   directionBadge(direction){
     if (direction === 'decline') return '<span class="badge badge-crisis">감소 추세</span>';
     if (direction === 'improve') return '<span class="badge badge-temporary">개선 추세</span>';
@@ -2146,6 +2355,7 @@ const Views = {
     const today = Utils.todayStr();
     const upcomingCount = Views.scheduleCombinedItems().filter(it => it.status === 'planned' && it.date >= today).length;
     const contactGaps = Clients.contactGapList();
+    const crisisClients = Clients.list().filter(c => c.managementLevel === 'crisis' && c.status !== 'closed');
 
     const hasSeed = (State.seedClientIds || []).length > 0 && (State.seedClientIds || []).some(id => State.clients.has(id));
 
@@ -2174,7 +2384,25 @@ const Views = {
       '<button class="summary-card draft" data-scroll="draftSection"><div class="num">' + draftSoaps.length + '</div><div class="label">📝 미완성 SOAP</div></button>' +
       '<button class="summary-card upcoming" data-goto="schedule" data-filter="upcoming"><div class="num">' + upcomingCount + '</div><div class="label">📅 예정 일정</div></button>' +
       '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">🕓 미접촉 대상자</div></button>' +
+      '<button class="summary-card overdue" data-scroll="crisisSection"><div class="num">' + crisisClients.length + '</div><div class="label">🚨 위기관리 대상자</div></button>' +
       '</div>';
+
+    // 위기관리 대상자 현황판 — 관리수준을 필터링해서 목록을 찾아가지 않아도,
+    // 현재 위기관리 등급인 활성 대상자를 대시보드에서 바로 한눈에 볼 수 있게 한다.
+    html += '<div class="panel" id="crisisSection"><div class="panel-title">🚨 위기관리 대상자 현황</div>';
+    if (crisisClients.length === 0){
+      html += '<div class="empty-msg">현재 위기관리 등급의 활성 대상자가 없습니다.</div>';
+    } else {
+      crisisClients.forEach(c => {
+        const lastFace = Clients.lastFaceToFaceContactDate(c.id);
+        html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + c.id + '">' +
+          '<div class="row-title">' + Utils.escapeHtml(c.id) + (c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') +
+          ((c.crisisEvents || []).length ? ' <span class="badge badge-crisis-flag">⚠ 위기개입 이력</span>' : '') + '</div>' +
+          '<div class="row-sub">' + (lastFace ? '최근 방문·내소 상담: ' + lastFace : '방문·내소 상담 기록 없음') +
+          ' · 미완료 후속조치 ' + Clients.pendingFollowUpCount(c.id) + '건</div></div></div>';
+      });
+    }
+    html += '</div>';
 
     // Overdue
     html += '<div class="panel"><div class="panel-title">⚠ 기한 초과 후속조치</div>';
@@ -2503,6 +2731,17 @@ const Views = {
       '</select></div></div>' +
       '<button class="btn btn-primary btn-sm" id="saveRegInfoBtn">저장</button></div>';
 
+    // 특성 태그 — 위험도를 추론하지 않는 실무자 지정 자유 라벨(예: "1인가구").
+    // 통계 화면에서 태그별 인원 분포로만 활용된다.
+    const tags = c.tags || [];
+    html += '<div class="panel"><div class="panel-title">특성 태그</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:' + (tags.length ? '12px' : '0') + ';">' +
+      tags.map(t => '<span class="tag">' + Utils.escapeHtml(t) + ' <button class="btn-link" style="color:inherit;text-decoration:none;" data-del-tag="' + Utils.escapeHtml(t) + '">✕</button></span>').join('') +
+      '</div>' +
+      '<div style="display:flex;gap:8px;max-width:360px;">' +
+      '<input type="text" id="newTagInput" placeholder="예: 1인가구" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);">' +
+      '<button class="btn btn-sm" id="addTagBtn">추가</button></div></div>';
+
     if (isClosed){
       html += '<div class="panel"><div class="panel-title">종결 정보</div>' +
         '<p style="font-size:0.88rem;">종결일: ' + (c.closedDate || '-') + ' · 사유: ' + Utils.escapeHtml(c.closedReason || '-') + '</p>' +
@@ -2655,6 +2894,70 @@ const Views = {
       '<div class="field full"><label>결정사항(선택)</label><textarea id="confDecision" style="min-height:60px;"></textarea></div></div>' +
       '<button class="btn btn-sm" id="addConferenceBtn">＋ 사례회의 기록 추가</button></details>';
 
+    // 표준화 사정도구 점수 이력 — 척도를 해석하거나 위험을 판정하지 않고, 실무자가
+    // 측정한 점수와 날짜만 그대로 목록화해 변화 추이를 눈으로 볼 수 있게 한다.
+    const assessments = (c.assessments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    html += '<details class="panel"' + (assessments.length ? ' open' : '') + '><summary class="panel-title">사정도구 점수 이력</summary>';
+    if (assessments.length === 0){
+      html += '<div class="empty-msg">기록된 사정도구 점수가 없습니다.</div>';
+    } else {
+      assessments.forEach(a => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.scale) + (a.score ? ' — ' + Utils.escapeHtml(a.score) + '점' : '') + '</div>' +
+          (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-assessment="' + a.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>척도</label><select id="assessScale">' +
+      CONSTANTS.ASSESSMENT_SCALES.map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select></div>' +
+      '<div class="field hidden" id="assessCustomWrap"><label>척도명 직접 입력</label><input type="text" id="assessCustomScale"></div>' +
+      '<div class="field"><label>점수</label><input type="text" id="assessScore" placeholder="예: 65"></div>' +
+      '<div class="field"><label>날짜</label><input type="date" id="assessDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field full"><label>메모(선택)</label><input type="text" id="assessNote"></div></div>' +
+      '<button class="btn btn-sm" id="addAssessmentBtn">＋ 사정도구 점수 추가</button></details>';
+
+    // 필수 서류/동의서 체크리스트 — 수령 여부만 토글로 관리한다.
+    const documents = (c.documents || []);
+    html += '<details class="panel"' + (documents.length ? ' open' : '') + '><summary class="panel-title">필수 서류·동의서</summary>';
+    if (documents.length === 0){
+      html += '<div class="empty-msg">등록된 서류 항목이 없습니다.</div>';
+    } else {
+      documents.forEach(d => {
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + Utils.escapeHtml(d.name) + '</div>' +
+          '<div class="row-sub">' + (d.receivedDate ? '수령일: ' + d.receivedDate : '미수령') + '</div>' +
+          '</div><div class="row-actions">' +
+          '<button class="btn btn-sm' + (d.receivedDate ? '' : ' btn-primary') + '" data-toggle-doc="' + d.id + '">' + (d.receivedDate ? '미수령으로 변경' : '수령 확인') + '</button>' +
+          '<button class="btn btn-sm btn-danger" data-del-doc="' + d.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '<div class="divider"></div><div style="display:flex;gap:8px;max-width:420px;">' +
+      '<input type="text" id="docNameInput" list="docNameList" placeholder="예: 개인정보 수집·이용 동의서" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);">' +
+      '<datalist id="docNameList">' + CONSTANTS.COMMON_DOCUMENTS.map(d => '<option value="' + d + '">').join('') + '</datalist>' +
+      '<button class="btn btn-sm" id="addDocBtn">＋ 서류 항목 추가</button></div></details>';
+
+    // 대상자 간 가족 관계 — 한쪽에 연결하면 반대쪽에도 자동으로 역관계가 생성된다.
+    const familyLinks = (c.familyLinks || []);
+    html += '<details class="panel"' + (familyLinks.length ? ' open' : '') + '><summary class="panel-title">가족 관계</summary>';
+    if (familyLinks.length === 0){
+      html += '<div class="empty-msg">연결된 가족 관계가 없습니다.</div>';
+    } else {
+      familyLinks.forEach(fl => {
+        const relatedClient = Clients.get(fl.relatedClientId);
+        html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + fl.relatedClientId + '" style="cursor:pointer;">' +
+          '<div class="row-title">' + Utils.escapeHtml(fl.relatedClientId) + (relatedClient && relatedClient.alias ? ' (' + Utils.escapeHtml(relatedClient.alias) + ')' : '') + ' · ' + Utils.escapeHtml(fl.relation) + '</div>' +
+          (fl.note ? '<div class="row-sub">' + Utils.escapeHtml(fl.note) + '</div>' : '') +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-family="' + fl.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>연결할 대상자</label>' + Views.clientPickerHtml('', 'famClientPicker') + '</div>' +
+      '<div class="field"><label>관계 (연결할 대상자가 나에게)</label><select id="famRelation">' +
+      Object.keys(CONSTANTS.FAMILY_RELATIONS).map(r => '<option value="' + r + '">' + r + '</option>').join('') + '</select></div>' +
+      '<div class="field full"><label>메모(선택)</label><input type="text" id="famNote"></div></div>' +
+      '<button class="btn btn-sm" id="addFamilyBtn">＋ 가족 관계 추가</button></details>';
+
     // MSE (정신상태검사) and case goals — free-text fields the caseworker fills in
     // and edits directly; the app never generates or infers this content.
     html += '<div class="panel"><div class="panel-title">MSE(정신상태검사) 및 목표</div>' +
@@ -2693,6 +2996,7 @@ const Views = {
     }
     html += '</div>';
 
+    html += Views.printSignatureHtml();
     return html;
   },
   bindClientDetail(id){
@@ -2893,6 +3197,80 @@ const Views = {
       });
     });
 
+    const assessScaleSelect = document.getElementById('assessScale');
+    const assessCustomWrap = document.getElementById('assessCustomWrap');
+    assessScaleSelect.onchange = () => assessCustomWrap.classList.toggle('hidden', assessScaleSelect.value !== '기타');
+    document.getElementById('addAssessmentBtn').onclick = async () => {
+      await Clients.addAssessment(id, {
+        scale: assessScaleSelect.value,
+        customScale: document.getElementById('assessCustomScale').value,
+        score: document.getElementById('assessScore').value,
+        date: document.getElementById('assessDate').value,
+        note: document.getElementById('assessNote').value
+      });
+      toast('사정도구 점수를 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-assessment]').forEach(el => {
+      el.onclick = () => UI.confirm('이 사정도구 점수 기록을 삭제할까요?', async () => {
+        await Clients.removeAssessment(id, el.dataset.delAssessment);
+        toast('삭제했습니다.');
+        UI.renderCurrentView();
+      });
+    });
+
+    document.getElementById('addDocBtn').onclick = async () => {
+      const name = document.getElementById('docNameInput').value;
+      if (!name.trim()){ toast('서류 이름을 입력해 주세요.', 'error'); return; }
+      await Clients.addDocumentItem(id, name);
+      toast('서류 항목을 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-toggle-doc]').forEach(el => {
+      el.onclick = async () => { await Clients.toggleDocumentReceived(id, el.dataset.toggleDoc); UI.renderCurrentView(); };
+    });
+    document.querySelectorAll('[data-del-doc]').forEach(el => {
+      el.onclick = () => UI.confirm('이 서류 항목을 삭제할까요?', async () => {
+        await Clients.removeDocumentItem(id, el.dataset.delDoc);
+        toast('삭제했습니다.');
+        UI.renderCurrentView();
+      });
+    });
+
+    const famBtn = document.getElementById('addFamilyBtn');
+    if (famBtn) famBtn.onclick = async () => {
+      try{
+        const relatedClientId = Views.resolveClientPickerValue(document.getElementById('famClientPicker').value);
+        await Clients.addFamilyLink(id, {
+          relatedClientId, relation: document.getElementById('famRelation').value,
+          note: document.getElementById('famNote').value
+        });
+        toast('가족 관계를 연결했습니다.');
+        UI.renderCurrentView();
+      }catch(e){ toast(e.message || '연결에 실패했습니다.', 'error'); }
+    };
+    document.querySelectorAll('[data-del-family]').forEach(el => {
+      el.onclick = () => UI.confirm('이 가족 관계 연결을 삭제할까요? 상대방 대상자 쪽의 연결도 함께 삭제됩니다.', async () => {
+        await Clients.removeFamilyLink(id, el.dataset.delFamily);
+        toast('삭제했습니다.');
+        UI.renderCurrentView();
+      });
+    });
+    document.querySelectorAll('#appMain [data-goto-client]').forEach(el => {
+      el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient });
+    });
+
+    document.getElementById('addTagBtn').onclick = async () => {
+      const input = document.getElementById('newTagInput');
+      if (!input.value.trim()){ toast('태그를 입력해 주세요.', 'error'); return; }
+      await Clients.addTag(id, input.value);
+      toast('태그를 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-tag]').forEach(el => {
+      el.onclick = async () => { await Clients.removeTag(id, el.dataset.delTag); UI.renderCurrentView(); };
+    });
+
     document.getElementById('saveMseGoalsBtn').onclick = async () => {
       await Clients.update(id, {
         mse: document.getElementById('clMse').value,
@@ -3020,6 +3398,7 @@ const Views = {
         '<button class="btn btn-sm" id="copyAllBtn">📋 SOAP 전체 복사</button>' +
         '<button class="btn btn-sm" id="printSoapBtn">🖨️ 인쇄</button>' +
         '</div></div>';
+      html += Views.printSignatureHtml();
     }
 
     html += '<div style="display:flex;gap:10px;margin-bottom:30px;">' +
@@ -3231,6 +3610,35 @@ const Views = {
   // Calendar month currently displayed on the 일정 tab. Kept outside
   // State.currentParams so switching tabs/filters doesn't reset it.
   _calendarYM: null,
+  _weekStart: null,
+  _scheduleViewMode: 'month',
+
+  renderWeekView(weekStartStr, itemsByDate, selectedDate){
+    const today = Utils.todayStr();
+    const dows = ['일', '월', '화', '수', '목', '금', '토'];
+
+    let html = '<div class="panel">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
+      '<button class="btn btn-sm" id="weekPrevBtn">‹ 이전주</button>' +
+      '<div style="font-weight:600;">' + weekStartStr + ' ~ ' + Utils.addDaysStr(weekStartStr, 6) + '</div>' +
+      '<div style="display:flex;gap:6px;"><button class="btn btn-sm" id="weekTodayBtn">이번주</button><button class="btn btn-sm" id="weekNextBtn">다음주 ›</button></div>' +
+      '</div>';
+
+    html += '<div class="week-grid">';
+    for (let i = 0; i < 7; i++){
+      const dateStr = Utils.addDaysStr(weekStartStr, i);
+      const dayItems = (itemsByDate[dateStr] || []).slice().sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+      let cls = 'week-day-col';
+      if (dateStr === today) cls += ' today';
+      if (dateStr === selectedDate) cls += ' selected';
+      html += '<div class="' + cls + '" data-cal-date="' + dateStr + '">' +
+        '<div class="week-day-head">' + dows[i] + ' ' + Number(dateStr.slice(8, 10)) + '</div>' +
+        dayItems.map(it => '<div class="week-item">' + (it.time ? it.time + ' ' : '') + Utils.escapeHtml(it.clientId) + '</div>').join('') +
+        '</div>';
+    }
+    html += '</div></div>';
+    return html;
+  },
 
   renderCalendar(year, month, itemsByDate, selectedDate){
     const monthStart = new Date(year, month, 1);
@@ -3275,6 +3683,9 @@ const Views = {
       const base = selectedDate ? new Date(selectedDate) : new Date();
       Views._calendarYM = { year: base.getFullYear(), month: base.getMonth() };
     }
+    if (!Views._weekStart){
+      Views._weekStart = Utils.startOfWeekStr(selectedDate || today);
+    }
 
     let items;
     let filter = State.currentParams.filter || 'all';
@@ -3288,10 +3699,17 @@ const Views = {
     }
 
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📅 일정</h1>' +
-      '<button class="btn btn-primary" id="newSchBtn">＋ 일정 등록</button></div>';
+      '<div style="display:flex;gap:8px;align-items:center;">' +
+      '<div class="tabs" style="margin:0;">' +
+      '<button class="tab-btn' + (Views._scheduleViewMode === 'month' ? ' active' : '') + '" id="viewModeMonthBtn">월간</button>' +
+      '<button class="tab-btn' + (Views._scheduleViewMode === 'week' ? ' active' : '') + '" id="viewModeWeekBtn">주간</button>' +
+      '</div>' +
+      '<button class="btn btn-primary" id="newSchBtn">＋ 일정 등록</button></div></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">후속조치의 예정일도 함께 표시됩니다. 날짜를 클릭하면 해당 날짜의 일정만 볼 수 있습니다.</p>';
 
-    html += Views.renderCalendar(Views._calendarYM.year, Views._calendarYM.month, itemsByDate, selectedDate);
+    html += Views._scheduleViewMode === 'week'
+      ? Views.renderWeekView(Views._weekStart, itemsByDate, selectedDate)
+      : Views.renderCalendar(Views._calendarYM.year, Views._calendarYM.month, itemsByDate, selectedDate);
 
     if (selectedDate){
       html += '<div class="page-header" style="margin-bottom:8px;"><div style="font-weight:600;">' + selectedDate + ' 일정</div>' +
@@ -3328,27 +3746,40 @@ const Views = {
   },
   bindSchedule(){
     document.getElementById('newSchBtn').onclick = () => Views.openScheduleModal();
-    document.getElementById('calPrevBtn').onclick = () => {
+    const calPrevBtn = document.getElementById('calPrevBtn');
+    if (calPrevBtn) calPrevBtn.onclick = () => {
       Views._calendarYM.month--;
       if (Views._calendarYM.month < 0){ Views._calendarYM.month = 11; Views._calendarYM.year--; }
       UI.renderCurrentView();
     };
-    document.getElementById('calNextBtn').onclick = () => {
+    const calNextBtn = document.getElementById('calNextBtn');
+    if (calNextBtn) calNextBtn.onclick = () => {
       Views._calendarYM.month++;
       if (Views._calendarYM.month > 11){ Views._calendarYM.month = 0; Views._calendarYM.year++; }
       UI.renderCurrentView();
     };
-    document.getElementById('calTodayBtn').onclick = () => {
+    const calTodayBtn = document.getElementById('calTodayBtn');
+    if (calTodayBtn) calTodayBtn.onclick = () => {
       const now = new Date();
       Views._calendarYM = { year: now.getFullYear(), month: now.getMonth() };
       UI.renderCurrentView();
     };
+    const weekPrevBtn = document.getElementById('weekPrevBtn');
+    if (weekPrevBtn) weekPrevBtn.onclick = () => { Views._weekStart = Utils.addDaysStr(Views._weekStart, -7); UI.renderCurrentView(); };
+    const weekNextBtn = document.getElementById('weekNextBtn');
+    if (weekNextBtn) weekNextBtn.onclick = () => { Views._weekStart = Utils.addDaysStr(Views._weekStart, 7); UI.renderCurrentView(); };
+    const weekTodayBtn = document.getElementById('weekTodayBtn');
+    if (weekTodayBtn) weekTodayBtn.onclick = () => { Views._weekStart = Utils.startOfWeekStr(Utils.todayStr()); UI.renderCurrentView(); };
     document.querySelectorAll('[data-cal-date]').forEach(el => {
       el.onclick = () => UI.navigate('schedule', { selectedDate: el.dataset.calDate });
     });
     const clearBtn = document.getElementById('clearSelectedDateBtn');
     if (clearBtn) clearBtn.onclick = () => UI.navigate('schedule', { filter: 'all' });
     document.querySelectorAll('.tab-btn').forEach(el => { el.onclick = () => UI.navigate('schedule', { filter: el.dataset.f }); });
+    // These two share the .tab-btn class for styling only — override the
+    // generic filter-navigate handler the loop above just attached to them.
+    document.getElementById('viewModeMonthBtn').onclick = () => { Views._scheduleViewMode = 'month'; UI.renderCurrentView(); };
+    document.getElementById('viewModeWeekBtn').onclick = () => { Views._scheduleViewMode = 'week'; UI.renderCurrentView(); };
     document.querySelectorAll('[data-done-sch]').forEach(el => { el.onclick = async () => { await Schedules.setStatus(el.dataset.doneSch, 'completed'); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
     document.querySelectorAll('[data-done-fu]').forEach(el => { el.onclick = async () => { await FollowUps.complete(el.dataset.doneFu); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
     document.querySelectorAll('[data-del-sch]').forEach(el => { el.onclick = () => UI.confirm('이 일정을 삭제할까요?', async () => { await Schedules.remove(el.dataset.delSch); toast('삭제했습니다.'); UI.renderCurrentView(); }); });
@@ -3466,6 +3897,7 @@ const Views = {
     }
 
     html += '</div>';
+    html += Views.printSignatureHtml();
     return html;
   },
 
@@ -3558,6 +3990,14 @@ const Views = {
       '</select></div>' +
       '<p class="help-text">기기의 다크모드 설정을 따르거나, 라이트/다크를 직접 고정할 수 있습니다.</p></div>';
 
+    html += '<div class="panel"><div class="panel-title">글자 크기</div>' +
+      '<div class="field" style="max-width:240px;"><select id="fontSizeSelect">' +
+      '<option value="small">작게</option>' +
+      '<option value="medium">보통</option>' +
+      '<option value="large">크게</option>' +
+      '</select></div>' +
+      '<p class="help-text">화면 전체 글자 크기를 조절합니다.</p></div>';
+
     html += '<div class="panel"><div class="panel-title">자동 잠금 시간</div>' +
       '<div class="field" style="max-width:240px;"><select id="autoLockSelect">' +
       [1, 3, 5, 10, 15, 30].map(m => '<option value="' + m + '">' + m + '분</option>').join('') +
@@ -3585,6 +4025,7 @@ const Views = {
     document.getElementById('orgWorkerInput').onchange = (e) => OrgInfo.setWorker(e.target.value.trim());
 
     document.getElementById('themeModeSelect').onchange = (e) => Theme.setMode(e.target.value);
+    document.getElementById('fontSizeSelect').onchange = (e) => FontSize.setMode(e.target.value);
     document.getElementById('autoLockSelect').onchange = async (e) => {
       await Storage.setSetting('autoLockMinutes', Number(e.target.value));
       toast('자동 잠금 시간이 변경되었습니다.');
@@ -3610,6 +4051,7 @@ const Views = {
     };
     (async () => {
       document.getElementById('themeModeSelect').value = Theme.currentMode;
+      document.getElementById('fontSizeSelect').value = FontSize.currentMode;
       const mins = await Auth.getAutoLockMinutes();
       document.getElementById('autoLockSelect').value = String(mins);
     })();
@@ -3764,6 +4206,7 @@ async function bootstrapApp(){
   Auth.startIdleWatcher();
   Notifications.start();
   Backup.overdueCached = await Backup.isBackupOverdue();
+  UI.renderRecentClients();
 
   UI.navigate('dashboard', {});
 }
@@ -3789,6 +4232,7 @@ async function initApp(){
 
   await Theme.init();
   await OrgInfo.init();
+  await FontSize.init();
 
   const firstRun = await Auth.isFirstRun();
 
