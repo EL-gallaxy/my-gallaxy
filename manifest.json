@@ -1,0 +1,15 @@
+{
+  "name": "사례관리 ON",
+  "short_name": "사례관리 ON",
+  "description": "정신건강복지센터 사례관리 업무 보조 (서버 없이 이 기기에만 저장됩니다)",
+  "start_url": "./case_management_on.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f6f8",
+  "theme_color": "#2f6fed",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
