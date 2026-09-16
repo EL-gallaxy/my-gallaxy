@@ -1000,7 +1000,7 @@ const CONSTANTS = {
   // 복약 갱신(다음 처방·진료 예정일) 임박 알림 기준 — 관리수준과 무관하게
   // 하나의 기준을 쓴다(처방 주기는 진단·병원 사정에 따르지, 사례관리 수준과
   // 직접 연동되지 않으므로).
-  MEDICATION_RENEWAL_ALERT_DAYS: 7
+  MEDICATION_RENEWAL_ALERT_DAYS: 90
 };
 
 /* =========================================================================
@@ -1765,7 +1765,6 @@ const SoapModule = {
     { key: 'program', label: '프로그램 참여',   words: ['프로그램', '참여', '교육', '모임'],
       declineClause: '프로그램 참여 저조', improveClause: '프로그램 참여 활발' }
   ],
-  CHANGE_WORDS: ['이전보다', '최근', '증가', '감소', '악화', '호전', '좋아짐', '나빠짐', '변화', '늘어', '줄어'],
   DECLINE_WORDS: ['감소', '줄어', '줄었', '줄임', '부족', '저하', '악화', '힘들어', '힘듦', '못하', '못 하', '안하', '안 하', '거부', '어려워', '어려움', '나빠짐', '불면', '못 자', '못자', '저조', '떨어'],
   IMPROVE_WORDS: ['증가', '늘어', '늘었', '호전', '좋아짐', '좋아졌', '양호', '안정', '충분', '개선', '잘 자', '잘 지'],
   INTENSIFIER_WORDS: ['현저히', '현저하게', '많이', '심하게', '상당히', '크게', '매우'],
@@ -1789,6 +1788,83 @@ const SoapModule = {
     if (sawDecline) return 'decline';
     if (sawImprove) return 'improve';
     return 'neutral';
+  },
+
+  // 실제로 캐스워커가 쓴 문장에서 해당 주제어가 들어간 문장을 그대로 뽑아온다.
+  // A 초안이 늘 똑같은 정형 문구로만 채워지지 않도록, 고정된 clause 대신 이
+  // 인용문을 문장에 넣어 실제 입력 내용이 드러나게 한다.
+  extractQuote(topicWords, text, maxLen){
+    const sentences = this.splitSentences(text || '').filter(s => topicWords.some(w => s.includes(w)));
+    if (!sentences.length) return '';
+    let s = sentences[0];
+    // 한 문장에 쉼표로 여러 내용이 나열된 경우("A하고, B함"), 문장 전체가
+    // 아니라 해당 주제어가 들어간 절만 뽑는다 — 그래야 서로 다른 주제의
+    // 인용문이 같은 긴 문장을 통째로 반복해서 담지 않는다.
+    const clauses = s.split(/,\s*/).map(c => c.trim()).filter(Boolean);
+    if (clauses.length > 1){
+      const matchingClause = clauses.find(c => topicWords.some(w => c.includes(w)));
+      if (matchingClause) s = matchingClause.endsWith('하고') ? matchingClause.slice(0, -2).trim() : matchingClause;
+    }
+    if (s.length > maxLen) s = s.slice(0, maxLen) + '…';
+    return s;
+  },
+
+  // 주제 하나에 대한 문장 하나를 만든다. 같은 A 안에 여러 주제가 섞여 있을 때
+  // 문장 모양이 전부 똑같아 보이지 않도록, idx로 표현 방식을 살짝 바꾼다(무작위가
+  // 아니라 같은 입력이면 항상 같은 결과가 나오도록 idx 기반으로 고정 선택).
+  buildTopicSentence(t, S, O, subjectLabel, persistentDeclineKeys, hasIntensifier, idx){
+    const quoteS = this.extractQuote(t.words, S, 40);
+    const quoteO = !quoteS ? this.extractQuote(t.words, O, 40) : '';
+    const quote = quoteS || quoteO;
+    const variant = idx % 2;
+    const eunNeun = Utils.josa(subjectLabel, '은', '는');
+
+    if (t.direction === 'neutral'){
+      const coreNoun = t.label + ' 관련 내용';
+      if (!quote) return coreNoun + '이 확인됨.';
+      if (quoteS) return variant === 0
+        ? subjectLabel + eunNeun + ' "' + quote + '"고 언급함.'
+        : '"' + quote + '"는 내용이 확인됨.';
+      return '관찰 결과 "' + quote + '"는 내용이 확인됨.';
+    }
+
+    if (t.direction === 'mixed'){
+      const base = t.label + '와 관련하여 호전과 저하가 함께 나타나고 있어 세심한 관찰이 필요함';
+      if (!quote) return base + '.';
+      return quoteS
+        ? subjectLabel + eunNeun + ' "' + quote + '"고 밝히는 등, ' + base + '.'
+        : '"' + quote + '"는 내용이 확인되는 등, ' + base + '.';
+    }
+
+    const isDecline = t.direction === 'decline';
+    const coreNoun = isDecline
+      ? t.declineClause + (persistentDeclineKeys.includes(t.key) ? '(반복적으로 확인됨)' : '') + (hasIntensifier ? '(정도가 두드러짐)' : '')
+      : t.improveClause;
+    const coreIga = Utils.josa(coreNoun, '이', '가');
+    const coreEulReul = Utils.josa(coreNoun, '을', '를');
+
+    if (!quote){
+      return coreNoun + coreIga + ' 확인됨.';
+    }
+    if (quoteS){
+      if (isDecline){
+        return variant === 0
+          ? subjectLabel + eunNeun + ' "' + quote + '"고 밝혔으며, 이는 ' + coreNoun + coreEulReul + ' 시사하는 것으로 판단됨.'
+          : '상담 중 "' + quote + '"는 진술이 확인되어, ' + coreNoun + coreIga + ' 우려되는 것으로 판단됨.';
+      }
+      return variant === 0
+        ? subjectLabel + eunNeun + ' "' + quote + '"고 밝혀, ' + coreNoun + coreIga + ' 확인됨.'
+        : '"' + quote + '"는 진술을 통해 ' + coreNoun + coreIga + ' 파악되어 긍정적인 변화로 사료됨.';
+    }
+    // O(관찰) 기반 인용
+    if (isDecline){
+      return variant === 0
+        ? '관찰 결과 "' + quote + '"는 내용이 확인되었고, 이는 ' + coreNoun + coreEulReul + ' 시사하는 것으로 보임.'
+        : '상담 과정에서 "' + quote + '"가 관찰되어, ' + coreNoun + coreIga + ' 확인됨.';
+    }
+    return variant === 0
+      ? '관찰 결과 "' + quote + '"가 확인되어, ' + coreNoun + coreIga + ' 나타나는 것으로 보임.'
+      : '상담 과정에서 "' + quote + '"는 내용이 확인되어, ' + coreNoun + coreIga + ' 파악됨.';
   },
 
   list(){
@@ -1876,7 +1952,6 @@ const SoapModule = {
     const found = this.TOPIC_KEYWORDS
       .filter(t => t.words.some(w => combined.includes(w)))
       .map(t => Object.assign({ direction: this.topicDirection(t.words, combined) }, t));
-    const hasChange = this.CHANGE_WORDS.some(w => combined.includes(w));
     const hasIntensifier = this.INTENSIFIER_WORDS.some(w => combined.includes(w));
 
     // Each topic goes into exactly ONE bucket — a 'mixed' topic (both decline
@@ -1917,39 +1992,25 @@ const SoapModule = {
     }
 
     const sentences = [];
-
-    // ① 상담 개요 — 접촉유형·상담대상을 명시해 실제 상담기록지에 가까운 문장으로 시작.
     const contactLabel = contactType || '상담';
     const subjectLabel = CONSTANTS.SOAP_SUBJECTS[subject] || CONSTANTS.SOAP_SUBJECTS.client;
-    sentences.push('금번 ' + contactLabel + '(' + subjectLabel + ') 상담을 통해 확인된 내용을 종합하면 다음과 같음.');
 
-    // ② 현재 상태 및 변화 — built from the specific topics/directions found,
-    // instead of a generic "관련 내용이 확인됨" for every case.
-    const s2parts = [];
-    if (declineTopics.length){
-      const list = declineTopics.map(t => t.declineClause + (persistentDeclineKeys.includes(t.key) ? '(반복적으로 확인됨)' : '')).join(', ');
-      s2parts.push(list + ' 등이' + (hasIntensifier ? ' 현저하게' : '') + ' 확인되어 일상생활 유지에 부정적인 영향이 있을 수 있는 것으로 판단됨.');
+    // ① 현재 상태 — 발견된 주제마다 실제 S/O 문장을 인용해 한 문장씩 만든다.
+    // 고정된 clause만 이어붙이던 이전 방식과 달리, 매번 실제로 적은 내용이
+    // 그대로 드러나므로 케이스마다 자연히 달라진다. 접촉유형은 첫 문장 앞에만
+    // 붙여 상담기록지 맥락을 살리되, 문장 전체를 고정 문구로 시작하지 않는다.
+    const relevantTopics = found.filter(t => t.direction !== 'neutral').concat(found.filter(t => t.direction === 'neutral'));
+    if (relevantTopics.length === 0){
+      sentences.push('금번 ' + contactLabel + ' 상담에서 확인된 S·O 내용을 바탕으로 특이 변화 사항은 뚜렷하게 나타나지 않는 것으로 보임.');
+    } else {
+      relevantTopics.forEach((t, idx) => {
+        let sentence = this.buildTopicSentence(t, S, O, subjectLabel, persistentDeclineKeys, hasIntensifier, idx);
+        if (idx === 0) sentence = '금번 ' + contactLabel + ' 상담에서 ' + sentence;
+        sentences.push(sentence);
+      });
     }
-    if (improveTopics.length){
-      const list = improveTopics.map(t => t.improveClause).join(', ');
-      s2parts.push(list + ' 등이 확인되어 전반적인 상태가 다소 안정된 것으로 파악됨.');
-    }
-    if (mixedTopics.length){
-      const list = mixedTopics.map(t => t.label).join(', ');
-      s2parts.push(list + '와 관련하여 호전과 저하가 함께 나타나고 있어 세심한 관찰이 필요한 것으로 판단됨.');
-    }
-    if (s2parts.length === 0){
-      if (neutralTopics.length){
-        s2parts.push('상담 과정에서 ' + neutralTopics.map(t => t.label).join(', ') + ' 관련 내용이 확인됨.');
-      } else {
-        s2parts.push('금번 상담에서 확인된 S·O 내용을 바탕으로 특이 변화 사항은 뚜렷하게 나타나지 않는 것으로 보임.');
-      }
-    } else if (hasChange && reversals.length === 0){
-      s2parts.push('이전 상담 대비 변화가 있는 것으로 파악되어 지속적인 확인이 필요한 것으로 판단됨.');
-    }
-    sentences.push(s2parts.join(' '));
 
-    // ③ 이전 상담 기록과의 실제 비교 — 저장된 직전 최종 SOAP이 있을 때만 생성.
+    // ② 이전 상담 기록과의 실제 비교 — 저장된 직전 최종 SOAP이 있을 때만 생성.
     if (reversals.length){
       sentences.push('이전 상담 기록과 비교하면 ' + reversals.join(', ') + '이 확인되어, 해당 부분에 대한 원인 파악과 대응이 필요한 것으로 사료됨.');
     }
@@ -1961,23 +2022,22 @@ const SoapModule = {
       sentences.push('가족(보호자)과의 연락 여부도 함께 확인되어, 관련 자원 활용 상태를 지속적으로 파악할 필요가 있는 것으로 사료됨.');
     }
 
-    // ④ 사례관리 의미
+    // ③ 사례관리 의미 — 실제로 종합할 만한 내용(어려움 2개 이상, 선택된 상담영역,
+    // 또는 뚜렷한 호전)이 있을 때만 덧붙인다. 아무것도 없는데 억지로 채우는
+    // 문장은 만들지 않는다 — 그것이 "형식적으로 느껴진다"는 지적의 원인이었다.
     const areaText = (areas && areas.length) ? areas.filter(a => a !== '기타').join(', ') : '';
     if (strugglingTopics.length >= 2){
       sentences.push(strugglingTopics.map(t => t.label).join(', ') + ' 등 여러 영역에서 어려움이 함께 나타나고 있어, 사례관리 차원의 지속적인 개입이 필요한 것으로 사료됨.');
     } else if (areaText){
       sentences.push(areaText + ' 영역과 관련하여 대상자의 일상생활 및 사회적 기능 유지를 위한 사례관리 지속이 필요한 것으로 사료됨.');
-    } else {
-      sentences.push('금번 확인된 내용은 대상자의 사례관리 지속 필요성을 뒷받침하는 것으로 사료됨.');
+    } else if (improveTopics.length){
+      sentences.push(improveTopics.map(t => t.label).join(', ') + ' 영역에서 긍정적인 흐름이 이어지고 있어, 현재의 지지체계와 개입 방향을 유지할 필요가 있는 것으로 사료됨.');
     }
 
-    // ⑤ 필요한 개입 및 관찰
+    // ④ 필요한 개입 및 관찰 — 어려움이 있을 때만 "우선적 관찰"을 언급하고,
+    // 그마저 없으면(순수 관찰/중립 내용만 있을 때) 이 문장 자체를 생략한다.
     if (strugglingTopics.length){
       sentences.push('특히 ' + strugglingTopics.map(t => t.label).join(', ') + '에 대한 우선적인 관찰과 확인이 필요한 것으로 판단됨.');
-    } else if (found.length){
-      sentences.push('향후 상담에서 ' + found.map(t => t.label).join(', ') + '에 대해 지속적으로 관찰할 필요가 있는 것으로 판단됨.');
-    } else {
-      sentences.push('다음 상담 시까지 대상자의 전반적인 상태를 지속적으로 관찰할 필요가 있는 것으로 판단됨.');
     }
 
     // ⚠ 확인해 볼 항목 — helps the worker notice gaps; this is NOT a risk assessment.
@@ -3095,7 +3155,7 @@ const Views = {
     // 복약 갱신 임박 — 각 활성 대상자의 가장 최근 복약 기록에 적힌 "다음
     // 처방(진료) 예정일"이 이미 지났거나 기준일 이내로 다가온 경우만 짚어준다.
     if (!hide('medRenewal')){
-      html += '<div class="panel" id="medRenewalSection"><div class="panel-title">💊 복약 갱신 임박 (기준: ' + CONSTANTS.MEDICATION_RENEWAL_ALERT_DAYS + '일 이내)</div>';
+      html += '<div class="panel" id="medRenewalSection"><div class="panel-title">💊 복약 갱신 임박 (기준: ' + Utils.formatElapsedDays(CONSTANTS.MEDICATION_RENEWAL_ALERT_DAYS) + ' 이내)</div>';
       if (medRenewals.length === 0){
         html += '<div class="empty-msg">처방·진료 갱신이 임박하거나 지난 대상자가 없습니다.</div>';
       } else {
