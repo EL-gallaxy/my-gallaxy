@@ -369,8 +369,9 @@
     #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
-    #addTagBtn, #newTagInput, [data-del-tag], [data-toggle-doc], #reportMonthSelect, #exportReportCsvBtn,
-    #printReportBtn, #journalDateInput, #printJournalBtn, .example-banner{
+    #addTagBtn, #newTagInput, [data-del-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
+    #addGoalBtn, #goalTerm, #goalText, .goalStatusSelect, #reportMonthSelect, #exportReportCsvBtn,
+    #printReportBtn, #journalDateInput, #printJournalBtn, #icsExportBtn, .example-banner{
       display:none !important;
     }
     body{background:#fff;}
@@ -549,6 +550,55 @@ const Utils = {
     const arr = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
     return arr.buffer;
+  },
+  MAX_ATTACHMENT_BYTES: 15 * 1024 * 1024,
+  // Reads a File (image or PDF) into a data URL for storage inside an
+  // already-encrypted client record — no external storage/upload involved.
+  // Images are downscaled/re-encoded through a canvas first so a phone photo
+  // doesn't bloat local storage; PDFs are kept as-is (can't shrink losslessly
+  // client-side without a PDF library, which the app deliberately has none of).
+  readFileAsAttachment(file){
+    return new Promise((resolve, reject) => {
+      const isImage = (file.type || '').startsWith('image/');
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('파일을 읽지 못했습니다.'));
+      if (!isImage){
+        reader.onload = () => resolve({ filename: file.name, mimeType: file.type || 'application/pdf', dataUrl: reader.result });
+        reader.readAsDataURL(file);
+        return;
+      }
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('이미지를 읽지 못했습니다.'));
+        img.onload = () => {
+          const maxDim = 1600;
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim){
+            const scale = maxDim / Math.max(width, height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          resolve({ filename: file.name, mimeType: 'image/jpeg', dataUrl: canvas.toDataURL('image/jpeg', 0.82) });
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  },
+  // Opens a stored data URL (image/PDF attachment) in a new tab via a Blob
+  // URL rather than the data: URI directly — more reliably allowed by
+  // browser popup/security rules, and mirrors CSV.download's Blob pattern.
+  openDataUrlInNewTab(dataUrl){
+    const [header, base64] = dataUrl.split(',');
+    const mimeMatch = header.match(/data:(.*?);base64/);
+    const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+    const blob = new Blob([this.base64ToBuf(base64)], { type: mime });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   },
   formatDateTime(iso){
     if (!iso) return '';
@@ -897,6 +947,14 @@ const CONSTANTS = {
   CONTACT_RELATIONS: ['배우자', '부모', '자녀', '형제자매', '기타 보호자', '기타'],
   ASSESSMENT_SCALES: ['GAF (전반적 기능평가)', 'K-MMSE (간이정신상태검사)', 'K-BDI (벡 우울척도)', 'BPRS (간이정신병리평가척도)', '기타'],
   COMMON_DOCUMENTS: ['개인정보 수집·이용 동의서', '사례관리 서비스 이용 동의서', '응급 시 연락 동의서', '정보공유 동의서'],
+  // 목표 진행 상황 라벨 — 퍼센트 같은 임의의 숫자 대신 상태로만 구분한다
+  // (정신건강 사례관리 목표는 수치화가 어렵고 자칫 오해를 부를 수 있음).
+  GOAL_STATUSES: {
+    in_progress:  { label: '진행중', badgeClass: 'badge-pending' },
+    achieved:     { label: '달성',   badgeClass: 'badge-temporary' },
+    on_hold:      { label: '보류',   badgeClass: 'badge-draft' },
+    discontinued: { label: '중단',   badgeClass: 'badge-crisis' }
+  },
   // 대상자 간 가족 관계 연결에 쓰는 관계→반대쪽 관계 매핑. A에 "B는 나의 부모"를
   // 추가하면 B 쪽에는 자동으로 "A는 나의 자녀"가 생성된다(배우자·형제자매는 대칭).
   FAMILY_RELATIONS: { '배우자': '배우자', '부모': '자녀', '자녀': '부모', '형제자매': '형제자매', '기타 가족': '기타 가족' },
@@ -1176,7 +1234,7 @@ const Clients = {
       referralSource: referralSource || '',
       admissions: [], resourceLinks: [],
       crisisEvents: [], emergencyContacts: [], medications: [], caseConferences: [],
-      assessments: [], documents: [], familyLinks: [], tags: []
+      assessments: [], documents: [], familyLinks: [], tags: [], goals: []
     };
     State.clients.set(id, client);
     await Storage.saveEncrypted('clients', client);
@@ -1379,6 +1437,56 @@ const Clients = {
     const client = State.clients.get(id);
     if (!client) return;
     client.documents = (client.documents || []).filter(d => d.id !== docId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // 서류 항목에 딸린 첨부파일(스캔본/사진) — dataUrl에 base64로 담아 그대로
+  // saveEncrypted를 통해 암호화 저장된다(별도 파일 시스템·외부 저장소 없음).
+  async addDocumentAttachment(id, docId, attachment){
+    const client = State.clients.get(id);
+    if (!client) return;
+    const doc = (client.documents || []).find(d => d.id === docId);
+    if (!doc) return;
+    doc.attachments = doc.attachments || [];
+    doc.attachments.push({
+      id: Utils.uid('att'), filename: attachment.filename,
+      mimeType: attachment.mimeType, dataUrl: attachment.dataUrl
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeDocumentAttachment(id, docId, attachmentId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    const doc = (client.documents || []).find(d => d.id === docId);
+    if (!doc) return;
+    doc.attachments = (doc.attachments || []).filter(a => a.id !== attachmentId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // 단기/장기 목표 — 기존 자유서술 MSE/목표 텍스트와 별개로, 목표를 항목별로
+  // 나눠 진행 상태(라벨)만 추적한다. 퍼센트 등 임의의 수치는 쓰지 않는다.
+  async addGoal(id, { term, text }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    text = (text || '').trim();
+    if (!text) return;
+    client.goals = client.goals || [];
+    client.goals.push({ id: Utils.uid('goal'), term: term === 'short' ? 'short' : 'long', text, status: 'in_progress' });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async setGoalStatus(id, goalId, status){
+    const client = State.clients.get(id);
+    if (!client) return;
+    const goal = (client.goals || []).find(g => g.id === goalId);
+    if (!goal) return;
+    if (!CONSTANTS.GOAL_STATUSES[status]) return;
+    goal.status = status;
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeGoal(id, goalId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.goals = (client.goals || []).filter(g => g.id !== goalId);
     await Storage.saveEncrypted('clients', client);
   },
 
@@ -1994,6 +2102,50 @@ const Schedules = {
     if (!snap) return;
     State.schedules.set(snap.id, snap);
     await Storage.saveEncrypted('schedules', snap);
+  },
+
+  // iCal(.ics) 내보내기 — 예정(planned) 일정만, 완료/취소된 일정은 제외한다.
+  // 외부 서버 없이 로컬에서 표준 iCalendar 파일을 만들어 CSV.download로
+  // 내려받는다(구글 캘린더 등 개인 캘린더 앱으로 가져오기용).
+  exportICS(){
+    const planned = this.list().filter(s => s.status === 'planned');
+    const pad = (n) => String(n).padStart(2, '0');
+    const escapeICS = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+    const toICSDateTime = (dateStr, timeStr, addMinutes) => {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const [hh, mm] = timeStr.split(':').map(Number);
+      const dt = new Date(y, m - 1, d, hh, mm + (addMinutes || 0));
+      return dt.getFullYear() + pad(dt.getMonth() + 1) + pad(dt.getDate()) + 'T' + pad(dt.getHours()) + pad(dt.getMinutes()) + '00';
+    };
+    const toICSDateOnly = (dateStr, addDaysN) => {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dt = new Date(y, m - 1, d + (addDaysN || 0));
+      return dt.getFullYear() + pad(dt.getMonth() + 1) + pad(dt.getDate());
+    };
+    const now = new Date();
+    const dtstamp = now.getUTCFullYear() + pad(now.getUTCMonth() + 1) + pad(now.getUTCDate()) + 'T' +
+      pad(now.getUTCHours()) + pad(now.getUTCMinutes()) + pad(now.getUTCSeconds()) + 'Z';
+
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//case_management_on//KO', 'CALSCALE:GREGORIAN'];
+    planned.forEach(s => {
+      const c = Clients.get(s.clientId);
+      const summary = (c && c.alias ? c.alias : s.clientId) + ' · ' + (s.contactType || '상담');
+      lines.push('BEGIN:VEVENT');
+      lines.push('UID:' + s.id + '@case-management-on');
+      lines.push('DTSTAMP:' + dtstamp);
+      if (s.time){
+        lines.push('DTSTART:' + toICSDateTime(s.date, s.time, 0));
+        lines.push('DTEND:' + toICSDateTime(s.date, s.time, 30));
+      } else {
+        lines.push('DTSTART;VALUE=DATE:' + toICSDateOnly(s.date, 0));
+        lines.push('DTEND;VALUE=DATE:' + toICSDateOnly(s.date, 1));
+      }
+      lines.push('SUMMARY:' + escapeICS(summary));
+      if (s.memo) lines.push('DESCRIPTION:' + escapeICS(s.memo));
+      lines.push('END:VEVENT');
+    });
+    lines.push('END:VCALENDAR');
+    CSV.download('schedule_' + Utils.todayStr() + '.ics', lines.join('\r\n'), 'text/calendar;charset=utf-8;');
   }
 };
 
@@ -2119,6 +2271,22 @@ const Stats = {
     const closureReasonCounts = {};
     closures.forEach(c => { closureReasonCounts[c.closedReason || '기타'] = (closureReasonCounts[c.closedReason || '기타'] || 0) + 1; });
 
+    // 관리수준 변화 — CONSTANTS.MANAGEMENT_LEVELS의 선언 순서(위기→집중→
+    // 유지→일시)가 곧 심각도 순서이므로, 인덱스가 커지는 쪽(예: 위기→집중)이
+    // 완화, 작아지는 쪽이 강화다. 최초 배정(from 없음)은 "변화"로 세지 않는다.
+    const levelOrder = Object.keys(CONSTANTS.MANAGEMENT_LEVELS);
+    let levelImprovedCount = 0, levelWorsenedCount = 0;
+    clients.forEach(c => {
+      (c.managementHistory || []).forEach(h => {
+        if (!h.from || !(h.date || '').startsWith(monthStr)) return;
+        const fromIdx = levelOrder.indexOf(h.from);
+        const toIdx = levelOrder.indexOf(h.to);
+        if (fromIdx === -1 || toIdx === -1) return;
+        if (toIdx > fromIdx) levelImprovedCount++;
+        else if (toIdx < fromIdx) levelWorsenedCount++;
+      });
+    });
+
     return {
       month: monthStr,
       newRegistrationCount: newRegistrations.length,
@@ -2126,6 +2294,7 @@ const Stats = {
       closureReasonCounts,
       activeCount: activeClients.length,
       levelCounts,
+      levelImprovedCount, levelWorsenedCount,
       totalSoaps: soapsInMonth.length,
       contactTypeCounts,
       subjectCounts
@@ -2193,6 +2362,8 @@ const CSV = {
       ['집중관리', report.levelCounts.intensive || 0],
       ['유지관리', report.levelCounts.maintenance || 0],
       ['일시관리', report.levelCounts.temporary || 0],
+      ['관리수준 완화(호전) 건수', report.levelImprovedCount || 0],
+      ['관리수준 강화(악화) 건수', report.levelWorsenedCount || 0],
       ['해당월 총 상담건수', report.totalSoaps],
       ['본인 상담', report.subjectCounts.client || 0],
       ['가족·보호자 상담', report.subjectCounts.family || 0]
@@ -2514,6 +2685,41 @@ const Views = {
     if (!inputValue) return '';
     const id = inputValue.split(' — ')[0].trim();
     return Clients.get(id) ? id : (State.clients.has(inputValue.trim()) ? inputValue.trim() : id);
+  },
+
+  // 통합 타임라인 — 클라이언트 상세의 여러 탭/패널에 흩어져 있는 날짜 있는
+  // 하위 기록(입퇴원·자원연계·위기개입·복약·사례회의·사정도구·서류 수령·
+  // 관리수준 변경·종결·SOAP)을 한 배열로 모아 최신순으로 정렬한다. 새로운
+  // 사실을 만들어내지 않고, 이미 저장된 각 기록의 날짜·요약만 그대로 옮긴다.
+  buildTimelineEvents(c){
+    const events = [];
+    const push = (date, time, icon, label, sub, soapId) => {
+      if (!date) return;
+      events.push({ date, time: time || '', icon, label, sub: sub || '', soapId: soapId || '' });
+    };
+    push(c.registrationDate, '', '📝', '등록', c.referralSource ? '의뢰경로: ' + c.referralSource : '');
+    (c.admissions || []).forEach(a => push(a.date, '', a.type === '퇴원' ? '🚪' : '🏥', a.type, a.hospital || ''));
+    (c.resourceLinks || []).forEach(r => push(r.date, '', '🔗', '자원연계', [r.type, r.name].filter(Boolean).join(' · ')));
+    (c.crisisEvents || []).forEach(ev => push(ev.date, '', '⚠', '위기개입: ' + ev.type, ev.description || ''));
+    (c.medications || []).forEach(m => push(m.date, '', '💊', '복약 등록', [m.name, m.dose].filter(Boolean).join(' ')));
+    (c.caseConferences || []).forEach(cf => push(cf.date, '', '🗂', '사례회의', cf.decision || cf.discussion || ''));
+    (c.assessments || []).forEach(a => push(a.date, '', '📊', '사정도구: ' + a.scale, a.score ? a.score + '점' : ''));
+    (c.documents || []).forEach(d => { if (d.receivedDate) push(d.receivedDate, '', '📄', '서류 수령', d.name); });
+    (c.managementHistory || []).forEach(h => {
+      const fromLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.from] || {}).label || h.from || '(미지정)';
+      const toLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.to] || {}).label || h.to;
+      push(h.date, '', '🔄', '관리수준 변경', fromLabel + ' → ' + toLabel + (h.reason ? ' (' + h.reason + ')' : ''));
+    });
+    if (c.status === 'closed' && c.closedDate) push(c.closedDate, '', '🔚', '종결', c.closedReason || '');
+    SoapModule.listByClient(c.id).forEach(s => {
+      events.push({
+        date: s.date, time: s.time || '', icon: '💬',
+        label: (s.contactType || 'SOAP') + ' 상담' + (s.status === 'draft' ? ' (임시저장)' : ''),
+        sub: Utils.truncate(s.A || s.S || '', 60), soapId: s.id
+      });
+    });
+    events.sort((a, b) => (b.date + (b.time || '00:00')).localeCompare(a.date + (a.time || '00:00')));
+    return events;
   },
 
   // Shared recurrence controls for the follow-up / schedule "quick add"
@@ -3060,6 +3266,34 @@ const Views = {
       '<textarea id="clShortGoal" style="min-height:70px;" placeholder="예: 정기적인 복약 및 외래 방문 유지">' + Utils.escapeHtml(c.shortTermGoal || '') + '</textarea></div>' +
       '<button class="btn btn-primary btn-sm" id="saveMseGoalsBtn">저장</button></div>';
 
+    // 목표 진행 상황 — 위 장/단기 목표 서술과 별개로, 목표를 항목별로 나눠
+    // 상태(진행중/달성/보류/중단)만 추적한다. 퍼센트 등 임의 수치는 쓰지 않는다.
+    const goals = (c.goals || []);
+    basicHtml += '<details class="panel"' + (goals.length ? ' open' : '') + '><summary class="panel-title">목표 진행 상황</summary>';
+    if (goals.length === 0){
+      basicHtml += '<div class="empty-msg">등록된 목표 항목이 없습니다.</div>';
+    } else {
+      ['long', 'short'].forEach(term => {
+        const termGoals = goals.filter(g => g.term === term);
+        if (!termGoals.length) return;
+        basicHtml += '<div class="row-sub" style="margin:8px 0 4px;font-weight:600;">' + (term === 'long' ? '장기목표' : '단기목표') + '</div>';
+        termGoals.forEach(g => {
+          const st = CONSTANTS.GOAL_STATUSES[g.status] || CONSTANTS.GOAL_STATUSES.in_progress;
+          basicHtml += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + Utils.escapeHtml(g.text) + ' <span class="badge ' + st.badgeClass + '">' + st.label + '</span></div>' +
+            '</div><div class="row-actions">' +
+            '<select class="goalStatusSelect" data-goal="' + g.id + '">' +
+            Object.keys(CONSTANTS.GOAL_STATUSES).map(k => '<option value="' + k + '"' + (k === g.status ? ' selected' : '') + '>' + CONSTANTS.GOAL_STATUSES[k].label + '</option>').join('') +
+            '</select>' +
+            '<button class="btn btn-sm btn-danger" data-del-goal="' + g.id + '">삭제</button></div></div>';
+        });
+      });
+    }
+    basicHtml += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>구분</label><select id="goalTerm"><option value="long">장기목표</option><option value="short">단기목표</option></select></div>' +
+      '<div class="field full"><label>목표 내용</label><input type="text" id="goalText" placeholder="예: 정기적인 복약 및 외래 방문 유지"></div></div>' +
+      '<button class="btn btn-sm" id="addGoalBtn">＋ 목표 추가</button></details>';
+
     if (c.managementHistory && c.managementHistory.length){
       historyHtml += '<details class="panel" open><summary class="panel-title">관리수준 변경 이력</summary>';
       c.managementHistory.slice().reverse().forEach(h => {
@@ -3235,18 +3469,28 @@ const Views = {
       historyHtml += '<div class="empty-msg">등록된 서류 항목이 없습니다.</div>';
     } else {
       documents.forEach(d => {
+        const attachments = d.attachments || [];
         historyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + Utils.escapeHtml(d.name) + '</div>' +
           '<div class="row-sub">' + (d.receivedDate ? '수령일: ' + d.receivedDate : '미수령') + '</div>' +
+          (attachments.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">' +
+            attachments.map(a => (a.mimeType && a.mimeType.startsWith('image/')
+              ? '<img src="' + a.dataUrl + '" data-view-attachment="' + a.id + '" data-view-attachment-doc="' + d.id + '" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid var(--border-strong);" title="' + Utils.escapeHtml(a.filename) + '">'
+              : '<span data-view-attachment="' + a.id + '" data-view-attachment-doc="' + d.id + '" style="cursor:pointer;padding:6px 8px;border:1px solid var(--border-strong);border-radius:6px;font-size:0.78rem;" title="' + Utils.escapeHtml(a.filename) + '">📄 ' + Utils.truncate(Utils.escapeHtml(a.filename), 14) + '</span>'
+            ) + '<button class="btn-link" style="color:var(--danger);" data-del-attachment="' + a.id + '" data-del-attachment-doc="' + d.id + '" title="첨부파일 삭제">✕</button>').join('') +
+            '</div>' : '') +
           '</div><div class="row-actions">' +
           '<button class="btn btn-sm' + (d.receivedDate ? '' : ' btn-primary') + '" data-toggle-doc="' + d.id + '">' + (d.receivedDate ? '미수령으로 변경' : '수령 확인') + '</button>' +
+          '<button class="btn btn-sm" data-attach-doc="' + d.id + '">📎 첨부</button>' +
           '<button class="btn btn-sm btn-danger" data-del-doc="' + d.id + '">삭제</button></div></div>';
       });
     }
     historyHtml += '<div class="divider"></div><div style="display:flex;gap:8px;max-width:420px;">' +
       '<input type="text" id="docNameInput" list="docNameList" placeholder="예: 개인정보 수집·이용 동의서" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);">' +
       '<datalist id="docNameList">' + CONSTANTS.COMMON_DOCUMENTS.map(d => '<option value="' + d + '">').join('') + '</datalist>' +
-      '<button class="btn btn-sm" id="addDocBtn">＋ 서류 항목 추가</button></div></details>';
+      '<button class="btn btn-sm" id="addDocBtn">＋ 서류 항목 추가</button></div>' +
+      '<input type="file" id="docAttachFileInput" accept="image/*,application/pdf" multiple style="display:none;">' +
+      '</details>';
 
     // 대상자 간 가족 관계 — 한쪽에 연결하면 반대쪽에도 자동으로 역관계가 생성된다.
     const familyLinks = (c.familyLinks || []);
@@ -3296,11 +3540,27 @@ const Views = {
     }
     soapHtml += '</div>';
 
+    const timelineEvents = Views.buildTimelineEvents(c);
+    let timelineHtml = '<div class="panel"><div class="panel-title">통합 타임라인</div>';
+    if (timelineEvents.length === 0){
+      timelineHtml += '<div class="empty-msg">표시할 기록이 없습니다.</div>';
+    } else {
+      timelineEvents.forEach(ev => {
+        timelineHtml += '<div class="list-row"' + (ev.soapId ? ' data-open-soap="' + ev.soapId + '" style="cursor:pointer;"' : '') + '>' +
+          '<div class="list-row-main">' +
+          '<div class="row-title">' + ev.date + (ev.time ? ' ' + ev.time : '') + ' · ' + ev.icon + ' ' + Utils.escapeHtml(ev.label) + '</div>' +
+          (ev.sub ? '<div class="row-sub">' + Utils.escapeHtml(ev.sub) + '</div>' : '') +
+          '</div></div>';
+      });
+    }
+    timelineHtml += '</div>';
+
     const tabDefs = [
       { key: 'basic', label: '기본정보', count: 0 },
       { key: 'history', label: '이력관리', count: admissions.length + resourceLinks.length + medications.length + assessments.length + documents.length },
       { key: 'safety', label: '위기·안전', count: crisisEvents.length + emergencyContacts.length + familyLinks.length + caseConferences.length },
-      { key: 'soap', label: 'SOAP', count: pendingFus.length }
+      { key: 'soap', label: 'SOAP', count: pendingFus.length },
+      { key: 'timeline', label: '통합 타임라인', count: timelineEvents.length }
     ];
     html += '<div class="tabs">' + tabDefs.map(t =>
       '<button class="tab-btn detail-tab-btn' + (activeTab === t.key ? ' active' : '') + '" data-tab="' + t.key + '">' + t.label + (t.count ? ' (' + t.count + ')' : '') + '</button>'
@@ -3310,6 +3570,7 @@ const Views = {
     html += '<div class="detail-tab-group' + (activeTab === 'history' ? ' active' : '') + '" data-tab-group="history">' + historyHtml + '</div>';
     html += '<div class="detail-tab-group' + (activeTab === 'safety' ? ' active' : '') + '" data-tab-group="safety">' + safetyHtml + '</div>';
     html += '<div class="detail-tab-group' + (activeTab === 'soap' ? ' active' : '') + '" data-tab-group="soap">' + soapHtml + '</div>';
+    html += '<div class="detail-tab-group' + (activeTab === 'timeline' ? ' active' : '') + '" data-tab-group="timeline">' + timelineHtml + '</div>';
 
     html += Views.printSignatureHtml();
     return html;
@@ -3568,6 +3829,67 @@ const Views = {
         const snap = Clients.snapshot(id);
         await Clients.removeDocumentItem(id, el.dataset.delDoc);
         toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
+
+    // 서류 첨부파일 — 문서 항목마다 별도 <input type=file>을 두는 대신 숨겨진
+    // 입력 하나를 공유하고, 어느 항목의 "첨부" 버튼을 눌렀는지만 기억한다.
+    const docAttachInput = document.getElementById('docAttachFileInput');
+    document.querySelectorAll('[data-attach-doc]').forEach(el => {
+      el.onclick = () => { Views._pendingAttachDocId = el.dataset.attachDoc; docAttachInput.click(); };
+    });
+    if (docAttachInput) docAttachInput.onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      const docId = Views._pendingAttachDocId;
+      e.target.value = '';
+      if (!docId || !files.length) return;
+      for (const file of files){
+        if (file.size > Utils.MAX_ATTACHMENT_BYTES){
+          toast(file.name + ' 파일이 너무 큽니다 (15MB 초과).', 'error');
+          continue;
+        }
+        try{
+          const attachment = await Utils.readFileAsAttachment(file);
+          await Clients.addDocumentAttachment(id, docId, attachment);
+        }catch(err){ toast('파일을 첨부하지 못했습니다.', 'error'); }
+      }
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-view-attachment]').forEach(el => {
+      el.onclick = () => {
+        const client = Clients.get(id);
+        const doc = (client.documents || []).find(d => d.id === el.dataset.viewAttachmentDoc);
+        const att = doc && (doc.attachments || []).find(a => a.id === el.dataset.viewAttachment);
+        if (att) Utils.openDataUrlInNewTab(att.dataUrl);
+      };
+    });
+    document.querySelectorAll('[data-del-attachment]').forEach(el => {
+      el.onclick = () => UI.confirm('첨부파일을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
+        await Clients.removeDocumentAttachment(id, el.dataset.delAttachmentDoc, el.dataset.delAttachment);
+        toastUndo('첨부파일을 삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
+
+    // 목표 진행 상황
+    const addGoalBtn = document.getElementById('addGoalBtn');
+    if (addGoalBtn) addGoalBtn.onclick = async () => {
+      const text = document.getElementById('goalText').value;
+      if (!text.trim()){ toast('목표 내용을 입력해 주세요.', 'error'); return; }
+      await Clients.addGoal(id, { term: document.getElementById('goalTerm').value, text });
+      toast('목표를 추가했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('.goalStatusSelect').forEach(el => {
+      el.onchange = async () => { await Clients.setGoalStatus(id, el.dataset.goal, el.value); UI.renderCurrentView(); };
+    });
+    document.querySelectorAll('[data-del-goal]').forEach(el => {
+      el.onclick = () => UI.confirm('이 목표를 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
+        await Clients.removeGoal(id, el.dataset.delGoal);
+        toastUndo('목표를 삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
     });
@@ -4148,6 +4470,7 @@ const Views = {
       '<button class="tab-btn' + (Views._scheduleViewMode === 'month' ? ' active' : '') + '" id="viewModeMonthBtn">월간</button>' +
       '<button class="tab-btn' + (Views._scheduleViewMode === 'week' ? ' active' : '') + '" id="viewModeWeekBtn">주간</button>' +
       '</div>' +
+      '<button class="btn btn-sm" id="icsExportBtn">📆 캘린더 내보내기(.ics)</button>' +
       '<button class="btn btn-primary" id="newSchBtn">＋ 일정 등록</button></div></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">후속조치의 예정일도 함께 표시됩니다. 날짜를 클릭하면 해당 날짜의 일정만 볼 수 있습니다.</p>';
 
@@ -4190,6 +4513,13 @@ const Views = {
   },
   bindSchedule(){
     document.getElementById('newSchBtn').onclick = () => Views.openScheduleModal();
+    document.getElementById('icsExportBtn').onclick = () => {
+      if (Schedules.list().filter(s => s.status === 'planned').length === 0){
+        toast('내보낼 예정 일정이 없습니다.', 'error');
+        return;
+      }
+      Schedules.exportICS();
+    };
     const calPrevBtn = document.getElementById('calPrevBtn');
     if (calPrevBtn) calPrevBtn.onclick = () => {
       Views._calendarYM.month--;
@@ -4438,6 +4768,14 @@ const Views = {
         { label: '유지관리', value: r.levelCounts.maintenance || 0, color: 'var(--accent)' },
         { label: '일시관리', value: r.levelCounts.temporary || 0, color: 'var(--good)' }
       ]);
+
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">관리수준 변화 (해당월 발생 건수)</p>' +
+      ((r.levelImprovedCount || r.levelWorsenedCount)
+        ? Views.renderBarChart([
+            { label: '완화(호전)', value: r.levelImprovedCount || 0, color: 'var(--good)' },
+            { label: '강화(악화)', value: r.levelWorsenedCount || 0, color: 'var(--danger)' }
+          ])
+        : '<div class="empty-msg">해당월에 발생한 관리수준 변경이 없습니다.</div>');
 
     const contactBars = Object.keys(r.contactTypeCounts).map(k => ({ label: k, value: r.contactTypeCounts[k] }));
     html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">접촉유형별 상담건수</p>' +
