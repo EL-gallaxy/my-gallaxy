@@ -590,6 +590,16 @@ const Utils = {
   formatSoapDate(soap){
     return soap.date + (soap.time ? ' ' + soap.time : '');
   },
+  // Picks the correct Korean particle depending on whether `word` ends in a
+  // syllable with a batchim (받침) — e.g. josa('상태', '이', '가') -> '가',
+  // josa('수면', '이', '가') -> '이'. Used so generated SOAP text reads
+  // grammatically instead of an always-wrong hardcoded "이(가)".
+  josa(word, withBatchim, withoutBatchim){
+    const ch = (word || '').trim().slice(-1);
+    const code = ch.charCodeAt(0) - 0xAC00;
+    if (code < 0 || code > 11171) return withBatchim; // non-Hangul, just pick one
+    return (code % 28 !== 0) ? withBatchim : withoutBatchim;
+  },
   // 'YYYY-MM-DD' of the Sunday starting the week containing dateStr — used by
   // the 일정 tab's 주간 보기.
   startOfWeekStr(dateStr){
@@ -830,7 +840,7 @@ const State = {
 
 const CONSTANTS = {
   CONTACT_TYPES: ['전화', '방문', '내소', '프로그램', '기타'],
-  AREAS: ['정신건강', '일상생활', '복약', '가족', '사회관계', '경제·주거', '취업', '프로그램', '기타'],
+  AREAS: ['정신건강', '신체질환', '일상생활', '복약', '가족', '사회관계', '경제·주거', '법률·행정', '취업', '프로그램', '기타'],
   // Order reflects severity, highest need first. A caseworker always picks
   // this directly — the app never infers or changes it automatically.
   MANAGEMENT_LEVELS: {
@@ -1518,6 +1528,8 @@ const SoapModule = {
       declineClause: '수면시간 감소', improveClause: '수면 상태 개선' },
     { key: 'meal',    label: '식사 상태',       words: ['식사', '영양', '끼니', '식욕'],
       declineClause: '식사량 감소', improveClause: '식사 상태 개선' },
+    { key: 'physical', label: '신체 건강 상태',  words: ['신체질환', '지병', '만성질환', '통증', '병원 진료', '건강검진', '몸이 아프', '몸살', '컨디션 난조'],
+      declineClause: '신체 건강 악화 및 통증 호소', improveClause: '신체 건강 상태 개선' },
     { key: 'hygiene', label: '일상생활 수행',   words: ['위생', '청결', '일상생활', '활동량', '씻'],
       declineClause: '일상생활 수행 저하', improveClause: '일상생활 수행 개선' },
     { key: 'med',     label: '복약 관련 내용',   words: ['복약', '약을', '약물 복용', '투약', '처방'],
@@ -1632,7 +1644,7 @@ const SoapModule = {
   // worker typed — it never fabricates facts, and never touches risk,
   // diagnosis, medication compliance, or family dynamics beyond noting that
   // related words appeared.
-  generateADraft({ S, O, areas }){
+  generateADraft({ id, clientId, contactType, subject, S, O, areas }){
     const combined = ((S || '') + '\n' + (O || ''));
     const hasAnyText = (S && S.trim()) || (O && O.trim());
 
@@ -1649,53 +1661,101 @@ const SoapModule = {
     const hasChange = this.CHANGE_WORDS.some(w => combined.includes(w));
     const hasIntensifier = this.INTENSIFIER_WORDS.some(w => combined.includes(w));
 
-    const declineTopics = found.filter(t => t.direction === 'decline' || t.direction === 'mixed');
-    const improveTopics = found.filter(t => t.direction === 'improve' || t.direction === 'mixed');
+    // Each topic goes into exactly ONE bucket — a 'mixed' topic (both decline
+    // and improve words in its sentences) used to land in BOTH the decline
+    // and improve lists, producing self-contradicting drafts (e.g. "수면
+    // 감소"와 "수면 개선"이 같은 문단에 동시에 등장). It now gets its own clause.
+    const declineTopics = found.filter(t => t.direction === 'decline');
+    const improveTopics = found.filter(t => t.direction === 'improve');
+    const mixedTopics = found.filter(t => t.direction === 'mixed');
     const neutralTopics = found.filter(t => t.direction === 'neutral');
+    const strugglingTopics = declineTopics.concat(mixedTopics);
+
+    // Compare each struggling/improving topic against the client's most
+    // recent PRIOR finalized SOAP (excluding this same record, so editing an
+    // existing draft doesn't compare it against itself) to describe an
+    // actual trend instead of guessing one from generic "변화" wording.
+    // Still nothing invented — only directions re-derived from that older
+    // record's own S/O text.
+    const priorFinal = clientId
+      ? this.listByClient(clientId).find(s => s.id !== id && s.status === 'final')
+      : null;
+    const priorCombined = priorFinal ? ((priorFinal.S || '') + '\n' + (priorFinal.O || '')) : '';
+    const reversals = [];
+    const persistentDeclineKeys = [];
+    if (priorCombined){
+      found.forEach(t => {
+        const priorDir = this.topicDirection(t.words, priorCombined);
+        if (priorDir === 'neutral' || priorDir === t.direction) {
+          if (priorDir === 'decline' && t.direction === 'decline') persistentDeclineKeys.push(t.key);
+          return;
+        }
+        if ((t.direction === 'decline' || t.direction === 'mixed') && priorDir === 'improve'){
+          reversals.push(t.label + Utils.josa(t.label, '이', '가') + ' 호전 흐름에서 다시 저하되는 양상');
+        } else if (t.direction === 'improve' && (priorDir === 'decline' || priorDir === 'mixed')){
+          reversals.push(t.label + Utils.josa(t.label, '이', '가') + ' 저하 흐름에서 호전되는 양상');
+        }
+      });
+    }
 
     const sentences = [];
 
-    // ① 현재 상태 및 변화 — built from the specific topics/directions found,
+    // ① 상담 개요 — 접촉유형·상담대상을 명시해 실제 상담기록지에 가까운 문장으로 시작.
+    const contactLabel = contactType || '상담';
+    const subjectLabel = CONSTANTS.SOAP_SUBJECTS[subject] || CONSTANTS.SOAP_SUBJECTS.client;
+    sentences.push('금번 ' + contactLabel + '(' + subjectLabel + ') 상담을 통해 확인된 내용을 종합하면 다음과 같음.');
+
+    // ② 현재 상태 및 변화 — built from the specific topics/directions found,
     // instead of a generic "관련 내용이 확인됨" for every case.
-    const s1parts = [];
+    const s2parts = [];
     if (declineTopics.length){
-      const list = declineTopics.map(t => t.declineClause).join(', ');
-      s1parts.push(list + ' 등이' + (hasIntensifier ? ' 현저하게' : '') + ' 확인되어 일상생활 유지에 부정적인 영향이 있을 수 있는 것으로 판단됨.');
+      const list = declineTopics.map(t => t.declineClause + (persistentDeclineKeys.includes(t.key) ? '(반복적으로 확인됨)' : '')).join(', ');
+      s2parts.push(list + ' 등이' + (hasIntensifier ? ' 현저하게' : '') + ' 확인되어 일상생활 유지에 부정적인 영향이 있을 수 있는 것으로 판단됨.');
     }
     if (improveTopics.length){
       const list = improveTopics.map(t => t.improveClause).join(', ');
-      s1parts.push(list + ' 등이 확인되어 전반적인 상태가 다소 안정된 것으로 파악됨.');
+      s2parts.push(list + ' 등이 확인되어 전반적인 상태가 다소 안정된 것으로 파악됨.');
     }
-    if (s1parts.length === 0){
+    if (mixedTopics.length){
+      const list = mixedTopics.map(t => t.label).join(', ');
+      s2parts.push(list + '와 관련하여 호전과 저하가 함께 나타나고 있어 세심한 관찰이 필요한 것으로 판단됨.');
+    }
+    if (s2parts.length === 0){
       if (neutralTopics.length){
-        s1parts.push('상담 과정에서 ' + neutralTopics.map(t => t.label).join(', ') + ' 관련 내용이 확인됨.');
+        s2parts.push('상담 과정에서 ' + neutralTopics.map(t => t.label).join(', ') + ' 관련 내용이 확인됨.');
       } else {
-        s1parts.push('금번 상담에서 확인된 S·O 내용을 바탕으로 특이 변화 사항은 뚜렷하게 나타나지 않는 것으로 보임.');
+        s2parts.push('금번 상담에서 확인된 S·O 내용을 바탕으로 특이 변화 사항은 뚜렷하게 나타나지 않는 것으로 보임.');
       }
-    } else if (hasChange){
-      s1parts.push('이전 상담 대비 변화가 있는 것으로 파악되어 지속적인 확인이 필요한 것으로 판단됨.');
+    } else if (hasChange && reversals.length === 0){
+      s2parts.push('이전 상담 대비 변화가 있는 것으로 파악되어 지속적인 확인이 필요한 것으로 판단됨.');
     }
-    // 사회적 관계(가족·보호자 연락 등)가 다른 어려움과 함께 언급된 경우, 자원 활용 상태를
-    // 계속 살펴볼 필요가 있다는 정도만 덧붙임 — 가족 역할을 단정하지 않음.
-    if (declineTopics.some(t => t.key === 'social') === false &&
-        found.some(t => t.key === 'social') && declineTopics.length > 0){
-      s1parts.push('가족(보호자)과의 연락 여부도 함께 확인되어, 관련 자원 활용 상태를 지속적으로 파악할 필요가 있는 것으로 사료됨.');
-    }
-    sentences.push(s1parts.join(' '));
+    sentences.push(s2parts.join(' '));
 
-    // ② 사례관리 의미
+    // ③ 이전 상담 기록과의 실제 비교 — 저장된 직전 최종 SOAP이 있을 때만 생성.
+    if (reversals.length){
+      sentences.push('이전 상담 기록과 비교하면 ' + reversals.join(', ') + '이 확인되어, 해당 부분에 대한 원인 파악과 대응이 필요한 것으로 사료됨.');
+    }
+
+    // 사회적 관계(가족·보호자 연락 등)가 중립적으로만 언급되었는데 다른 어려움이
+    // 함께 있는 경우, 자원 활용 상태를 계속 살펴볼 필요가 있다는 정도만 덧붙임 —
+    // 가족 역할을 단정하지 않음.
+    if (neutralTopics.some(t => t.key === 'social') && strugglingTopics.length > 0){
+      sentences.push('가족(보호자)과의 연락 여부도 함께 확인되어, 관련 자원 활용 상태를 지속적으로 파악할 필요가 있는 것으로 사료됨.');
+    }
+
+    // ④ 사례관리 의미
     const areaText = (areas && areas.length) ? areas.filter(a => a !== '기타').join(', ') : '';
-    if (declineTopics.length >= 2){
-      sentences.push(declineTopics.map(t => t.label).join(', ') + ' 등 여러 영역에서 어려움이 함께 나타나고 있어, 사례관리 차원의 지속적인 개입이 필요한 것으로 사료됨.');
+    if (strugglingTopics.length >= 2){
+      sentences.push(strugglingTopics.map(t => t.label).join(', ') + ' 등 여러 영역에서 어려움이 함께 나타나고 있어, 사례관리 차원의 지속적인 개입이 필요한 것으로 사료됨.');
     } else if (areaText){
       sentences.push(areaText + ' 영역과 관련하여 대상자의 일상생활 및 사회적 기능 유지를 위한 사례관리 지속이 필요한 것으로 사료됨.');
     } else {
       sentences.push('금번 확인된 내용은 대상자의 사례관리 지속 필요성을 뒷받침하는 것으로 사료됨.');
     }
 
-    // ③ 필요한 개입 및 관찰
-    if (declineTopics.length){
-      sentences.push('특히 ' + declineTopics.map(t => t.label).join(', ') + '에 대한 우선적인 관찰과 확인이 필요한 것으로 판단됨.');
+    // ⑤ 필요한 개입 및 관찰
+    if (strugglingTopics.length){
+      sentences.push('특히 ' + strugglingTopics.map(t => t.label).join(', ') + '에 대한 우선적인 관찰과 확인이 필요한 것으로 판단됨.');
     } else if (found.length){
       sentences.push('향후 상담에서 ' + found.map(t => t.label).join(', ') + '에 대해 지속적으로 관찰할 필요가 있는 것으로 판단됨.');
     } else {
@@ -1708,6 +1768,7 @@ const SoapModule = {
     if (!foundKeys.includes('sleep')) checklist.push('수면 상태가 확인되지 않음');
     if (!foundKeys.includes('med')) checklist.push('복약 상태가 확인되지 않음');
     if (!foundKeys.includes('hygiene')) checklist.push('일상생활 수행 정도가 확인되지 않음');
+    if (!foundKeys.includes('physical')) checklist.push('신체 건강 상태가 확인되지 않음');
     checklist.push('위험 관련 내용은 자동으로 판단하지 않으므로, 필요 시 실무자가 직접 확인 후 기록하세요.');
 
     return { text: sentences.join(' '), checklist };
