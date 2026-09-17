@@ -513,7 +513,7 @@
       <p class="help-text" style="margin-top:14px;">비밀번호를 잊으면 암호화된 데이터를 복구할 수 없습니다.</p>
       <div class="hidden" id="loginResetPrompt" style="margin-top:8px;text-align:center;">
         <p class="help-text" style="margin-bottom:8px;">비밀번호가 계속 맞지 않는다면, 데이터를 초기화하고 새로 시작할 수 있습니다.</p>
-        <button type="button" class="btn btn-sm btn-danger" id="resetAllLink">🗑 모든 데이터 초기화</button>
+        <button type="button" class="btn btn-sm btn-danger" id="resetAllLink">모든 데이터 초기화</button>
       </div>
     </div>
   </div>
@@ -534,7 +534,7 @@
     <button class="btn btn-primary btn-block" id="unlockSubmitBtn">잠금 해제</button>
     <div class="hidden" id="unlockResetPrompt" style="margin-top:12px;text-align:center;">
       <p class="help-text" style="margin-bottom:8px;">비밀번호가 계속 맞지 않는다면, 데이터를 초기화하고 새로 시작할 수 있습니다.</p>
-      <button type="button" class="btn btn-sm btn-danger" id="unlockResetLink">🗑 모든 데이터 초기화</button>
+      <button type="button" class="btn btn-sm btn-danger" id="unlockResetLink">모든 데이터 초기화</button>
     </div>
   </div>
 </div>
@@ -599,13 +599,28 @@ const ICON_PATHS = {
   alertTriangle: '<path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10.5v4M12 17.3h.01"/>',
   clock: '<circle cx="12" cy="12" r="8.3"/><path d="M12 7.3V12l3.3 2"/>',
   siren: '<path d="M12 4.2a5.8 5.8 0 0 1 5.8 5.8v6H6.2v-6A5.8 5.8 0 0 1 12 4.2Z"/><path d="M12 2v1.3M4.8 7l1 .8M19.2 7l-1 .8M4 20h16"/>',
-  pill: '<rect x="3.3" y="7.5" width="17.4" height="9" rx="4.5" transform="rotate(-25 12 12)"/><path d="M9.6 9 14.4 15" transform="rotate(-25 12 12)"/>',
+  pill: '<rect x="3.5" y="8" width="17" height="8" rx="4"/><path d="M12 8v8"/>',
   clipboardList: '<rect x="5" y="4" width="14" height="17" rx="1.5"/><rect x="9" y="2.2" width="6" height="3.4" rx="1"/><path d="M8.5 11h7M8.5 14.5h7M8.5 18h4"/>',
   shield: '<path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z"/>',
   edit: '<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="M13.8 6.2l4 4"/>',
   printer: '<rect x="6" y="9" width="12" height="7" rx="1"/><path d="M7 9V4h10v5M7 16v4h10v-4"/>',
   arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
-  compass: '<circle cx="12" cy="12" r="8.5"/><path d="m14.8 9.2-1.6 4.4-4.4 1.6 1.6-4.4Z"/>'
+  compass: '<circle cx="12" cy="12" r="8.5"/><path d="m14.8 9.2-1.6 4.4-4.4 1.6 1.6-4.4Z"/>',
+  database: '<ellipse cx="12" cy="5.5" rx="7.5" ry="2.5"/><path d="M4.5 5.5v6c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-6"/><path d="M4.5 11.5v6c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-6"/>',
+  sliders: '<path d="M4 6h6M14 6h6M4 12h10M18 12h2M4 18h3M11 18h9"/><circle cx="12" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="9" cy="18" r="2"/>',
+  target: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
+  link: '<path d="M9.5 14.5l5-5"/><path d="M11 7l1-1a4 4 0 0 1 5.7 5.7l-1.5 1.5"/><path d="M13 17l-1 1a4 4 0 0 1-5.7-5.7l1.5-1.5"/>',
+  phone: '<path d="M6 3h3l1.5 4.5-2 1.5a11 11 0 0 0 5.5 5.5l1.5-2 4.5 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4 6.2 2 2 0 0 1 6 3Z"/>',
+  checkCircle: '<circle cx="12" cy="12" r="9"/><path d="M8 12.3l2.6 2.6L16.5 9"/>',
+  messageSquare: '<path d="M4 4.5h16v11H9l-4 4v-4H4Z"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/>',
+  type: '<path d="M4 7V5h16v2M12 5v14M9 19h6"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M13 10l2 2"/>',
+  briefcase: '<rect x="3" y="8" width="18" height="12" rx="1.5"/><path d="M9 8V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/>',
+  trash: '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M10 11v6M14 11v6"/>',
+  flag: '<path d="M6 3v18"/><path d="M6 4h11l-2.5 4L17 12H6"/>',
+  paperclip: '<path d="M8 12.5V7a4 4 0 0 1 8 0v9a2.5 2.5 0 0 1-5 0V8.5"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M6.5 15H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v1.5"/>'
 };
 function icon(name, opts){
   opts = opts || {};
@@ -1293,9 +1308,9 @@ const FontSize = {
    ========================================================================= */
 const DashboardPrefs = {
   WIDGETS: {
-    crisis: '🚨 위기관리 대상자 현황', overdue: '⚠ 기한 초과 후속조치', gap: '🕓 미접촉 대상자',
-    medRenewal: '💊 복약 갱신 임박', reassessment: '📋 정기 재사정 필요', safetyGap: '🛡️ 안전 정보 공백 점검',
-    today: '🔴 오늘 할 일', draft: '📝 미완성 SOAP', recent: '최근 기록', dataManage: '데이터 관리'
+    crisis: icon('siren') + ' 위기관리 대상자 현황', overdue: icon('alertTriangle') + ' 기한 초과 후속조치', gap: icon('clock') + ' 미접촉 대상자',
+    medRenewal: icon('pill') + ' 복약 갱신 임박', reassessment: icon('clipboardList') + ' 정기 재사정 필요', safetyGap: icon('shield') + ' 안전 정보 공백 점검',
+    today: icon('clock') + ' 오늘 할 일', draft: icon('edit') + ' 미완성 SOAP', recent: '최근 기록', dataManage: '데이터 관리'
   },
   hidden: {},
 
@@ -3442,7 +3457,7 @@ const Views = {
     html += '<div style="margin-bottom:18px;">' +
       (Notifications.enabled
         ? '<span class="help-text">🔔 브라우저 알림이 켜져 있습니다.</span>'
-        : '<button class="btn btn-sm" id="enableNotifBtn">🔔 브라우저 알림 사용</button>') +
+        : '<button class="btn btn-sm" id="enableNotifBtn">' + icon('bell') + ' 브라우저 알림 사용</button>') +
       '</div>';
 
     const hide = (key) => DashboardPrefs.isHidden(key);
@@ -3725,7 +3740,7 @@ const Views = {
     }
 
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('users', { size: 22 }) + ' 대상자</h1>' +
-      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="caseloadSummaryBtn">🖨️ 전체 현황 인쇄</button>' +
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="caseloadSummaryBtn">' + icon('printer') + ' 전체 현황 인쇄</button>' +
       '<button class="btn btn-sm" id="exportClientsCsvBtn">⬇ CSV 내보내기</button>' +
       '<button class="btn btn-sm" id="importClientsCsvBtn">⬆ CSV 일괄 등록</button>' +
       '<input type="file" id="importClientsCsvInput" accept=".csv,text/csv" class="hidden">' +
@@ -3843,7 +3858,7 @@ const Views = {
       '<div style="margin-left:auto;display:flex;gap:8px;">' +
       (isClosed
         ? '<button class="btn btn-sm" id="reopenClientBtn">↩ 재등록</button>'
-        : '<button class="btn btn-sm" id="closeClientBtn">🏁 사례 종결</button>') +
+        : '<button class="btn btn-sm" id="closeClientBtn">' + icon('flag') + ' 사례 종결</button>') +
       '<button class="btn btn-sm btn-danger" id="deleteClientBtn">대상자 삭제</button>' +
       '</div></div>' +
       '<div class="quick-btns" style="margin-top:14px;">' +
@@ -3957,7 +3972,7 @@ const Views = {
     if (!SimpleMode.isSimple()){
       const reassessments = (c.reassessments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
       const reassessGap = Clients.getReassessmentGapInfo(c.id);
-      historyHtml += '<details class="panel"' + (reassessments.length ? ' open' : '') + '><summary class="panel-title">📋 정기 재사정</summary>' +
+      historyHtml += '<details class="panel"' + (reassessments.length ? ' open' : '') + '><summary class="panel-title">' + icon('clipboardList') + ' 정기 재사정</summary>' +
         '<p class="help-text" style="margin-bottom:12px;">' +
         (reassessGap
           ? '<span style="color:var(--danger);">⚠ 마지막 재사정으로부터 약 ' + Utils.formatElapsedDays(reassessGap.days) + ' 경과 (기준: ' + Utils.formatElapsedDays(reassessGap.thresholdDays) + ')</span>'
@@ -3998,7 +4013,7 @@ const Views = {
     const vs = c.visitSafety || {};
     const hasVisitFlag = !!(vs.hasViolenceHistory || vs.needsCompanion || vs.hasPets);
     safetyHtml += '<div class="panel"' + (hasVisitFlag ? ' style="border-color:var(--warn);background:var(--warn-soft);"' : '') + '>' +
-      '<div class="panel-title">🧳 방문 전 안전 체크 (실무자 안전용)</div>' +
+      '<div class="panel-title">' + icon('briefcase') + ' 방문 전 안전 체크 (실무자 안전용)</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:10px;">' +
       '<label class="field-inline"><input type="checkbox" id="vsViolence"' + (vs.hasViolenceHistory ? ' checked' : '') + '> 폭력 이력 있음</label>' +
       '<label class="field-inline"><input type="checkbox" id="vsCompanion"' + (vs.needsCompanion ? ' checked' : '') + '> 동반방문 필요</label>' +
@@ -4092,7 +4107,7 @@ const Views = {
     // 입퇴원 이력 — 실무자가 알고 있는 입/퇴원 사실을 직접 기록하는 자유 입력
     // 이력이며, 앱이 입원 여부를 추정하거나 진단을 다루지 않는다.
     const admissions = (c.admissions || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    historyHtml += '<details class="panel"' + (admissions.length ? ' open' : '') + '><summary class="panel-title">입퇴원 이력</summary>';
+    historyHtml += '<details class="panel"' + (admissions.length ? ' open' : '') + '><summary class="panel-title">' + icon('building') + ' 입퇴원 이력</summary>';
     if (admissions.length === 0){
       historyHtml += '<div class="empty-msg">기록된 입퇴원 이력이 없습니다.</div>';
     } else {
@@ -4115,7 +4130,7 @@ const Views = {
     // 당장 급하지 않으므로 간소화 모드에서 숨긴다(집계용 변수는 계속 계산됨).
     const resourceLinks = (c.resourceLinks || []).slice().sort((a, b) => b.date.localeCompare(a.date));
     if (!SimpleMode.isSimple()){
-      historyHtml += '<details class="panel"' + (resourceLinks.length ? ' open' : '') + '><summary class="panel-title">자원연계 현황</summary>';
+      historyHtml += '<details class="panel"' + (resourceLinks.length ? ' open' : '') + '><summary class="panel-title">' + icon('link') + ' 자원연계 현황</summary>';
       if (resourceLinks.length === 0){
         historyHtml += '<div class="empty-msg">연계된 자원이 없습니다.</div>';
       } else {
@@ -4141,7 +4156,7 @@ const Views = {
     // 복약 현황 — SOAP 서술과 별개로 약물명/용량/처방병원 변경 이력을 구조화된
     // 목록으로 남긴다. 가장 최근 항목이 사실상 현재 복약 상태를 나타낸다.
     const medications = (c.medications || []).slice().reverse().sort((a, b) => b.date.localeCompare(a.date));
-    historyHtml += '<details class="panel"' + (medications.length ? ' open' : '') + '><summary class="panel-title">복약 현황</summary>';
+    historyHtml += '<details class="panel"' + (medications.length ? ' open' : '') + '><summary class="panel-title">' + icon('pill') + ' 복약 현황</summary>';
     if (medications.length === 0){
       historyHtml += '<div class="empty-msg">기록된 복약 정보가 없습니다.</div>';
     } else {
@@ -4166,7 +4181,7 @@ const Views = {
 
     // 보호자/비상연락처 — 위기 상황에서 바로 확인할 수 있도록 복수 등록 가능.
     const emergencyContacts = (c.emergencyContacts || []);
-    safetyHtml += '<details class="panel"' + (emergencyContacts.length ? ' open' : '') + '><summary class="panel-title">보호자 · 비상연락처</summary>';
+    safetyHtml += '<details class="panel panel-safety-critical"' + (emergencyContacts.length ? ' open' : '') + '><summary class="panel-title">' + icon('phone') + ' 보호자 · 비상연락처</summary>';
     if (emergencyContacts.length === 0){
       safetyHtml += '<div class="empty-msg">등록된 보호자·비상연락처가 없습니다.</div>';
     } else {
@@ -4190,7 +4205,7 @@ const Views = {
     // 않은 고급 기능이라 간소화 모드에서 숨긴다.
     const caseConferences = (c.caseConferences || []).slice().sort((a, b) => b.date.localeCompare(a.date));
     if (!SimpleMode.isSimple()){
-      safetyHtml += '<details class="panel"' + (caseConferences.length ? ' open' : '') + '><summary class="panel-title">사례회의 기록</summary>';
+      safetyHtml += '<details class="panel"' + (caseConferences.length ? ' open' : '') + '><summary class="panel-title">' + icon('messageSquare') + ' 사례회의 기록</summary>';
       if (caseConferences.length === 0){
         safetyHtml += '<div class="empty-msg">기록된 사례회의가 없습니다.</div>';
       } else {
@@ -4214,7 +4229,7 @@ const Views = {
     // 측정한 점수와 날짜만 그대로 목록화해 변화 추이를 눈으로 볼 수 있게 한다.
     const assessments = (c.assessments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
     if (!SimpleMode.isSimple()){
-      historyHtml += '<details class="panel"' + (assessments.length ? ' open' : '') + '><summary class="panel-title">사정도구 점수 이력</summary>';
+      historyHtml += '<details class="panel"' + (assessments.length ? ' open' : '') + '><summary class="panel-title">' + icon('barChart') + ' 사정도구 점수 이력</summary>';
       if (assessments.length === 0){
         historyHtml += '<div class="empty-msg">기록된 사정도구 점수가 없습니다.</div>';
       } else {
@@ -4238,7 +4253,7 @@ const Views = {
     // 필수 서류/동의서 체크리스트 — 수령 여부만 토글로 관리한다.
     const documents = (c.documents || []);
     if (!SimpleMode.isSimple()){
-      historyHtml += '<details class="panel"' + (documents.length ? ' open' : '') + '><summary class="panel-title">필수 서류·동의서</summary>';
+      historyHtml += '<details class="panel"' + (documents.length ? ' open' : '') + '><summary class="panel-title">' + icon('fileText') + ' 필수 서류·동의서</summary>';
       if (documents.length === 0){
         historyHtml += '<div class="empty-msg">등록된 서류 항목이 없습니다.</div>';
       } else {
@@ -4255,7 +4270,7 @@ const Views = {
               '</div>' : '') +
             '</div><div class="row-actions">' +
             '<button class="btn btn-sm' + (d.receivedDate ? '' : ' btn-primary') + '" data-toggle-doc="' + d.id + '">' + (d.receivedDate ? '미수령으로 변경' : '수령 확인') + '</button>' +
-            '<button class="btn btn-sm" data-attach-doc="' + d.id + '">📎 첨부</button>' +
+            '<button class="btn btn-sm" data-attach-doc="' + d.id + '">' + icon('paperclip') + ' 첨부</button>' +
             '<button class="btn btn-sm btn-danger" data-del-doc="' + d.id + '">삭제</button></div></div>';
         });
       }
@@ -4273,7 +4288,7 @@ const Views = {
     // 기관과 어떤 목적으로 몇 번 정보를 공유했는지 이력으로 남긴다.
     const consents = (c.consents || []).slice().sort((a, b) => b.date.localeCompare(a.date));
     if (!SimpleMode.isSimple()){
-      historyHtml += '<details class="panel"' + (consents.length ? ' open' : '') + '><summary class="panel-title">정보공유 동의 이력</summary>';
+      historyHtml += '<details class="panel"' + (consents.length ? ' open' : '') + '><summary class="panel-title">' + icon('checkCircle') + ' 정보공유 동의 이력</summary>';
       if (consents.length === 0){
         historyHtml += '<div class="empty-msg">등록된 정보공유 동의 이력이 없습니다.</div>';
       } else {
@@ -5106,7 +5121,7 @@ const Views = {
       '<div id="checklistBox"></div>' +
       '<div style="display:flex;gap:8px;margin-top:10px;">' +
       '<button class="btn btn-sm" id="regenABtn">✨ A 다시 작성</button>' +
-      '<button class="btn btn-sm" id="copyABtn">📋 A 복사</button>' +
+      '<button class="btn btn-sm" id="copyABtn">' + icon('copy') + ' A 복사</button>' +
       '</div></div>';
 
     html += '<div class="panel"><div class="panel-title">P (계획)</div>' +
@@ -5122,7 +5137,7 @@ const Views = {
       html += '<div class="panel"><div class="panel-title">SOAP 전체 복사</div>' +
         '<div class="soap-copy-block">' + Utils.nl2br(SoapModule.formatForCopy(soap)) + '</div>' +
         '<div style="display:flex;gap:8px;margin-top:10px;">' +
-        '<button class="btn btn-sm" id="copyAllBtn">📋 SOAP 전체 복사</button>' +
+        '<button class="btn btn-sm" id="copyAllBtn">' + icon('copy') + ' SOAP 전체 복사</button>' +
         '<button class="btn btn-sm" id="printSoapBtn">' + icon('printer') + ' 인쇄</button>' +
         '</div></div>';
       html += Views.printSignatureHtml();
@@ -5445,8 +5460,8 @@ const Views = {
       '<button class="tab-btn' + (Views._scheduleViewMode === 'month' ? ' active' : '') + '" id="viewModeMonthBtn">월간</button>' +
       '<button class="tab-btn' + (Views._scheduleViewMode === 'week' ? ' active' : '') + '" id="viewModeWeekBtn">주간</button>' +
       '</div>' +
-      '<button class="btn btn-sm" id="dailyBriefingBtn">🧳 오늘 방문 준비</button>' +
-      '<button class="btn btn-sm" id="icsExportBtn">📆 캘린더 내보내기(.ics)</button>' +
+      '<button class="btn btn-sm" id="dailyBriefingBtn">' + icon('briefcase') + ' 오늘 방문 준비</button>' +
+      '<button class="btn btn-sm" id="icsExportBtn">' + icon('calendar') + ' 캘린더 내보내기(.ics)</button>' +
       '<button class="btn btn-primary" id="newSchBtn">＋ 일정 등록</button></div></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">후속조치의 예정일도 함께 표시됩니다. 날짜를 클릭하면 해당 날짜의 일정만 볼 수 있습니다.</p>';
 
@@ -5561,7 +5576,7 @@ const Views = {
     html += '<div class="page-header"><h1 class="page-title" style="margin:0;">🧳 오늘의 방문 준비 브리핑</h1>' +
       '<div style="display:flex;gap:8px;align-items:center;">' +
       '<input type="date" id="briefingDateInput" value="' + dateStr + '">' +
-      '<button class="btn btn-sm" id="printBriefingBtn">🖨️ 인쇄</button>' +
+      '<button class="btn btn-sm" id="printBriefingBtn">' + icon('printer') + ' 인쇄</button>' +
       '</div></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">해당 날짜에 예정된 일정의 대상자별 관리수준·최근 위기이력·방문 전 안전 체크·안전계획 여부를 방문 전에 한눈에 확인할 수 있습니다.</p>';
 
@@ -5765,10 +5780,10 @@ const Views = {
   renderDailyJournal(dateStr){
     const j = Stats.dailyJournal(dateStr);
     let html = '<div class="panel"><div class="page-header" style="margin-bottom:14px;">' +
-      '<div class="panel-title" style="margin:0;">📔 일일 업무일지</div>' +
+      '<div class="panel-title" style="margin:0;">' + icon('fileText') + ' 일일 업무일지</div>' +
       '<div style="display:flex;gap:8px;align-items:center;">' +
       '<input type="date" id="journalDateInput" value="' + dateStr + '">' +
-      '<button class="btn btn-sm" id="printJournalBtn">🖨️ 인쇄</button>' +
+      '<button class="btn btn-sm" id="printJournalBtn">' + icon('printer') + ' 인쇄</button>' +
       '</div></div>';
 
     html += '<div class="summary-grid">' +
@@ -5857,12 +5872,12 @@ const Views = {
   renderMonthlyReport(monthStr){
     const r = Stats.monthlyReport(monthStr);
     let html = '<div class="panel"><div class="page-header" style="margin-bottom:14px;">' +
-      '<div class="panel-title" style="margin:0;">📋 월간 실적보고서</div>' +
+      '<div class="panel-title" style="margin:0;">' + icon('barChart') + ' 월간 실적보고서</div>' +
       '<div style="display:flex;gap:8px;align-items:center;">' +
       Views.reportModeToggleHtml('month') +
       '<select id="reportMonthSelect">' + Views.monthOptionsHtml(monthStr) + '</select>' +
       '<button class="btn btn-sm" id="exportReportCsvBtn">⬇ CSV 내보내기</button>' +
-      '<button class="btn btn-sm" id="printReportBtn">🖨️ 인쇄</button>' +
+      '<button class="btn btn-sm" id="printReportBtn">' + icon('printer') + ' 인쇄</button>' +
       '</div></div>';
 
     html += '<div class="summary-grid">' +
@@ -5913,12 +5928,12 @@ const Views = {
   renderAnnualReport(yearStr){
     const r = Stats.annualReport(yearStr);
     let html = '<div class="panel"><div class="page-header" style="margin-bottom:14px;">' +
-      '<div class="panel-title" style="margin:0;">📋 연간 실적보고서</div>' +
+      '<div class="panel-title" style="margin:0;">' + icon('barChart') + ' 연간 실적보고서</div>' +
       '<div style="display:flex;gap:8px;align-items:center;">' +
       Views.reportModeToggleHtml('year') +
       '<select id="reportYearSelect">' + Views.yearOptionsHtml(yearStr) + '</select>' +
       '<button class="btn btn-sm" id="exportAnnualReportCsvBtn">⬇ CSV 내보내기</button>' +
-      '<button class="btn btn-sm" id="printReportBtn">🖨️ 인쇄</button>' +
+      '<button class="btn btn-sm" id="printReportBtn">' + icon('printer') + ' 인쇄</button>' +
       '</div></div>';
 
     html += '<div class="summary-grid">' +
@@ -6192,10 +6207,22 @@ const Views = {
   settings(){
     let html = '<h1 class="page-title">' + icon('settings', { size: 22 }) + ' 설정</h1>';
 
+    // 패널이 많아 스크롤이 길어지므로, 페이지 상단에 각 패널로 바로 이동하는
+    // 앵커 링크를 둔다(대시보드 요약카드의 data-scroll과 동일한 방식).
+    const SETTINGS_SECTIONS = [
+      ['backupSection', '데이터 백업 및 복원'], ['printSettingsSection', '인쇄 문서 설정'],
+      ['tourSection', '앱 둘러보기'], ['simpleModeSection', '간소화 모드'],
+      ['dashboardWidgetsSection', '대시보드 위젯 표시'], ['themeSection', '화면 테마'],
+      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['passwordSection', '비밀번호 변경']
+    ];
+    html += '<div class="panel" style="display:flex;gap:8px;flex-wrap:wrap;">' +
+      SETTINGS_SECTIONS.map(([id, label]) => '<button class="btn btn-sm" data-scroll="' + id + '">' + label + '</button>').join('') +
+      '</div>';
+
     // 백업/복원 방법을 헷갈려하는 사용자가 많아, 버튼만 두지 않고 절차를
     // 번호를 매겨 명시적으로 설명한다. 파일 선택창이 뜨는 시점, 복원 후
     // 어떤 비밀번호로 로그인해야 하는지까지 구체적으로 안내한다.
-    html += '<div class="panel"><div class="panel-title">💾 데이터 백업 및 복원</div>' +
+    html += '<div class="panel" id="backupSection"><div class="panel-title">' + icon('database') + ' 데이터 백업 및 복원</div>' +
       '<p class="help-text">이 앱은 서버 없이 동작하며, 모든 기록은 지금 사용 중인 이 브라우저에만 암호화되어 저장됩니다. 브라우저 데이터가 지워지거나 다른 컴퓨터로 옮길 경우를 대비해 정기적으로 백업 파일을 저장해 두세요.</p>' +
       '<p style="font-size:0.85rem;margin:10px 0;">마지막 백업: <strong id="lastBackupAtText">확인 중…</strong></p>' +
       '<div class="divider"></div>' +
@@ -6210,23 +6237,23 @@ const Views = {
       '<input type="file" id="importBackupInput" accept="application/json" class="hidden">' +
       '</div></div>';
 
-    html += '<div class="panel"><div class="panel-title">🖨️ 인쇄 문서 설정</div>' +
+    html += '<div class="panel" id="printSettingsSection"><div class="panel-title">' + icon('printer') + ' 인쇄 문서 설정</div>' +
       '<p class="help-text" style="margin-bottom:10px;">여기에 입력하면 대상자 기록·SOAP·통계를 인쇄할 때 문서 상단에 헤더로 표시됩니다. 비워두면 헤더 없이 인쇄됩니다.</p>' +
       '<div class="form-grid">' +
       '<div class="field"><label>기관명</label><input type="text" id="orgNameInput" value="' + Utils.escapeHtml(OrgInfo.name) + '"></div>' +
       '<div class="field"><label>담당자명(선택)</label><input type="text" id="orgWorkerInput" value="' + Utils.escapeHtml(OrgInfo.worker) + '"></div>' +
       '</div></div>';
 
-    html += '<div class="panel"><div class="panel-title">📖 앱 둘러보기 (신입 직원용)</div>' +
+    html += '<div class="panel" id="tourSection"><div class="panel-title">' + icon('compass') + ' 앱 둘러보기 (신입 직원용)</div>' +
       '<p class="help-text" style="margin-bottom:10px;">이 앱에 어떤 기능들이 있는지 한 화면으로 정리해서 보여줍니다. 새로 오신 분께 안내할 때, 또는 오랜만에 기능을 다시 확인하고 싶을 때 활용하세요.</p>' +
       '<button class="btn btn-sm" id="openTourBtn">둘러보기 열기</button></div>';
 
-    html += '<div class="panel"><div class="panel-title">🧩 간소화 모드 (신입 직원용)</div>' +
+    html += '<div class="panel" id="simpleModeSection"><div class="panel-title">' + icon('sliders') + ' 간소화 모드 (신입 직원용)</div>' +
       '<p class="help-text" style="margin-bottom:10px;">켜면 목표 진행 상황·사정도구·필수 서류·자원연계·사례회의·초기사정지·통합 타임라인 등 당장 필요하지 않을 수 있는 고급 패널을 화면에서 숨깁니다. 데이터는 삭제되지 않으며, 방문 전 안전 체크처럼 안전과 직결된 항목은 계속 표시됩니다. 언제든 다시 끌 수 있습니다.</p>' +
       '<label class="field-inline"><input type="checkbox" id="simpleModeChk"' + (SimpleMode.isSimple() ? ' checked' : '') + '> 간소화 모드 사용</label>' +
       '</div>';
 
-    html += '<div class="panel"><div class="panel-title">🏠 대시보드 위젯 표시</div>' +
+    html += '<div class="panel" id="dashboardWidgetsSection"><div class="panel-title">' + icon('home') + ' 대시보드 위젯 표시</div>' +
       '<p class="help-text" style="margin-bottom:10px;">체크를 해제하면 해당 패널(및 상단 요약 카드)이 대시보드에서 보이지 않습니다.</p>' +
       '<div class="checkbox-group">' +
       Object.keys(DashboardPrefs.WIDGETS).map(key =>
@@ -6234,7 +6261,7 @@ const Views = {
       ).join('') +
       '</div></div>';
 
-    html += '<div class="panel"><div class="panel-title">화면 테마</div>' +
+    html += '<div class="panel" id="themeSection"><div class="panel-title">' + icon('moon') + ' 화면 테마</div>' +
       '<div class="field" style="max-width:240px;"><select id="themeModeSelect">' +
       '<option value="light">라이트</option>' +
       '<option value="dark">다크</option>' +
@@ -6242,7 +6269,7 @@ const Views = {
       '</select></div>' +
       '<p class="help-text">기기의 다크모드 설정을 따르거나, 라이트/다크를 직접 고정할 수 있습니다.</p></div>';
 
-    html += '<div class="panel"><div class="panel-title">글자 크기</div>' +
+    html += '<div class="panel" id="fontSizeSection"><div class="panel-title">' + icon('type') + ' 글자 크기</div>' +
       '<div class="field" style="max-width:240px;"><select id="fontSizeSelect">' +
       '<option value="small">작게</option>' +
       '<option value="medium">보통</option>' +
@@ -6250,13 +6277,13 @@ const Views = {
       '</select></div>' +
       '<p class="help-text">화면 전체 글자 크기를 조절합니다.</p></div>';
 
-    html += '<div class="panel"><div class="panel-title">자동 잠금 시간</div>' +
+    html += '<div class="panel" id="autoLockSection"><div class="panel-title">' + icon('lock') + ' 자동 잠금 시간</div>' +
       '<div class="field" style="max-width:240px;"><select id="autoLockSelect">' +
       [1, 3, 5, 10, 15, 30].map(m => '<option value="' + m + '">' + m + '분</option>').join('') +
       '</select></div>' +
       '<p class="help-text">이 시간 동안 조작이 없으면 자동으로 화면이 잠깁니다. 기본값은 5분입니다.</p></div>';
 
-    html += '<div class="panel"><div class="panel-title">비밀번호 변경</div>' +
+    html += '<div class="panel" id="passwordSection"><div class="panel-title">' + icon('key') + ' 비밀번호 변경</div>' +
       '<div class="field"><label>현재 비밀번호</label><input type="password" id="curPw" autocomplete="current-password"></div>' +
       '<div class="field"><label>새 비밀번호 (8자 이상)</label><input type="password" id="newPw" autocomplete="new-password"></div>' +
       '<div class="field"><label>새 비밀번호 확인</label><input type="password" id="newPw2" autocomplete="new-password"></div>' +
@@ -6267,6 +6294,12 @@ const Views = {
     return html;
   },
   bindSettings(){
+    document.querySelectorAll('[data-scroll]').forEach(el => {
+      el.onclick = () => {
+        const target = document.getElementById(el.dataset.scroll);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+    });
     Views.bindBackupControls();
     (async () => {
       const lastBackupAt = await Storage.getSetting('lastBackupAt');
