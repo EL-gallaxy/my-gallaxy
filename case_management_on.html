@@ -8,7 +8,7 @@
      이 파일과 같은 폴더에 함께 배포되는 별도 파일이며, 앱 로직은 여전히 이 한
      HTML 파일 안에만 있다. -->
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#2f6fed">
+<meta name="theme-color" content="#0f766e">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
 <style>
@@ -21,9 +21,9 @@
     --text:#2a2a27;
     --text-muted:#75746e;
     --text-faint:#a3a29c;
-    --accent:#42576a;
-    --accent-hover:#344654;
-    --accent-soft:#e8edf1;
+    --accent:#0f766e;
+    --accent-hover:#0b5c56;
+    --accent-soft:#e2f3f1;
     --danger:#a8412d;
     --danger-soft:#f6e6e2;
     --warn:#b5772b;
@@ -46,7 +46,7 @@
       --bg:#1b1c1e; --surface:#242527; --surface-alt:#2b2c2f;
       --border:#3a3b3e; --border-strong:#4a4b4f;
       --text:#e7e6e4; --text-muted:#a8a7a3; --text-faint:#77766f;
-      --accent:#7fa0bd; --accent-hover:#93b1cb; --accent-soft:#26333d;
+      --accent:#5eead4; --accent-hover:#8ff0e0; --accent-soft:#153733;
       --danger:#e28a71; --danger-soft:#3a2620;
       --warn:#e0ac6b; --warn-soft:#3a2f1c;
       --good:#7ec39a; --good-soft:#1f3327;
@@ -59,7 +59,7 @@
     --bg:#1b1c1e; --surface:#242527; --surface-alt:#2b2c2f;
     --border:#3a3b3e; --border-strong:#4a4b4f;
     --text:#e7e6e4; --text-muted:#a8a7a3; --text-faint:#77766f;
-    --accent:#7fa0bd; --accent-hover:#93b1cb; --accent-soft:#26333d;
+    --accent:#5eead4; --accent-hover:#8ff0e0; --accent-soft:#153733;
     --danger:#e28a71; --danger-soft:#3a2620;
     --warn:#e0ac6b; --warn-soft:#3a2f1c;
     --good:#7ec39a; --good-soft:#1f3327;
@@ -225,12 +225,24 @@
   .badge-closed{background:var(--draft-soft);color:var(--draft);}
   .badge-crisis-flag{background:var(--danger);color:#fff;}
 
-  /* collapsible client-detail panels (입퇴원 이력, 위기개입 기록 등) */
+  /* collapsible client-detail panels (입퇴원 이력, 위기개입 기록 등) — the
+     expand/collapse chevron used to be a tiny 0.75rem glyph in the faintest
+     text color, easy to miss entirely. Bigger, higher-contrast, and rotates
+     smoothly on open so the panel visibly reads as "this expands". */
   details.panel > summary.panel-title{cursor:pointer;list-style:none;margin-bottom:0;}
   details.panel[open] > summary.panel-title{margin-bottom:12px;}
   details.panel > summary.panel-title::-webkit-details-marker{display:none;}
-  details.panel > summary.panel-title::after{content:'▸';color:var(--text-faint);font-size:0.75rem;}
-  details.panel[open] > summary.panel-title::after{content:'▾';}
+  details.panel > summary.panel-title::after{
+    content:'';width:20px;height:20px;flex-shrink:0;
+    background-color:var(--text-muted);
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center/contain no-repeat;
+    transition:transform .15s;
+  }
+  details.panel[open] > summary.panel-title::after{transform:rotate(90deg);}
+  /* 안전과 직결된 아코디언(위험도 평가·안전계획·위기개입 기록)을 가족관계·
+     사례회의 같은 일반 행정 항목과 시각적으로 구분해 준다. */
+  .panel-safety-critical{border-left:4px solid var(--danger);}
   .tag{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:1px 7px;font-size:0.75rem;margin:0 4px 4px 0;}
 
   /* top-level tabs on the 대상자 상세 page — grouping the growing list of
@@ -323,6 +335,8 @@
   #lockScreen{
     position:fixed;inset:0;background:var(--bg);z-index:150;display:flex;align-items:center;justify-content:center;flex-direction:column;
   }
+
+  .icon{flex-shrink:0;vertical-align:-3px;}
 
   .fatal-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;}
   .fatal-box{max-width:480px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;}
@@ -533,21 +547,21 @@
       <div class="subtitle">사례관리 업무 보조</div>
     </div>
     <nav id="sideNav">
-      <button class="nav-btn nav-primary" data-view="dashboard">🏠 <span class="nav-label">대시보드</span></button>
-      <button class="nav-btn nav-primary" data-view="clients">👤 <span class="nav-label">대상자</span></button>
-      <button class="nav-btn nav-primary" data-view="soapList">📝 <span class="nav-label">SOAP 기록</span></button>
-      <button class="nav-btn nav-primary" data-view="followUps">🔔 <span class="nav-label">후속조치</span></button>
-      <button class="nav-btn nav-secondary" data-view="schedule">📅 <span class="nav-label">일정</span></button>
-      <button class="nav-btn nav-secondary" id="navResourceDirectory" data-view="resourceDirectory">🏢 <span class="nav-label">기관주소록</span></button>
-      <button class="nav-btn nav-secondary" data-view="search">🔍 <span class="nav-label">검색</span></button>
-      <button class="nav-btn nav-secondary" data-view="stats">📊 <span class="nav-label">통계</span></button>
-      <button class="nav-btn nav-secondary" data-view="selfCare">🧘 <span class="nav-label">자기돌봄</span></button>
-      <button class="nav-btn nav-secondary" data-view="training">📚 <span class="nav-label">교육·슈퍼비전</span></button>
-      <button class="nav-btn nav-secondary" data-view="settings">⚙️ <span class="nav-label">설정</span></button>
-      <button class="nav-btn" id="navMoreBtn" type="button">☰ <span class="nav-label">더보기</span></button>
+      <button class="nav-btn nav-primary" data-view="dashboard"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/></svg> <span class="nav-label">대시보드</span></button>
+      <button class="nav-btn nav-primary" data-view="clients"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.3 19c0-3 2.5-5.2 5.7-5.2s5.7 2.2 5.7 5.2"/><circle cx="17.3" cy="9" r="2.3"/><path d="M15.8 14.1c2.1.5 3.6 2 4.2 4.3"/></svg> <span class="nav-label">대상자</span></button>
+      <button class="nav-btn nav-primary" data-view="soapList"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M8 8h8M8 12h8M8 16h5"/></svg> <span class="nav-label">SOAP 기록</span></button>
+      <button class="nav-btn nav-primary" data-view="followUps"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 19a2 2 0 0 0 4 0"/></svg> <span class="nav-label">후속조치</span></button>
+      <button class="nav-btn nav-secondary" data-view="schedule"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="1.5"/><path d="M3.5 9.5h17"/><path d="M8 3v4M16 3v4"/></svg> <span class="nav-label">일정</span></button>
+      <button class="nav-btn nav-secondary" id="navResourceDirectory" data-view="resourceDirectory"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="10" height="18"/><rect x="14" y="9" width="6" height="12"/><path d="M7 7h1M11 7h1M7 11h1M11 11h1M7 15h1M11 15h1"/></svg> <span class="nav-label">기관주소록</span></button>
+      <button class="nav-btn nav-secondary" data-view="search"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.3" cy="10.3" r="6.3"/><path d="M20 20l-4.8-4.8"/></svg> <span class="nav-label">검색</span></button>
+      <button class="nav-btn nav-secondary" data-view="stats"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M2.5 20h19"/></svg> <span class="nav-label">통계</span></button>
+      <button class="nav-btn nav-secondary" data-view="selfCare"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7.2-4.5-9.4-9C1.2 7.8 2.8 4.4 6.2 3.9c2-.3 3.9.6 5.8 3 1.9-2.4 3.8-3.3 5.8-3 3.4.5 5 3.9 3.6 7.1C19.2 15.5 12 20 12 20z"/></svg> <span class="nav-label">자기돌봄</span></button>
+      <button class="nav-btn nav-secondary" data-view="training"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.3c-2-1.7-4.6-2.1-7.3-2.1v13c2.7 0 5.3.4 7.3 2.1 2-1.7 4.6-2.1 7.3-2.1v-13c-2.7 0-5.3.4-7.3 2.1Z"/><path d="M12 6.3v13"/></svg> <span class="nav-label">교육·슈퍼비전</span></button>
+      <button class="nav-btn nav-secondary" data-view="settings"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.6a8 8 0 0 0 0-3.2l1.9-1.5-2-3.4-2.3.9a7.9 7.9 0 0 0-2.7-1.6L14 2.5h-4l-.4 2.3a7.9 7.9 0 0 0-2.7 1.6l-2.3-.9-2 3.4L4.5 10.4a8 8 0 0 0 0 3.2l-1.9 1.5 2 3.4 2.3-.9c.8.7 1.7 1.3 2.7 1.6l.4 2.3h4l.4-2.3a7.9 7.9 0 0 0 2.7-1.6l2.3.9 2-3.4-1.9-1.5Z"/></svg> <span class="nav-label">설정</span></button>
+      <button class="nav-btn" id="navMoreBtn" type="button"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16"/></svg> <span class="nav-label">더보기</span></button>
     </nav>
     <div id="recentClientsBox" class="recent-clients"></div>
-    <button class="lock-btn" id="lockNowBtn">🔐 <span class="nav-label">잠금</span></button>
+    <button class="lock-btn" id="lockNowBtn"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="1.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg> <span class="nav-label">잠금</span></button>
   </div>
   <main id="appMain"></main>
 </div>
@@ -559,6 +573,46 @@
 
 <script>
 'use strict';
+
+/* =========================================================================
+   ICONS — small hand-drawn outline SVG set (24x24, stroke=currentColor) used
+   in place of emoji for the app's own chrome (nav, dashboard cards, page
+   titles, header buttons). No external icon font/CDN — kept fully inline so
+   the app stays a single self-contained file. Emoji are still used freely
+   inside generated record content (badges, list rows, etc.) — this set only
+   covers the app's own persistent UI frame.
+   ========================================================================= */
+const ICON_PATHS = {
+  home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3.3 19c0-3 2.5-5.2 5.7-5.2s5.7 2.2 5.7 5.2"/><circle cx="17.3" cy="9" r="2.3"/><path d="M15.8 14.1c2.1.5 3.6 2 4.2 4.3"/>',
+  fileText: '<rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  bell: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 19a2 2 0 0 0 4 0"/>',
+  calendar: '<rect x="3.5" y="5" width="17" height="16" rx="1.5"/><path d="M3.5 9.5h17"/><path d="M8 3v4M16 3v4"/>',
+  building: '<rect x="4" y="3" width="10" height="18"/><rect x="14" y="9" width="6" height="12"/><path d="M7 7h1M11 7h1M7 11h1M11 11h1M7 15h1M11 15h1"/>',
+  search: '<circle cx="10.3" cy="10.3" r="6.3"/><path d="M20 20l-4.8-4.8"/>',
+  barChart: '<path d="M4 20V10M10 20V4M16 20v-7M2.5 20h19"/>',
+  heart: '<path d="M12 20s-7.2-4.5-9.4-9C1.2 7.8 2.8 4.4 6.2 3.9c2-.3 3.9.6 5.8 3 1.9-2.4 3.8-3.3 5.8-3 3.4.5 5 3.9 3.6 7.1C19.2 15.5 12 20 12 20z"/>',
+  bookOpen: '<path d="M12 6.3c-2-1.7-4.6-2.1-7.3-2.1v13c2.7 0 5.3.4 7.3 2.1 2-1.7 4.6-2.1 7.3-2.1v-13c-2.7 0-5.3.4-7.3 2.1Z"/><path d="M12 6.3v13"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 13.6a8 8 0 0 0 0-3.2l1.9-1.5-2-3.4-2.3.9a7.9 7.9 0 0 0-2.7-1.6L14 2.5h-4l-.4 2.3a7.9 7.9 0 0 0-2.7 1.6l-2.3-.9-2 3.4L4.5 10.4a8 8 0 0 0 0 3.2l-1.9 1.5 2 3.4 2.3-.9c.8.7 1.7 1.3 2.7 1.6l.4 2.3h4l.4-2.3a7.9 7.9 0 0 0 2.7-1.6l2.3.9 2-3.4-1.9-1.5Z"/>',
+  more: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="9.5" rx="1.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
+  alertTriangle: '<path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10.5v4M12 17.3h.01"/>',
+  clock: '<circle cx="12" cy="12" r="8.3"/><path d="M12 7.3V12l3.3 2"/>',
+  siren: '<path d="M12 4.2a5.8 5.8 0 0 1 5.8 5.8v6H6.2v-6A5.8 5.8 0 0 1 12 4.2Z"/><path d="M12 2v1.3M4.8 7l1 .8M19.2 7l-1 .8M4 20h16"/>',
+  pill: '<rect x="3.3" y="7.5" width="17.4" height="9" rx="4.5" transform="rotate(-25 12 12)"/><path d="M9.6 9 14.4 15" transform="rotate(-25 12 12)"/>',
+  clipboardList: '<rect x="5" y="4" width="14" height="17" rx="1.5"/><rect x="9" y="2.2" width="6" height="3.4" rx="1"/><path d="M8.5 11h7M8.5 14.5h7M8.5 18h4"/>',
+  shield: '<path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z"/>',
+  edit: '<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="M13.8 6.2l4 4"/>',
+  printer: '<rect x="6" y="9" width="12" height="7" rx="1"/><path d="M7 9V4h10v5M7 16v4h10v-4"/>',
+  arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  compass: '<circle cx="12" cy="12" r="8.5"/><path d="m14.8 9.2-1.6 4.4-4.4 1.6 1.6-4.4Z"/>'
+};
+function icon(name, opts){
+  opts = opts || {};
+  const size = opts.size || 18;
+  const cls = 'icon' + (opts.cls ? ' ' + opts.cls : '');
+  return '<svg class="' + cls + '" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + (ICON_PATHS[name] || '') + '</svg>';
+}
 
 /* =========================================================================
    UTILS
@@ -3097,20 +3151,20 @@ const UI = {
   // 나머지 메뉴는 이 목록으로 묶는다 — 가로 스크롤에 의존해 메뉴가 화면
   // 밖으로 밀려나 찾을 수 없게 되는 것을 막기 위함.
   MOBILE_MORE_ITEMS: [
-    { view: 'schedule', icon: '📅', label: '일정' },
-    { view: 'resourceDirectory', icon: '🏢', label: '기관주소록' },
-    { view: 'search', icon: '🔍', label: '검색' },
-    { view: 'stats', icon: '📊', label: '통계' },
-    { view: 'selfCare', icon: '🧘', label: '자기돌봄' },
-    { view: 'training', icon: '📚', label: '교육·슈퍼비전' },
-    { view: 'settings', icon: '⚙️', label: '설정' }
+    { view: 'schedule', icon: 'calendar', label: '일정' },
+    { view: 'resourceDirectory', icon: 'building', label: '기관주소록' },
+    { view: 'search', icon: 'search', label: '검색' },
+    { view: 'stats', icon: 'barChart', label: '통계' },
+    { view: 'selfCare', icon: 'heart', label: '자기돌봄' },
+    { view: 'training', icon: 'bookOpen', label: '교육·슈퍼비전' },
+    { view: 'settings', icon: 'settings', label: '설정' }
   ],
   openMobileMoreMenu(){
     UI.openModal(
-      '<h3>☰ 더보기</h3>' +
+      '<h3>' + icon('more') + ' 더보기</h3>' +
       '<div style="display:flex;flex-direction:column;gap:4px;">' +
       UI.MOBILE_MORE_ITEMS.map(item =>
-        '<button class="btn" data-more-view="' + item.view + '" style="width:100%;justify-content:flex-start;text-align:left;">' + item.icon + ' ' + item.label + '</button>'
+        '<button class="btn" data-more-view="' + item.view + '" style="width:100%;justify-content:flex-start;text-align:left;">' + icon(item.icon) + ' ' + item.label + '</button>'
       ).join('') +
       '</div>'
     );
@@ -3372,7 +3426,7 @@ const Views = {
 
     const hasSeed = (State.seedClientIds || []).length > 0 && (State.seedClientIds || []).some(id => State.clients.has(id));
 
-    let html = '<h1 class="page-title">🏠 대시보드</h1>';
+    let html = '<h1 class="page-title">' + icon('home', { size: 22 }) + ' 대시보드</h1>';
 
     if (hasSeed){
       html += '<div class="example-banner"><span>📌 예시 데이터가 포함되어 있습니다. 실제 업무 데이터를 입력하기 전에 확인하세요.</span>' +
@@ -3394,47 +3448,42 @@ const Views = {
     const hide = (key) => DashboardPrefs.isHidden(key);
 
     html += '<div class="summary-grid">' +
-      (hide('overdue') ? '' : '<button class="summary-card overdue" data-goto="followUps" data-filter="overdue"><div class="num">' + overdue.length + '</div><div class="label">⚠ 기한 초과</div></button>') +
-      (hide('today') ? '' : '<button class="summary-card today" data-scroll="todaySection"><div class="num">' + (dueToday.length + todaySchedules.length) + '</div><div class="label">🔴 오늘 할 일</div></button>') +
-      (hide('draft') ? '' : '<button class="summary-card draft" data-scroll="draftSection"><div class="num">' + draftSoaps.length + '</div><div class="label">📝 미완성 SOAP</div></button>') +
-      '<button class="summary-card upcoming" data-goto="schedule" data-filter="upcoming"><div class="num">' + upcomingCount + '</div><div class="label">📅 예정 일정</div></button>' +
-      (hide('gap') ? '' : '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">🕓 미접촉 대상자</div></button>') +
-      (hide('crisis') ? '' : '<button class="summary-card overdue" data-scroll="crisisSection"><div class="num">' + crisisClients.length + '</div><div class="label">🚨 위기관리 대상자</div></button>') +
-      (hide('medRenewal') ? '' : '<button class="summary-card overdue" data-scroll="medRenewalSection"><div class="num">' + medRenewals.length + '</div><div class="label">💊 복약 갱신 임박</div></button>') +
-      (hide('reassessment') ? '' : '<button class="summary-card gap" data-scroll="reassessmentSection"><div class="num">' + reassessGaps.length + '</div><div class="label">📋 정기 재사정 필요</div></button>') +
-      (hide('safetyGap') ? '' : '<button class="summary-card overdue" data-scroll="safetyGapSection"><div class="num">' + safetyGaps.length + '</div><div class="label">🛡️ 안전 정보 공백</div></button>') +
-      '<button class="summary-card upcoming" data-goto="selfCare"><div class="num">' + SelfCare.list().filter(n => (n.category || 'selfcare') === 'selfcare').length + '</div><div class="label">🧘 자기돌봄</div></button>' +
-      '<button class="summary-card upcoming" data-goto="training"><div class="num">' + SelfCare.list().filter(n => (n.category || 'selfcare') !== 'selfcare').length + '</div><div class="label">📚 교육·슈퍼비전</div></button>' +
+      (hide('overdue') ? '' : '<button class="summary-card overdue" data-goto="followUps" data-filter="overdue"><div class="num">' + overdue.length + '</div><div class="label">' + icon('alertTriangle', { size: 15 }) + ' 기한 초과</div></button>') +
+      (hide('today') ? '' : '<button class="summary-card today" data-scroll="todaySection"><div class="num">' + (dueToday.length + todaySchedules.length) + '</div><div class="label">' + icon('clock', { size: 15 }) + ' 오늘 할 일</div></button>') +
+      (hide('draft') ? '' : '<button class="summary-card draft" data-scroll="draftSection"><div class="num">' + draftSoaps.length + '</div><div class="label">' + icon('edit', { size: 15 }) + ' 미완성 SOAP</div></button>') +
+      '<button class="summary-card upcoming" data-goto="schedule" data-filter="upcoming"><div class="num">' + upcomingCount + '</div><div class="label">' + icon('calendar', { size: 15 }) + ' 예정 일정</div></button>' +
+      (hide('gap') ? '' : '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">' + icon('clock', { size: 15 }) + ' 미접촉 대상자</div></button>') +
+      (hide('crisis') ? '' : '<button class="summary-card overdue" data-scroll="crisisSection"><div class="num">' + crisisClients.length + '</div><div class="label">' + icon('siren', { size: 15 }) + ' 위기관리 대상자</div></button>') +
+      (hide('medRenewal') ? '' : '<button class="summary-card overdue" data-scroll="medRenewalSection"><div class="num">' + medRenewals.length + '</div><div class="label">' + icon('pill', { size: 15 }) + ' 복약 갱신 임박</div></button>') +
+      (hide('reassessment') ? '' : '<button class="summary-card gap" data-scroll="reassessmentSection"><div class="num">' + reassessGaps.length + '</div><div class="label">' + icon('clipboardList', { size: 15 }) + ' 정기 재사정 필요</div></button>') +
+      (hide('safetyGap') ? '' : '<button class="summary-card overdue" data-scroll="safetyGapSection"><div class="num">' + safetyGaps.length + '</div><div class="label">' + icon('shield', { size: 15 }) + ' 안전 정보 공백</div></button>') +
+      '<button class="summary-card upcoming" data-goto="selfCare"><div class="num">' + SelfCare.list().filter(n => (n.category || 'selfcare') === 'selfcare').length + '</div><div class="label">' + icon('heart', { size: 15 }) + ' 자기돌봄</div></button>' +
+      '<button class="summary-card upcoming" data-goto="training"><div class="num">' + SelfCare.list().filter(n => (n.category || 'selfcare') !== 'selfcare').length + '</div><div class="label">' + icon('bookOpen', { size: 15 }) + ' 교육·슈퍼비전</div></button>' +
       '</div>';
 
-    // 위기관리 대상자 현황판 — 관리수준을 필터링해서 목록을 찾아가지 않아도,
-    // 현재 위기관리 등급인 활성 대상자를 대시보드에서 바로 한눈에 볼 수 있게 한다.
-    if (!hide('crisis')){
-      html += '<div class="panel" id="crisisSection"><div class="panel-title">🚨 위기관리 대상자 현황</div>';
-      if (crisisClients.length === 0){
-        html += '<div class="empty-msg">현재 위기관리 등급의 활성 대상자가 없습니다.</div>';
-      } else {
+    // 위기·안전 점검 항목들 — 전부 "이상 없으면 아무것도 안 보여줘도 되는"
+    // 성격의 점검이다. 예전에는 이상이 없어도 패널을 그대로 다 그려서
+    // "~없습니다" 문구 하나 보자고 화면을 한참 스크롤해야 했다. 지금은 확인이
+    // 필요한 항목만 원래대로 패널로 펼치고, 이상 없는 항목들은 한 줄로
+    // 모아서 보여준다.
+    const checkPanels = [
+      { key: 'crisis', id: 'crisisSection', title: icon('siren') + ' 위기관리 대상자 현황', clearLabel: '위기관리 대상자', count: crisisClients.length, body(){
+        let b = '';
         crisisClients.forEach(c => {
           const lastFace = Clients.lastFaceToFaceContactDate(c.id);
-          html += '<div class="list-row"><div class="list-row-main" data-goto-client="' + c.id + '">' +
+          b += '<div class="list-row"><div class="list-row-main" data-goto-client="' + c.id + '">' +
             '<div class="row-title">' + Utils.escapeHtml(c.id) + (c.alias ? ' · ' + Utils.escapeHtml(c.alias) : '') +
             ((c.crisisEvents || []).length ? ' <span class="badge badge-crisis-flag">⚠ 위기개입 이력</span>' : '') + '</div>' +
             '<div class="row-sub">' + (lastFace ? '최근 방문·내소 상담: ' + lastFace : '방문·내소 상담 기록 없음') +
             ' · 미완료 후속조치 ' + Clients.pendingFollowUpCount(c.id) + '건</div></div></div>';
         });
-      }
-      html += '</div>';
-    }
-
-    // Overdue
-    if (!hide('overdue')){
-      html += '<div class="panel"><div class="panel-title">⚠ 기한 초과 후속조치</div>';
-      if (overdue.length === 0){
-        html += '<div class="empty-msg">기한이 지난 후속조치가 없습니다.</div>';
-      } else {
+        return b;
+      } },
+      { key: 'overdue', id: 'overdueSection', title: icon('alertTriangle') + ' 기한 초과 후속조치', clearLabel: '기한 초과 후속조치', count: overdue.length, body(){
+        let b = '';
         overdue.forEach(f => {
           const c = Clients.get(f.clientId);
-          html += '<div class="overdue-row">' +
+          b += '<div class="overdue-row">' +
             '<strong>' + Utils.escapeHtml(f.clientId) + '</strong>' + (c && c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') +
             ' — ' + Utils.escapeHtml(f.type) + '<br>' +
             '<span style="font-size:0.82rem;">기한: ' + f.dueDate + ' · 상태: 미완료</span>' +
@@ -3443,89 +3492,70 @@ const Views = {
             '<button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료하고 SOAP 작성</button>' +
             '</div></div>';
         });
-      }
-      html += '</div>';
-    }
-
-    // 미접촉 대상자 — 종결되지 않은 대상자 중 방문/내소(대면) 상담이 관리수준별
-    // 기준 일수 이상 없었던 경우만 짚어준다(위기관리 2주/집중관리 1개월/유지·일시관리
-    // 4개월). 전화·프로그램 등 비대면 접촉만으로는 해소되지 않는다.
-    if (!hide('gap')){
-      html += '<div class="panel" id="gapSection"><div class="panel-title">🕓 미접촉 대상자 (관리수준별 기준 이상 대면접촉 없음)</div>';
-      if (contactGaps.length === 0){
-        html += '<div class="empty-msg">관리수준별 기준(위기 2주·집중 1개월·유지/일시 4개월) 이상 방문·내소 상담이 없는 대상자가 없습니다.</div>';
-      } else {
+        return b;
+      } },
+      { key: 'gap', id: 'gapSection', title: icon('clock') + ' 미접촉 대상자 (관리수준별 기준 이상 대면접촉 없음)', clearLabel: '미접촉 대상자', count: contactGaps.length, body(){
+        let b = '';
         contactGaps.forEach(g => {
           const gc = Clients.get(g.clientId);
           const levelLabel = (CONSTANTS.MANAGEMENT_LEVELS[gc && gc.managementLevel] || {}).label || '';
-          html += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
+          b += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
             '<strong>' + Utils.escapeHtml(g.clientId) + '</strong>' + (gc && gc.alias ? ' (' + Utils.escapeHtml(gc.alias) + ')' : '') + ' · ' + levelLabel +
             '<br><span style="font-size:0.82rem;">' + (g.lastFaceToFaceDate ? '최근 방문·내소 상담: ' + g.lastFaceToFaceDate : '방문·내소 상담 기록 없음(등록일 기준)') + ' · 약 ' + Utils.formatElapsedDays(g.days) + ' 경과 (기준: ' + Utils.formatElapsedDays(g.thresholdDays) + ')</span>' +
             '</div>';
         });
-      }
-      html += '</div>';
-    }
-
-    // 복약 갱신 임박 — 각 활성 대상자의 가장 최근 복약 기록에 적힌 "다음
-    // 처방(진료) 예정일"이 이미 지났거나 기준일 이내로 다가온 경우만 짚어준다.
-    if (!hide('medRenewal')){
-      html += '<div class="panel" id="medRenewalSection"><div class="panel-title">💊 복약 갱신 임박 (기준: ' + Utils.formatElapsedDays(CONSTANTS.MEDICATION_RENEWAL_ALERT_DAYS) + ' 이내)</div>';
-      if (medRenewals.length === 0){
-        html += '<div class="empty-msg">처방·진료 갱신이 임박하거나 지난 대상자가 없습니다.</div>';
-      } else {
+        return b;
+      } },
+      { key: 'medRenewal', id: 'medRenewalSection', title: icon('pill') + ' 복약 갱신 임박 (기준: ' + Utils.formatElapsedDays(CONSTANTS.MEDICATION_RENEWAL_ALERT_DAYS) + ' 이내)', clearLabel: '복약 갱신 임박', count: medRenewals.length, body(){
+        let b = '';
         medRenewals.forEach(r => {
-          html += '<div class="gap-row" data-goto-client="' + r.clientId + '" style="cursor:pointer;">' +
+          b += '<div class="gap-row" data-goto-client="' + r.clientId + '" style="cursor:pointer;">' +
             '<strong>' + Utils.escapeHtml(r.clientId) + '</strong>' + (r.alias ? ' (' + Utils.escapeHtml(r.alias) + ')' : '') +
             (r.overdue ? ' <span class="badge badge-crisis">⏰ 예정일 경과</span>' : ' <span class="badge badge-pending">⏳ 임박</span>') +
             '<br><span style="font-size:0.82rem;">' + Utils.escapeHtml(r.medication.name) + ' · 다음 처방(진료) 예정일: ' + r.medication.nextRxDate + '</span>' +
             '</div>';
         });
-      }
-      html += '</div>';
-    }
-
-    // 정기 재사정 필요 — 대면 접촉 유무와 무관하게, 관리수준을 정식으로
-    // 다시 사정한 지 관리수준별 기준 일수가 지난 대상자를 짚어준다.
-    if (!hide('reassessment')){
-      html += '<div class="panel" id="reassessmentSection"><div class="panel-title">📋 정기 재사정 필요</div>';
-      if (reassessGaps.length === 0){
-        html += '<div class="empty-msg">기준 주기 이내로 재사정이 이루어져, 재사정이 필요한 대상자가 없습니다.</div>';
-      } else {
+        return b;
+      } },
+      { key: 'reassessment', id: 'reassessmentSection', title: icon('clipboardList') + ' 정기 재사정 필요', clearLabel: '정기 재사정', count: reassessGaps.length, body(){
+        let b = '';
         reassessGaps.forEach(g => {
           const gc = Clients.get(g.clientId);
           const levelLabel = (CONSTANTS.MANAGEMENT_LEVELS[gc && gc.managementLevel] || {}).label || '';
-          html += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
+          b += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
             '<strong>' + Utils.escapeHtml(g.clientId) + '</strong>' + (gc && gc.alias ? ' (' + Utils.escapeHtml(gc.alias) + ')' : '') + ' · ' + levelLabel +
             '<br><span style="font-size:0.82rem;">' + (g.lastReassessmentDate ? '마지막 재사정: ' + g.lastReassessmentDate : '재사정 이력 없음(등록일 기준)') + ' · 약 ' + Utils.formatElapsedDays(g.days) + ' 경과 (기준: ' + Utils.formatElapsedDays(g.thresholdDays) + ')</span>' +
             '</div>';
         });
-      }
-      html += '</div>';
-    }
-
-    // 안전 정보 공백 점검 — 새로운 위험 판단을 추가하지 않는다. 관리수준·
-    // 위기이력에 비해 이미 만들어져 있는 안전계획·위험도 평가·비상연락처·
-    // 복약 갱신일 등의 항목이 정작 비어있는 경우만 데이터끼리 대조해 짚어준다.
-    if (!hide('safetyGap')){
-      html += '<div class="panel" id="safetyGapSection"><div class="panel-title">🛡️ 안전 정보 공백 점검</div>';
-      if (safetyGaps.length === 0){
-        html += '<div class="empty-msg">관리수준·위기이력에 비해 비어있는 안전 관련 정보가 없습니다.</div>';
-      } else {
+        return b;
+      } },
+      { key: 'safetyGap', id: 'safetyGapSection', title: icon('shield') + ' 안전 정보 공백 점검', clearLabel: '안전 정보 공백', count: safetyGaps.length, body(){
+        let b = '';
         safetyGaps.forEach(g => {
           const levelLabel = (CONSTANTS.MANAGEMENT_LEVELS[g.managementLevel] || {}).label || '';
-          html += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
+          b += '<div class="gap-row" data-goto-client="' + g.clientId + '" style="cursor:pointer;">' +
             '<strong>' + Utils.escapeHtml(g.clientId) + '</strong>' + (g.alias ? ' (' + Utils.escapeHtml(g.alias) + ')' : '') + ' · ' + levelLabel +
             '<br><span style="font-size:0.82rem;color:var(--danger);">' + g.gaps.map(Utils.escapeHtml).join(' · ') + '</span>' +
             '</div>';
         });
-      }
-      html += '</div>';
+        return b;
+      } }
+    ];
+    const clearLabels = [];
+    checkPanels.forEach(p => {
+      if (hide(p.key)) return;
+      if (p.count === 0){ clearLabels.push(p.clearLabel); return; }
+      html += '<div class="panel" id="' + p.id + '"><div class="panel-title">' + p.title + '</div>' + p.body() + '</div>';
+    });
+    if (clearLabels.length){
+      html += '<div class="panel" style="display:flex;align-items:center;gap:10px;background:var(--good-soft);border-color:var(--good);">' +
+        '<span style="color:var(--good);">' + icon('shield') + '</span>' +
+        '<span style="font-size:0.88rem;">이상 없음 — ' + clearLabels.map(Utils.escapeHtml).join(', ') + '</span></div>';
     }
 
     // Today
     if (!hide('today')){
-      html += '<div class="panel" id="todaySection"><div class="panel-title">🔴 오늘 할 일</div>';
+      html += '<div class="panel" id="todaySection"><div class="panel-title">' + icon('clock') + ' 오늘 할 일</div>';
       if (dueToday.length === 0 && todaySchedules.length === 0){
         html += '<div class="empty-msg">오늘 예정된 일정이나 후속조치가 없습니다.</div>';
       } else {
@@ -3552,7 +3582,7 @@ const Views = {
 
     // Draft SOAPs
     if (!hide('draft')){
-      html += '<div class="panel" id="draftSection"><div class="panel-title">📝 미완성 SOAP</div>';
+      html += '<div class="panel" id="draftSection"><div class="panel-title">' + icon('edit') + ' 미완성 SOAP</div>';
       if (draftSoaps.length === 0){
         html += '<div class="empty-msg">임시저장된 SOAP 기록이 없습니다.</div>';
       } else {
@@ -3694,7 +3724,7 @@ const Views = {
       clients = clients.slice().sort((a, b) => (Clients.lastRecordDate(b.id) || '').localeCompare(Clients.lastRecordDate(a.id) || ''));
     }
 
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">👤 대상자</h1>' +
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('users', { size: 22 }) + ' 대상자</h1>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="caseloadSummaryBtn">🖨️ 전체 현황 인쇄</button>' +
       '<button class="btn btn-sm" id="exportClientsCsvBtn">⬇ CSV 내보내기</button>' +
       '<button class="btn btn-sm" id="importClientsCsvBtn">⬆ CSV 일괄 등록</button>' +
@@ -3798,10 +3828,10 @@ const Views = {
       ((c.crisisEvents || []).length ? ' <span class="badge badge-crisis-flag">⚠ 위기개입 이력 있음</span>' : '') +
       ((c.visitSafety && (c.visitSafety.hasViolenceHistory || c.visitSafety.needsCompanion || c.visitSafety.hasPets)) ? ' <span class="badge badge-crisis-flag">🧳 방문 전 확인 필요</span>' : '') +
       ((Clients.latestRiskAssessment(c.id) || {}).level === 'high' ? ' <span class="badge badge-crisis-flag">🎯 고위험 평가</span>' : '') + '</h1>' +
-      '<div style="display:flex;gap:8px;"><button class="btn btn-sm btn-danger" id="emergencyInfoBtn">🚨 긴급 정보</button>' +
-      '<button class="btn btn-sm" id="handoverBtn">📄 인계서</button>' +
-      '<button class="btn btn-sm" id="printClientBtn">🖨️ 인쇄</button>' +
-      '<button class="btn btn-sm" id="backToClientsBtn">← 대상자 목록</button></div></div>';
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm btn-danger" id="emergencyInfoBtn">' + icon('siren') + ' 긴급 정보</button>' +
+      '<button class="btn btn-sm" id="handoverBtn">' + icon('fileText') + ' 인계서</button>' +
+      '<button class="btn btn-sm" id="printClientBtn">' + icon('printer') + ' 인쇄</button>' +
+      '<button class="btn btn-sm" id="backToClientsBtn">' + icon('arrowLeft') + ' 대상자 목록</button></div></div>';
 
     html += '<div class="panel">' +
       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
@@ -3985,9 +4015,9 @@ const Views = {
     const riskAssessments = (c.riskAssessments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
     const latestRisk = riskAssessments[0] || null;
     const riskLevelInfo = latestRisk ? (CONSTANTS.RISK_LEVELS[latestRisk.level] || CONSTANTS.RISK_LEVELS.low) : null;
-    safetyHtml += '<details class="panel"' + (riskAssessments.length ? ' open' : '') +
-      (latestRisk && latestRisk.level === 'high' ? ' style="border-color:var(--danger);background:var(--danger-soft);"' : '') + '>' +
-      '<summary class="panel-title">🎯 위험도 평가 (구조화)' + (latestRisk ? ' <span class="badge ' + riskLevelInfo.badgeClass + '">최근: ' + riskLevelInfo.label + '</span>' : '') + '</summary>' +
+    safetyHtml += '<details class="panel panel-safety-critical"' + (riskAssessments.length ? ' open' : '') +
+      (latestRisk && latestRisk.level === 'high' ? ' style="background:var(--danger-soft);"' : '') + '>' +
+      '<summary class="panel-title">' + icon('siren') + ' 위험도 평가 (구조화)' + (latestRisk ? ' <span class="badge ' + riskLevelInfo.badgeClass + '">최근: ' + riskLevelInfo.label + '</span>' : '') + '</summary>' +
       '<p class="help-text" style="margin-bottom:12px;">아래 항목은 위험도를 자동으로 판정하지 않는 참고용 체크리스트입니다. 최종 위험도는 실무자가 직접 선택해 기록하세요.</p>';
     if (riskAssessments.length === 0){
       safetyHtml += '<div class="empty-msg">기록된 위험도 평가가 없습니다.</div>';
@@ -4018,7 +4048,7 @@ const Views = {
     // Stanley-Brown Safety Planning Intervention의 6단계 구성을 따른다.
     const sp = c.safetyPlan || {};
     const hasSafetyPlan = !!(sp.warningSigns || sp.copingStrategies || sp.distractionContacts || sp.helpContacts || sp.professionalContacts || sp.meansRestriction);
-    safetyHtml += '<details class="panel"' + (hasSafetyPlan ? ' open' : '') + '><summary class="panel-title">🛟 위기 시 안전계획</summary>' +
+    safetyHtml += '<details class="panel panel-safety-critical"' + (hasSafetyPlan ? ' open' : '') + '><summary class="panel-title">' + icon('shield') + ' 위기 시 안전계획</summary>' +
       '<p class="help-text" style="margin-bottom:12px;">위기가 발생하기 전, 대상자와 함께 미리 작성해 두는 예방적 계획입니다. 실제 위기 발생 기록은 아래 "위기개입 기록"에 별도로 남깁니다.</p>' +
       '<div class="field full"><label>1. 경고신호 (위기가 다가올 때 나타나는 생각·기분·행동)</label>' +
       '<textarea id="spWarningSigns" style="min-height:60px;">' + Utils.escapeHtml(sp.warningSigns || '') + '</textarea></div>' +
@@ -4038,7 +4068,7 @@ const Views = {
     // 빠르게 남기는 전용 로그. 위험도를 자동으로 판정하지 않고, 실제 발생한 사건과
     // 실무자가 취한 조치만 그대로 기록한다.
     const crisisEvents = (c.crisisEvents || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    safetyHtml += '<details class="panel"' + (crisisEvents.length ? ' open' : '') + '><summary class="panel-title">⚠ 위기개입 기록</summary>';
+    safetyHtml += '<details class="panel panel-safety-critical"' + (crisisEvents.length ? ' open' : '') + '><summary class="panel-title">' + icon('alertTriangle') + ' 위기개입 기록</summary>';
     if (crisisEvents.length === 0){
       safetyHtml += '<div class="empty-msg">기록된 위기개입 사항이 없습니다.</div>';
     } else {
@@ -4866,8 +4896,8 @@ const Views = {
     let html = Views.printHeaderHtml('사례관리 인계서: ' + c.id);
     html += '<div class="page-header"><h1 class="page-title" style="margin:0;">📄 사례관리 인계서 — ' + Utils.escapeHtml(c.id) +
       (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + Utils.escapeHtml(c.alias) + '</span>' : '') + '</h1>' +
-      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printHandoverBtn">🖨️ 인쇄</button>' +
-      '<button class="btn btn-sm" id="backToClientDetailBtn">← 대상자 상세로</button></div></div>';
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printHandoverBtn">' + icon('printer') + ' 인쇄</button>' +
+      '<button class="btn btn-sm" id="backToClientDetailBtn">' + icon('arrowLeft') + ' 대상자 상세로</button></div></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">사례 인계·전출 시 새 담당자가 빠르게 파악할 수 있도록 핵심 정보만 압축한 요약입니다. 전체 이력은 대상자 상세 화면에서 확인하세요.</p>';
 
     const handoverAge = Utils.calculateAge(c.birthDate);
@@ -4947,9 +4977,9 @@ const Views = {
       .sort((a, b) => (Views.MANAGEMENT_LEVEL_RANK[a.managementLevel] ?? 9) - (Views.MANAGEMENT_LEVEL_RANK[b.managementLevel] ?? 9) || a.id.localeCompare(b.id));
 
     let html = Views.printHeaderHtml('전체 대상자 현황 요약');
-    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">🖨️ 전체 대상자 현황 요약</h1>' +
-      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printCaseloadBtn">🖨️ 인쇄</button>' +
-      '<button class="btn btn-sm" id="backToClientsFromSummaryBtn">← 대상자 목록</button></div></div>';
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('printer', { size: 22 }) + ' 전체 대상자 현황 요약</h1>' +
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printCaseloadBtn">' + icon('printer') + ' 인쇄</button>' +
+      '<button class="btn btn-sm" id="backToClientsFromSummaryBtn">' + icon('arrowLeft') + ' 대상자 목록</button></div></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">현재 관리 중인(종결 제외) 전체 대상자 ' + clients.length + '명의 현황입니다.</p>';
 
     html += '<div class="panel">';
@@ -4986,7 +5016,7 @@ const Views = {
     if (filter === 'draft') items = items.filter(s => s.status === 'draft');
     if (filter === 'final') items = items.filter(s => s.status === 'final');
 
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📝 SOAP 기록</h1>' +
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('fileText', { size: 22 }) + ' SOAP 기록</h1>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="exportSoapsCsvBtn">⬇ CSV 내보내기</button>' +
       '<button class="btn btn-primary" id="newSoapBtn">＋ 새 SOAP 기록</button></div></div>';
     html += '<div class="tabs">' +
@@ -5042,8 +5072,8 @@ const Views = {
     this._draftCache = soap;
 
     let html = Views.printHeaderHtml(soap.clientId ? 'SOAP 기록: ' + soap.clientId : 'SOAP 기록');
-    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">📝 SOAP 기록 ' + (soap.id ? '수정' : '작성') + '</h1>' +
-      '<button class="btn btn-sm" id="soapBackBtn">← 뒤로</button></div>';
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('fileText', { size: 22 }) + ' SOAP 기록 ' + (soap.id ? '수정' : '작성') + '</h1>' +
+      '<button class="btn btn-sm" id="soapBackBtn">' + icon('arrowLeft') + ' 뒤로</button></div>';
     if (soap.status !== 'final'){
       html += '<p class="help-text" id="autosaveIndicator" style="margin-top:-10px;margin-bottom:14px;">입력하는 동안 자동으로 임시저장됩니다. (Ctrl/Cmd+S로 바로 임시저장할 수 있습니다)</p>';
     }
@@ -5093,7 +5123,7 @@ const Views = {
         '<div class="soap-copy-block">' + Utils.nl2br(SoapModule.formatForCopy(soap)) + '</div>' +
         '<div style="display:flex;gap:8px;margin-top:10px;">' +
         '<button class="btn btn-sm" id="copyAllBtn">📋 SOAP 전체 복사</button>' +
-        '<button class="btn btn-sm" id="printSoapBtn">🖨️ 인쇄</button>' +
+        '<button class="btn btn-sm" id="printSoapBtn">' + icon('printer') + ' 인쇄</button>' +
         '</div></div>';
       html += Views.printSignatureHtml();
     }
@@ -5252,7 +5282,7 @@ const Views = {
     if (filter === 'upcoming') items = items.filter(f => f.status === 'pending' && f.dueDate > today);
     if (filter === 'done') items = items.filter(f => f.status === 'completed');
 
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">🔔 후속조치</h1>' +
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('bell', { size: 22 }) + ' 후속조치</h1>' +
       '<button class="btn btn-primary" id="newFuBtn">＋ 후속조치 등록</button></div>';
     html += '<div class="tabs">' +
       ['all:전체', 'today:오늘', 'overdue:기한 초과', 'upcoming:예정', 'done:완료'].map(pair => {
@@ -5409,7 +5439,7 @@ const Views = {
       if (filter === 'past') items = items.filter(s => s.date < today);
     }
 
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📅 일정</h1>' +
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('calendar', { size: 22 }) + ' 일정</h1>' +
       '<div style="display:flex;gap:8px;align-items:center;">' +
       '<div class="tabs" style="margin:0;">' +
       '<button class="tab-btn' + (Views._scheduleViewMode === 'month' ? ' active' : '') + '" id="viewModeMonthBtn">월간</button>' +
@@ -5579,7 +5609,7 @@ const Views = {
   /* ---------------- RESOURCE DIRECTORY (기관주소록) ---------------- */
   resourceDirectory(){
     const list = ResourceDirectory.list();
-    let html = '<h1 class="page-title">🏢 기관주소록</h1>';
+    let html = '<h1 class="page-title">' + icon('building', { size: 22 }) + ' 기관주소록</h1>';
     html += '<p class="help-text" style="margin-top:-8px;margin-bottom:14px;">자주 연계하는 기관을 등록해 두면, 대상자별 "자원연계" 기록을 남길 때 목록에서 골라 자동으로 채울 수 있습니다.</p>';
 
     html += '<div class="panel"><div class="form-grid">' +
@@ -5640,7 +5670,7 @@ const Views = {
   _searchMode: 'soap',
 
   search(){
-    let html = '<h1 class="page-title">🔍 검색</h1>';
+    let html = '<h1 class="page-title">' + icon('search', { size: 22 }) + ' 검색</h1>';
     html += '<div class="tabs">' +
       '<button class="tab-btn' + (Views._searchMode === 'soap' ? ' active' : '') + '" id="searchModeSoapBtn">SOAP 검색</button>' +
       '<button class="tab-btn' + (Views._searchMode === 'universal' ? ' active' : '') + '" id="searchModeUniversalBtn">통합검색</button>' +
@@ -5942,7 +5972,7 @@ const Views = {
   stats(){
     const s = Stats.compute();
     let html = Views.printHeaderHtml('통계 및 월간 실적보고서');
-    html += '<h1 class="page-title">📊 통계</h1>';
+    html += '<h1 class="page-title">' + icon('barChart', { size: 22 }) + ' 통계</h1>';
 
     html += '<div class="summary-grid">' +
       '<div class="summary-card" style="cursor:default;"><div class="num">' + s.totalClients + '</div><div class="label">총 대상자</div></div>' +
@@ -6025,7 +6055,7 @@ const Views = {
   selfCarePage(){
     const notes = SelfCare.list().filter(n => (n.category || 'selfcare') === 'selfcare');
 
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">🧘 자기돌봄 메모</h1></div>';
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('heart', { size: 22 }) + ' 자기돌봄 메모</h1></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">대상자 관리와 무관하게, 소진·감정 상태를 스스로 기록하는 공간입니다. 교육·연수나 슈퍼비전·자문 기록은 "📚 교육·슈퍼비전" 메뉴를 이용하세요. 통계나 리포트 어디에도 집계되지 않고, 오직 본인만 확인합니다.</p>';
 
     html += '<div class="panel">';
@@ -6084,7 +6114,7 @@ const Views = {
     let notes = SelfCare.list().filter(n => (n.category || 'selfcare') !== 'selfcare');
     if (categoryFilter !== 'all') notes = notes.filter(n => n.category === categoryFilter);
 
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📚 교육·슈퍼비전 기록</h1></div>';
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('bookOpen', { size: 22 }) + ' 교육·슈퍼비전 기록</h1></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">교육·연수 내용, 슈퍼비전·자문에서 나온 조언 등 실무 역량과 관련된 개인 기록을 남기는 공간입니다. 통계나 리포트 어디에도 집계되지 않고, 오직 본인만 확인합니다.</p>';
 
     html += '<div class="panel" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">' +
@@ -6142,7 +6172,7 @@ const Views = {
 
   /* ---------------- SETTINGS ---------------- */
   settings(){
-    let html = '<h1 class="page-title">⚙️ 설정</h1>';
+    let html = '<h1 class="page-title">' + icon('settings', { size: 22 }) + ' 설정</h1>';
 
     // 백업/복원 방법을 헷갈려하는 사용자가 많아, 버튼만 두지 않고 절차를
     // 번호를 매겨 명시적으로 설명한다. 파일 선택창이 뜨는 시점, 복원 후
@@ -6337,8 +6367,8 @@ const Views = {
     }
   ],
   tourPage(){
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📖 앱 둘러보기</h1>' +
-      '<button class="btn btn-sm" id="tourBackBtn">← 설정으로</button></div>';
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('compass', { size: 22 }) + ' 앱 둘러보기</h1>' +
+      '<button class="btn btn-sm" id="tourBackBtn">' + icon('arrowLeft') + ' 설정으로</button></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">이 앱에 있는 기능들을 한 화면으로 정리했습니다. 새로 오신 분께 안내하거나, 오랜만에 기능을 다시 확인할 때 활용하세요. 언제든 설정 화면에서 다시 열 수 있습니다.</p>';
     Views.TOUR_SECTIONS.forEach(section => {
       html += '<div class="panel"><div class="panel-title">' + section.title + '</div>' +
