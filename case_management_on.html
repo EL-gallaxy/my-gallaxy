@@ -6118,22 +6118,25 @@ const Views = {
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">교육·연수 내용, 슈퍼비전·자문에서 나온 조언 등 실무 역량과 관련된 개인 기록을 남기는 공간입니다. 통계나 리포트 어디에도 집계되지 않고, 오직 본인만 확인합니다.</p>';
 
     html += '<div class="panel" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">' +
+      '<div class="field" style="margin:0;max-width:220px;"><label>내용 검색</label>' +
+      '<input type="text" id="trKeywordFilter" placeholder="기록 내용 검색"></div>' +
       '<div class="field" style="margin:0;max-width:220px;"><label>구분 필터</label><select id="trCategoryFilter">' +
       '<option value="all"' + (categoryFilter === 'all' ? ' selected' : '') + '>전체</option>' +
       nonSelfCareCategories.map(k => '<option value="' + k + '"' + (categoryFilter === k ? ' selected' : '') + '>' + CONSTANTS.SELFCARE_CATEGORIES[k].label + '</option>').join('') +
       '</select></div></div>';
 
-    html += '<div class="panel">';
+    html += '<div class="panel" id="trNotesPanel">';
     if (notes.length === 0){
       html += '<div class="empty-msg">' + (categoryFilter === 'all' ? '작성된 기록이 없습니다.' : '해당 구분의 기록이 없습니다.') + '</div>';
     } else {
       notes.forEach(n => {
         const cat = CONSTANTS.SELFCARE_CATEGORIES[n.category] || CONSTANTS.SELFCARE_CATEGORIES.other;
-        html += '<div class="list-row"><div class="list-row-main">' +
+        html += '<div class="list-row" data-tr-row><div class="list-row-main">' +
           '<div class="row-title">' + n.date + ' · <span class="badge ' + cat.badgeClass + '">' + cat.label + '</span></div>' +
           '<div class="row-sub" style="white-space:pre-line;">' + Utils.escapeHtml(n.note) + '</div>' +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
       });
+      html += '<div class="empty-msg hidden" data-tr-no-match>검색 결과가 없습니다.</div>';
     }
     html += '</div>';
 
@@ -6148,6 +6151,21 @@ const Views = {
   },
   bindTrainingPage(){
     document.getElementById('trCategoryFilter').onchange = (e) => UI.navigate('training', { categoryFilter: e.target.value });
+    // Client-side row filtering (no re-render) so the search box never loses
+    // focus or cursor position while typing — same pattern as clientSearchInput.
+    const keywordInput = document.getElementById('trKeywordFilter');
+    keywordInput.oninput = () => {
+      const q = keywordInput.value.trim().toLowerCase();
+      const rows = document.querySelectorAll('#trNotesPanel [data-tr-row]');
+      let visibleCount = 0;
+      rows.forEach(row => {
+        const match = !q || row.textContent.toLowerCase().includes(q);
+        row.style.display = match ? '' : 'none';
+        if (match) visibleCount++;
+      });
+      const noMatchMsg = document.querySelector('#trNotesPanel [data-tr-no-match]');
+      if (noMatchMsg) noMatchMsg.classList.toggle('hidden', !q || visibleCount > 0);
+    };
     document.getElementById('addTrainingBtn').onclick = async () => {
       const note = document.getElementById('trNote').value;
       if (!note.trim()){ toast('내용을 입력해 주세요.', 'error'); return; }
