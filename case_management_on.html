@@ -152,6 +152,9 @@
   }
   .nav-btn:hover{background:var(--surface-alt);}
   .nav-btn.active{background:var(--accent-soft);border-left-color:var(--accent);color:var(--accent);font-weight:600;}
+  /* "더보기" — only ever shown once the nav collapses to a compact bar below;
+     on the full desktop sidebar every item already has its own row. */
+  #navMoreBtn{display:none;}
   .lock-btn{
     display:flex;align-items:center;gap:8px;width:calc(100% - 24px);margin:0 12px;padding:9px 12px;border-radius:6px;
     border:1px solid var(--border-strong);background:var(--surface);color:var(--text);
@@ -341,6 +344,10 @@
       padding:12px 10px;font-size:0.88rem;flex-shrink:0;
     }
     .nav-btn.active{border-left-color:transparent;border-bottom-color:var(--accent);}
+    /* 11개 메뉴가 좁은 화면 폭에 다 들어가지 않아 가로 스크롤 뒤로 숨는 것을
+       막기 위해, 자주 쓰는 4개만 바로 보이고 나머지는 "더보기"로 묶는다. */
+    .nav-secondary{display:none;}
+    #navMoreBtn{display:flex;margin-left:auto;}
     .lock-btn{width:auto;margin:0 0 0 6px;flex-shrink:0;white-space:nowrap;}
     #appMain{padding:18px 14px;}
     .summary-grid{grid-template-columns:1fr 1fr;}
@@ -526,17 +533,18 @@
       <div class="subtitle">사례관리 업무 보조</div>
     </div>
     <nav id="sideNav">
-      <button class="nav-btn" data-view="dashboard">🏠 <span class="nav-label">대시보드</span></button>
-      <button class="nav-btn" data-view="clients">👤 <span class="nav-label">대상자</span></button>
-      <button class="nav-btn" data-view="soapList">📝 <span class="nav-label">SOAP 기록</span></button>
-      <button class="nav-btn" data-view="followUps">🔔 <span class="nav-label">후속조치</span></button>
-      <button class="nav-btn" data-view="schedule">📅 <span class="nav-label">일정</span></button>
-      <button class="nav-btn" id="navResourceDirectory" data-view="resourceDirectory">🏢 <span class="nav-label">기관주소록</span></button>
-      <button class="nav-btn" data-view="search">🔍 <span class="nav-label">검색</span></button>
-      <button class="nav-btn" data-view="stats">📊 <span class="nav-label">통계</span></button>
-      <button class="nav-btn" data-view="selfCare">🧘 <span class="nav-label">자기돌봄</span></button>
-      <button class="nav-btn" data-view="training">📚 <span class="nav-label">교육·슈퍼비전</span></button>
-      <button class="nav-btn" data-view="settings">⚙️ <span class="nav-label">설정</span></button>
+      <button class="nav-btn nav-primary" data-view="dashboard">🏠 <span class="nav-label">대시보드</span></button>
+      <button class="nav-btn nav-primary" data-view="clients">👤 <span class="nav-label">대상자</span></button>
+      <button class="nav-btn nav-primary" data-view="soapList">📝 <span class="nav-label">SOAP 기록</span></button>
+      <button class="nav-btn nav-primary" data-view="followUps">🔔 <span class="nav-label">후속조치</span></button>
+      <button class="nav-btn nav-secondary" data-view="schedule">📅 <span class="nav-label">일정</span></button>
+      <button class="nav-btn nav-secondary" id="navResourceDirectory" data-view="resourceDirectory">🏢 <span class="nav-label">기관주소록</span></button>
+      <button class="nav-btn nav-secondary" data-view="search">🔍 <span class="nav-label">검색</span></button>
+      <button class="nav-btn nav-secondary" data-view="stats">📊 <span class="nav-label">통계</span></button>
+      <button class="nav-btn nav-secondary" data-view="selfCare">🧘 <span class="nav-label">자기돌봄</span></button>
+      <button class="nav-btn nav-secondary" data-view="training">📚 <span class="nav-label">교육·슈퍼비전</span></button>
+      <button class="nav-btn nav-secondary" data-view="settings">⚙️ <span class="nav-label">설정</span></button>
+      <button class="nav-btn" id="navMoreBtn" type="button">☰ <span class="nav-label">더보기</span></button>
     </nav>
     <div id="recentClientsBox" class="recent-clients"></div>
     <button class="lock-btn" id="lockNowBtn">🔐 <span class="nav-label">잠금</span></button>
@@ -3085,6 +3093,31 @@ const UI = {
     );
     document.getElementById('shortcutsHelpCloseBtn').onclick = () => UI.closeModal();
   },
+  // 좁은 화면에서는 하단 바에 4개(대시보드/대상자/SOAP기록/후속조치)만 두고
+  // 나머지 메뉴는 이 목록으로 묶는다 — 가로 스크롤에 의존해 메뉴가 화면
+  // 밖으로 밀려나 찾을 수 없게 되는 것을 막기 위함.
+  MOBILE_MORE_ITEMS: [
+    { view: 'schedule', icon: '📅', label: '일정' },
+    { view: 'resourceDirectory', icon: '🏢', label: '기관주소록' },
+    { view: 'search', icon: '🔍', label: '검색' },
+    { view: 'stats', icon: '📊', label: '통계' },
+    { view: 'selfCare', icon: '🧘', label: '자기돌봄' },
+    { view: 'training', icon: '📚', label: '교육·슈퍼비전' },
+    { view: 'settings', icon: '⚙️', label: '설정' }
+  ],
+  openMobileMoreMenu(){
+    UI.openModal(
+      '<h3>☰ 더보기</h3>' +
+      '<div style="display:flex;flex-direction:column;gap:4px;">' +
+      UI.MOBILE_MORE_ITEMS.map(item =>
+        '<button class="btn" data-more-view="' + item.view + '" style="width:100%;justify-content:flex-start;text-align:left;">' + item.icon + ' ' + item.label + '</button>'
+      ).join('') +
+      '</div>'
+    );
+    document.querySelectorAll('[data-more-view]').forEach(el => {
+      el.onclick = () => { UI.closeModal(); UI.navigate(el.dataset.moreView, {}); };
+    });
+  },
   confirm(message, onYes){
     UI.openModal(
       '<h3>확인</h3><p style="color:var(--text-muted);margin-bottom:18px;">' + Utils.escapeHtml(message) + '</p>' +
@@ -3105,10 +3138,15 @@ const UI = {
     document.getElementById('appMain').scrollTop = 0;
   },
 
+  // 모바일 하단 바가 "핵심 4개 + 더보기"로 접힐 때, 더보기 안의 화면을 보고
+  // 있으면 더보기 버튼 자체도 활성 표시가 되도록 여기 나열해 둔다.
+  NAV_SECONDARY_VIEWS: ['schedule', 'resourceDirectory', 'search', 'stats', 'selfCare', 'training', 'settings'],
   renderSidebarActive(){
-    document.querySelectorAll('.nav-btn').forEach(btn => {
+    document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.view === State.currentView);
     });
+    const moreBtn = document.getElementById('navMoreBtn');
+    if (moreBtn) moreBtn.classList.toggle('active', UI.NAV_SECONDARY_VIEWS.includes(State.currentView));
   },
 
   renderRecentClients(){
@@ -6577,9 +6615,10 @@ async function bootstrapApp(){
   UI.hideLockScreen();
   UI.showAppShell();
 
-  document.querySelectorAll('.nav-btn').forEach(btn => {
+  document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
     btn.addEventListener('click', () => UI.navigate(btn.dataset.view, {}));
   });
+  document.getElementById('navMoreBtn').addEventListener('click', () => UI.openMobileMoreMenu());
   document.getElementById('lockNowBtn').addEventListener('click', () => Auth.lock());
   document.getElementById('modalOverlay').addEventListener('click', (e) => {
     if (e.target.id === 'modalOverlay') UI.closeModal();
