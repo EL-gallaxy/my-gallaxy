@@ -3797,6 +3797,7 @@ const Views = {
     // 앱이 이를 근거로 무언가를 자동 판단하지 않는다.
     const clientAge = Utils.calculateAge(c.birthDate);
     basicHtml += '<div class="panel"><div class="panel-title">등록 정보</div><div class="form-grid">' +
+      '<div class="field"><label>별칭</label><input type="text" id="clAlias" value="' + Utils.escapeHtml(c.alias || '') + '"></div>' +
       '<div class="field"><label>등록일</label><input type="date" id="clRegDate" value="' + Utils.escapeHtml(c.registrationDate || '') + '"></div>' +
       '<div class="field"><label>의뢰경로</label><select id="clReferral">' +
       '<option value="">(선택 안 함)</option>' +
@@ -4367,12 +4368,14 @@ const Views = {
     };
     document.getElementById('saveRegInfoBtn').onclick = async () => {
       await Clients.update(id, {
+        alias: document.getElementById('clAlias').value.trim(),
         registrationDate: document.getElementById('clRegDate').value,
         referralSource: document.getElementById('clReferral').value,
         birthDate: document.getElementById('clBirthDate').value
       });
       toast('등록 정보를 저장했습니다.');
       UI.renderCurrentView();
+      UI.renderRecentClients();
     };
     const saveIntakeBtn = document.getElementById('saveIntakeBtn');
     if (saveIntakeBtn) saveIntakeBtn.onclick = async () => {
