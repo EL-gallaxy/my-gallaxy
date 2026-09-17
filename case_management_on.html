@@ -407,7 +407,7 @@
     #vsViolence, #vsCompanion, #vsPets, #reportMonthSelect, #exportReportCsvBtn, #reportModeMonthBtn,
     #reportModeYearBtn, #reportYearSelect, #exportAnnualReportCsvBtn,
     #printReportBtn, #journalDateInput, #printJournalBtn, #icsExportBtn, #dailyBriefingBtn,
-    #briefingDateInput, #printBriefingBtn, #addRiskBtn, #riskFactorList, #addReassessBtn, .example-banner{
+    #briefingDateInput, #printBriefingBtn, #addRiskBtn, #riskFactorList, #addReassessBtn, #addConsentBtn, .example-banner{
       display:none !important;
     }
     body{background:#fff;}
@@ -979,7 +979,7 @@ const CONSTANTS = {
     temporary:   { label: '일시관리', emoji: '🟢', badgeClass: 'badge-temporary' }
   },
   QUICK_P_ACTIONS: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인'],
-  FOLLOWUP_TYPES: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인', '기타'],
+  FOLLOWUP_TYPES: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인', '위기 후속 모니터링', '기타'],
   REFERRAL_SOURCES: ['본인', '가족', '정신의료기관', '타 기관 의뢰', '행정기관(경찰·소방·주민센터 등)', '기타'],
   CLOSURE_REASONS: ['자립/목표 달성', '타 기관 이관', '장기 입원', '관할지역 전출', '사망', '연락두절', '본인 거부', '기타'],
   RESOURCE_TYPES: ['정신재활시설(주간재활 등)', '직업재활시설', '정신의료기관', '사회복지관', '자활센터', '주거지원', '기타'],
@@ -1661,6 +1661,28 @@ const Clients = {
     const client = State.clients.get(id);
     if (!client) return;
     client.documents = (client.documents || []).filter(d => d.id !== docId);
+    await Storage.saveEncrypted('clients', client);
+  },
+
+  // 정보공유 동의 이력 — 타 기관과 정보를 주고받을 때의 근거(동의 여부·날짜)를
+  // 사건별로 기록한다. 서류 수령 자체를 관리하는 필수 서류 체크리스트와 달리,
+  // 여러 기관·여러 시점의 공유 이력을 누적해서 볼 수 있게 한다.
+  async addConsent(id, { date, agency, granted, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    agency = (agency || '').trim();
+    if (!agency) throw new Error('공유 대상 기관·목적을 입력해 주세요.');
+    client.consents = client.consents || [];
+    client.consents.push({
+      id: Utils.uid('consent'), date: date || Utils.todayStr(),
+      agency, granted: granted !== 'no', note: (note || '').trim()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeConsent(id, consentId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.consents = (client.consents || []).filter(c => c.id !== consentId);
     await Storage.saveEncrypted('clients', client);
   },
 
@@ -2582,6 +2604,7 @@ const Search = {
       (c.medications || []).forEach(m => push(c, '복약 현황', [m.name, m.dose, m.hospital, m.note].filter(Boolean).join(' · ')));
       (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · ')));
       (c.documents || []).forEach(d => push(c, '필수 서류', d.name));
+      (c.consents || []).forEach(cs => push(c, '정보공유 동의 이력', [cs.agency, cs.note].filter(Boolean).join(' · ')));
       (c.assessments || []).forEach(a => push(c, '사정도구 점수', [a.scale, a.score, a.note].filter(Boolean).join(' · ')));
       (c.riskAssessments || []).forEach(r => push(c, '위험도 평가', [(CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note].filter(Boolean).join(' · ')));
       (c.reassessments || []).forEach(r => push(c, '정기 재사정', r.note));
@@ -3109,6 +3132,7 @@ const UI = {
       case 'search': main.innerHTML = Views.search(); Views.bindSearch(); break;
       case 'stats': main.innerHTML = Views.stats(); Views.bindStats(); break;
       case 'selfCare': main.innerHTML = Views.selfCarePage(); Views.bindSelfCarePage(); break;
+      case 'tour': main.innerHTML = Views.tourPage(); Views.bindTourPage(); break;
       case 'settings': main.innerHTML = Views.settings(); Views.bindSettings(); break;
       default: main.innerHTML = '<p>알 수 없는 화면입니다.</p>';
     }
@@ -3156,6 +3180,7 @@ const Views = {
     (c.riskAssessments || []).forEach(r => push(r.date, '', '🎯', '위험도 평가: ' + (CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note || ''));
     (c.reassessments || []).forEach(r => push(r.date, '', '📋', '정기 재사정 완료', r.note || ''));
     (c.documents || []).forEach(d => { if (d.receivedDate) push(d.receivedDate, '', '📄', '서류 수령', d.name); });
+    (c.consents || []).forEach(cs => push(cs.date, '', '🤝', '정보공유 동의: ' + (cs.granted ? '동의' : '미동의'), cs.agency));
     (c.managementHistory || []).forEach(h => {
       const fromLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.from] || {}).label || h.from || '(미지정)';
       const toLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.to] || {}).label || h.to;
@@ -4154,6 +4179,31 @@ const Views = {
         '</details>';
     }
 
+    // 정보공유 동의 이력 — 사례회의·자원연계 등으로 타 기관과 정보를 주고받을
+    // 때, 그 근거가 되는 동의 취득 여부와 날짜를 기록해 둔다. "필수 서류·동의서"
+    // 체크리스트가 서류 수령 자체를 1회성으로 관리하는 것과 달리, 이쪽은 어느
+    // 기관과 어떤 목적으로 몇 번 정보를 공유했는지 이력으로 남긴다.
+    const consents = (c.consents || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    if (!SimpleMode.isSimple()){
+      historyHtml += '<details class="panel"' + (consents.length ? ' open' : '') + '><summary class="panel-title">정보공유 동의 이력</summary>';
+      if (consents.length === 0){
+        historyHtml += '<div class="empty-msg">등록된 정보공유 동의 이력이 없습니다.</div>';
+      } else {
+        consents.forEach(cs => {
+          historyHtml += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + cs.date + ' · ' + Utils.escapeHtml(cs.agency) + ' <span class="badge ' + (cs.granted ? 'badge-final' : 'badge-crisis') + '">' + (cs.granted ? '동의' : '미동의') + '</span></div>' +
+            (cs.note ? '<div class="row-sub">' + Utils.escapeHtml(cs.note) + '</div>' : '') +
+            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-consent="' + cs.id + '">삭제</button></div></div>';
+        });
+      }
+      historyHtml += '<div class="divider"></div><div class="form-grid">' +
+        '<div class="field"><label>날짜</label><input type="date" id="consentDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field"><label>동의 여부</label><select id="consentGranted"><option value="yes">동의</option><option value="no">미동의</option></select></div>' +
+        '<div class="field full"><label>공유 대상 기관·목적</label><input type="text" id="consentAgency" placeholder="예: OO정신병원 - 진료협조 목적"></div>' +
+        '<div class="field full"><label>메모(선택)</label><input type="text" id="consentNote"></div></div>' +
+        '<button class="btn btn-sm" id="addConsentBtn">＋ 동의 이력 추가</button></details>';
+    }
+
     // 대상자 간 가족 관계 — 한쪽에 연결하면 반대쪽에도 자동으로 역관계가 생성된다.
     const familyLinks = (c.familyLinks || []);
     safetyHtml += '<details class="panel"' + (familyLinks.length ? ' open' : '') + '><summary class="panel-title">가족 관계</summary>';
@@ -4415,15 +4465,17 @@ const Views = {
     });
 
     document.getElementById('addCrisisBtn').onclick = async () => {
+      const crisisDate = document.getElementById('crisisDate').value;
       await Clients.addCrisisEvent(id, {
         type: document.getElementById('crisisType').value,
-        date: document.getElementById('crisisDate').value,
+        date: crisisDate,
         time: document.getElementById('crisisTime').value,
         description: document.getElementById('crisisDescription').value,
         action: document.getElementById('crisisAction').value
       });
       toast('위기개입 기록을 추가했습니다.');
       UI.renderCurrentView();
+      Views.openCrisisFollowUpSuggestModal(id, crisisDate);
     };
     document.querySelectorAll('[data-del-crisis]').forEach(el => {
       el.onclick = () => UI.confirm('이 위기개입 기록을 삭제할까요?', async () => {
@@ -4537,6 +4589,30 @@ const Views = {
       el.onclick = () => UI.confirm('이 서류 항목을 삭제할까요?', async () => {
         const snap = Clients.snapshot(id);
         await Clients.removeDocumentItem(id, el.dataset.delDoc);
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
+
+    const addConsentBtn = document.getElementById('addConsentBtn');
+    if (addConsentBtn) addConsentBtn.onclick = async () => {
+      try{
+        await Clients.addConsent(id, {
+          date: document.getElementById('consentDate').value,
+          granted: document.getElementById('consentGranted').value,
+          agency: document.getElementById('consentAgency').value,
+          note: document.getElementById('consentNote').value
+        });
+        toast('정보공유 동의 이력을 추가했습니다.');
+        UI.renderCurrentView();
+      }catch(e){
+        toast(e.message, 'error');
+      }
+    };
+    document.querySelectorAll('[data-del-consent]').forEach(el => {
+      el.onclick = () => UI.confirm('이 정보공유 동의 이력을 삭제할까요?', async () => {
+        const snap = Clients.snapshot(id);
+        await Clients.removeConsent(id, el.dataset.delConsent);
         toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
@@ -5972,6 +6048,10 @@ const Views = {
       '<div class="field"><label>담당자명(선택)</label><input type="text" id="orgWorkerInput" value="' + Utils.escapeHtml(OrgInfo.worker) + '"></div>' +
       '</div></div>';
 
+    html += '<div class="panel"><div class="panel-title">📖 앱 둘러보기 (신입 직원용)</div>' +
+      '<p class="help-text" style="margin-bottom:10px;">이 앱에 어떤 기능들이 있는지 한 화면으로 정리해서 보여줍니다. 새로 오신 분께 안내할 때, 또는 오랜만에 기능을 다시 확인하고 싶을 때 활용하세요.</p>' +
+      '<button class="btn btn-sm" id="openTourBtn">둘러보기 열기</button></div>';
+
     html += '<div class="panel"><div class="panel-title">🧩 간소화 모드 (신입 직원용)</div>' +
       '<p class="help-text" style="margin-bottom:10px;">켜면 목표 진행 상황·사정도구·필수 서류·자원연계·사례회의·초기사정지·통합 타임라인 등 당장 필요하지 않을 수 있는 고급 패널을 화면에서 숨깁니다. 데이터는 삭제되지 않으며, 방문 전 안전 체크처럼 안전과 직결된 항목은 계속 표시됩니다. 언제든 다시 끌 수 있습니다.</p>' +
       '<label class="field-inline"><input type="checkbox" id="simpleModeChk"' + (SimpleMode.isSimple() ? ' checked' : '') + '> 간소화 모드 사용</label>' +
@@ -6034,6 +6114,8 @@ const Views = {
       });
     });
 
+    document.getElementById('openTourBtn').onclick = () => UI.navigate('tour');
+
     document.getElementById('simpleModeChk').addEventListener('change', async (e) => {
       await SimpleMode.setEnabled(e.target.checked);
       UI.applySimpleModeNav();
@@ -6072,6 +6154,80 @@ const Views = {
       const mins = await Auth.getAutoLockMinutes();
       document.getElementById('autoLockSelect').value = String(mins);
     })();
+  },
+
+  /* ---------------- TOUR (신입 직원용 앱 둘러보기) ----------------
+     새로운 기능을 추가하는 게 아니라, 이미 있는 기능들을 새로 온 직원이
+     빠르게 찾을 수 있도록 한 화면에 정리해서 보여준다. */
+  TOUR_SECTIONS: [
+    {
+      title: '📋 기본 메뉴 구성',
+      items: [
+        '🏠 대시보드 — 오늘 할 일, 기한 초과 후속조치, 위기관리 대상자, 미접촉 대상자, 정기 재사정, 안전 정보 공백 등을 한눈에 확인',
+        '👤 대상자 — 전체 대상자 목록, 검색·필터, 신규 등록, 전체 현황 인쇄',
+        '📝 SOAP 기록 — 상담 기록 작성·조회, 규칙 기반 A(사정) 초안 생성',
+        '🔔 후속조치 — 등록한 후속조치 목록과 완료 처리',
+        '📅 일정 — 월간/주간 일정, 반복 일정, iCal(.ics) 내보내기',
+        '🏢 기관주소록 — 자주 연계하는 외부 자원(기관) 목록',
+        '🔍 검색 — SOAP 검색과 대상자 하위 기록 전체를 찾는 통합검색',
+        '📊 통계 — 월간·연간 실적보고서, 일일 업무일지',
+        '🧘 자기돌봄 — 대상자 관리와 무관한 실무자 개인 기록(소진·감정, 교육·연수, 슈퍼비전 등)',
+        '⚙️ 설정 — 기관 정보, 백업, 간소화 모드, 대시보드 위젯, 테마 등'
+      ]
+    },
+    {
+      title: '🛟 안전 관련 핵심 기능',
+      items: [
+        '🚨 긴급 정보 카드 (대상자 상세 화면) — 보호자 연락처·안전계획·복약 정보를 위기 상황에서 바로 확인',
+        '🛟 위기 시 안전계획 — 위기 전 미리 세워두는 예방적 계획(Stanley-Brown 6단계)',
+        '🎯 위험도 평가 — 참고 체크리스트 + 실무자가 직접 선택하는 위험도(낮음/중간/높음) 이력 관리',
+        '🧳 방문 전 안전 체크 — 방문하는 실무자 본인의 안전을 위한 확인 항목',
+        '🛡️ 안전 정보 공백 점검 (대시보드) — 위기관리 등급인데 안전계획·위험도 평가가 비어있는 경우를 자동으로 짚어줌',
+        '위기개입 기록 직후 24~72시간 후속 모니터링 후속조치를 등록할지 바로 물어봄'
+      ]
+    },
+    {
+      title: '📆 매일 쓰기 좋은 화면',
+      items: [
+        '오늘의 방문 준비 브리핑 — 오늘 일정이 있는 대상자의 안전 체크·안전계획 여부를 미리 확인',
+        '일일 업무일지 (통계 화면 안) — 특정 날짜의 SOAP·위기개입 등을 모아 인쇄',
+        '사례관리 종합 인계서 — 사례 인수인계·전출 시 핵심 정보만 압축한 요약',
+        '통합 타임라인 (대상자 상세) — 한 대상자의 모든 기록을 시간순으로 한눈에'
+      ]
+    },
+    {
+      title: '🆕 신입 직원을 위한 팁',
+      items: [
+        '🧩 간소화 모드 (설정) — 당장 필요하지 않은 고급 패널을 숨겨 화면을 단순하게. 안전 관련 항목은 계속 표시됨',
+        '⌨️ 키보드 단축키 — 화면 아무 곳에서나 "?" 키를 누르면 단축키 목록이 뜸 (입력 중일 때는 동작하지 않음)',
+        '🖨️ 인쇄 항목 선택 — 대상자 기록을 인쇄할 때 필요한 섹션만 골라서 인쇄 가능',
+        '실행취소 — 삭제 직후 화면 하단 토스트의 "실행취소"로 대부분 되돌릴 수 있음'
+      ]
+    },
+    {
+      title: '💾 데이터 관리 — 꼭 알아야 할 것',
+      items: [
+        '이 앱은 서버 없이 현재 브라우저에만 암호화되어 저장됩니다. 비밀번호를 분실하면 데이터를 복구할 수 없습니다.',
+        '대시보드에 백업 알림이 뜨면 미루지 말고 바로 백업하세요 (설정 → 데이터 백업 및 복원).',
+        'CSV 내보내기로 대상자 명단만 별도로 백업할 수도 있습니다.',
+        '다른 컴퓨터·휴대폰과는 자동으로 동기화되지 않습니다 — 한 기기에서만 사용하는 도구입니다.'
+      ]
+    }
+  ],
+  tourPage(){
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">📖 앱 둘러보기</h1>' +
+      '<button class="btn btn-sm" id="tourBackBtn">← 설정으로</button></div>';
+    html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">이 앱에 있는 기능들을 한 화면으로 정리했습니다. 새로 오신 분께 안내하거나, 오랜만에 기능을 다시 확인할 때 활용하세요. 언제든 설정 화면에서 다시 열 수 있습니다.</p>';
+    Views.TOUR_SECTIONS.forEach(section => {
+      html += '<div class="panel"><div class="panel-title">' + section.title + '</div>' +
+        '<ul style="margin:0;padding-left:20px;font-size:0.9rem;line-height:1.9;">' +
+        section.items.map(item => '<li>' + Utils.escapeHtml(item) + '</li>').join('') +
+        '</ul></div>';
+    });
+    return html;
+  },
+  bindTourPage(){
+    document.getElementById('tourBackBtn').onclick = () => UI.navigate('settings');
   },
 
   /* ---------------- Modals: quick add ---------------- */
@@ -6195,6 +6351,38 @@ const Views = {
     html += '<div style="display:flex;justify-content:flex-end;margin-top:18px;"><button class="btn" id="emergencyInfoCloseBtn">닫기</button></div>';
     UI.openModal(html);
     document.getElementById('emergencyInfoCloseBtn').onclick = () => UI.closeModal();
+  },
+
+  // 위기개입 기록 직후 뜨는 후속 모니터링 제안 — 위기개입과 후속조치가 서로
+  // 분리되어 있어 놓치기 쉬운 24~72시간 이내 안전 확인 연락을, 기록하는
+  // 그 순간 바로 등록할 수 있게 연결한다. 등록 여부는 실무자의 선택이며,
+  // 건너뛰어도 위기개입 기록 자체에는 영향이 없다.
+  openCrisisFollowUpSuggestModal(clientId, crisisDate){
+    const suggestedDate = Utils.addDaysStr(crisisDate || Utils.todayStr(), 2);
+    UI.openModal(
+      '<h3>🚨 위기개입 후속 모니터링</h3>' +
+      '<p class="help-text" style="margin-bottom:14px;">위기개입 이후 24~72시간 이내 안전 확인 연락은 재위기 예방에 중요한 것으로 알려져 있습니다. 후속조치로 등록해 두시겠습니까?</p>' +
+      '<div class="field"><label>후속 확인 예정일</label><input type="date" id="cfDueDate" value="' + suggestedDate + '"></div>' +
+      '<div class="field full"><label>메모(선택)</label><input type="text" id="cfMemo" placeholder="예: 전화로 안전 확인 및 정서 상태 점검"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px;">' +
+      '<button class="btn" id="cfSkipBtn">건너뛰기</button>' +
+      '<button class="btn btn-primary" id="cfAddBtn">후속조치 등록</button>' +
+      '</div>'
+    );
+    document.getElementById('cfSkipBtn').onclick = () => UI.closeModal();
+    document.getElementById('cfAddBtn').onclick = async () => {
+      const dueDate = document.getElementById('cfDueDate').value;
+      if (!dueDate){ toast('예정일을 입력해 주세요.', 'error'); return; }
+      await FollowUps.add({
+        clientId, type: '위기 후속 모니터링',
+        text: '위기개입 이후 24~72시간 이내 안전 확인',
+        dueDate,
+        memo: document.getElementById('cfMemo').value
+      });
+      UI.closeModal();
+      toast('후속 모니터링 후속조치를 등록했습니다.');
+      UI.renderCurrentView();
+    };
   },
 
   openFollowUpModal(prefillClientId){
