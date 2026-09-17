@@ -3458,6 +3458,33 @@ const Views = {
       html += '</div>';
     }
 
+    // 실무자 자기돌봄 메모 — 특정 대상자와 무관한, 실무자 본인을 위한 기록.
+    // 통계나 리포트 어디에도 집계되지 않고, 오직 실무자 자신만 본다. 안전·행정
+    // 알림 패널들보다는 뒤에 두되, 미완성 SOAP·최근 기록 같은 참고용 패널보다는
+    // 앞에 두어 스크롤 없이 눈에 띄게 한다.
+    if (!hide('selfCare')){
+      const recentSelfCare = SelfCare.list().slice(0, 3);
+      html += '<div class="panel"><div class="panel-title">🧘 자기돌봄 메모</div>' +
+        '<p class="help-text" style="margin-bottom:10px;">특정 대상자와 무관하게, 위기 상황을 겪거나 소진을 느낀 스스로를 위해 남기는 개인 기록입니다. 통계에는 집계되지 않습니다.</p>';
+      if (recentSelfCare.length === 0){
+        html += '<div class="empty-msg">작성된 자기돌봄 메모가 없습니다.</div>';
+      } else {
+        recentSelfCare.forEach(n => {
+          const st = CONSTANTS.STRESS_LEVELS[n.stressLevel] || CONSTANTS.STRESS_LEVELS.medium;
+          html += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + n.date + ' · <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span></div>' +
+            '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(n.note), 70) + '</div>' +
+            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
+        });
+      }
+      html += '<div class="divider"></div><div class="form-grid">' +
+        '<div class="field"><label>날짜</label><input type="date" id="scDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field"><label>소진도</label><select id="scStress">' +
+        Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '"' + (k === 'medium' ? ' selected' : '') + '>' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>' +
+        '<div class="field full"><label>내용</label><textarea id="scNote" style="min-height:60px;" placeholder="오늘 힘들었던 점, 스스로에게 필요한 것 등을 자유롭게 적어보세요."></textarea></div></div>' +
+        '<button class="btn btn-sm" id="addSelfCareBtn">＋ 기록하기</button></div>';
+    }
+
     // Draft SOAPs
     if (!hide('draft')){
       html += '<div class="panel" id="draftSection"><div class="panel-title">📝 미완성 SOAP</div>';
@@ -3486,31 +3513,6 @@ const Views = {
         });
       }
       html += '</div>';
-    }
-
-    // 실무자 자기돌봄 메모 — 특정 대상자와 무관한, 실무자 본인을 위한 기록.
-    // 통계나 리포트 어디에도 집계되지 않고, 오직 실무자 자신만 본다.
-    if (!hide('selfCare')){
-      const recentSelfCare = SelfCare.list().slice(0, 3);
-      html += '<div class="panel"><div class="panel-title">🧘 자기돌봄 메모</div>' +
-        '<p class="help-text" style="margin-bottom:10px;">특정 대상자와 무관하게, 위기 상황을 겪거나 소진을 느낀 스스로를 위해 남기는 개인 기록입니다. 통계에는 집계되지 않습니다.</p>';
-      if (recentSelfCare.length === 0){
-        html += '<div class="empty-msg">작성된 자기돌봄 메모가 없습니다.</div>';
-      } else {
-        recentSelfCare.forEach(n => {
-          const st = CONSTANTS.STRESS_LEVELS[n.stressLevel] || CONSTANTS.STRESS_LEVELS.medium;
-          html += '<div class="list-row"><div class="list-row-main">' +
-            '<div class="row-title">' + n.date + ' · <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span></div>' +
-            '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(n.note), 70) + '</div>' +
-            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
-        });
-      }
-      html += '<div class="divider"></div><div class="form-grid">' +
-        '<div class="field"><label>날짜</label><input type="date" id="scDate" value="' + Utils.todayStr() + '"></div>' +
-        '<div class="field"><label>소진도</label><select id="scStress">' +
-        Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '"' + (k === 'medium' ? ' selected' : '') + '>' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>' +
-        '<div class="field full"><label>내용</label><textarea id="scNote" style="min-height:60px;" placeholder="오늘 힘들었던 점, 스스로에게 필요한 것 등을 자유롭게 적어보세요."></textarea></div></div>' +
-        '<button class="btn btn-sm" id="addSelfCareBtn">＋ 기록하기</button></div>';
     }
 
     // Quick buttons
