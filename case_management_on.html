@@ -534,6 +534,7 @@
       <button class="nav-btn" id="navResourceDirectory" data-view="resourceDirectory">🏢 <span class="nav-label">기관주소록</span></button>
       <button class="nav-btn" data-view="search">🔍 <span class="nav-label">검색</span></button>
       <button class="nav-btn" data-view="stats">📊 <span class="nav-label">통계</span></button>
+      <button class="nav-btn" data-view="selfCare">🧘 <span class="nav-label">자기돌봄</span></button>
       <button class="nav-btn" data-view="settings">⚙️ <span class="nav-label">설정</span></button>
     </nav>
     <div id="recentClientsBox" class="recent-clients"></div>
@@ -997,12 +998,22 @@ const CONSTANTS = {
     discontinued: { label: '🛑 중단',   badgeClass: 'badge-crisis' }
   },
   // 실무자 자기돌봄 메모의 소진(stress) 정도 — 대상자에 대한 판단이 아니라
-  // 실무자 본인의 상태를 스스로 기록하는 용도.
+  // 실무자 본인의 상태를 스스로 기록하는 용도. 교육·연수 기록 등 소진과
+  // 무관한 구분에서는 "해당 없음"을 선택할 수 있다.
   STRESS_LEVELS: {
+    none: { label: '해당 없음', badgeClass: 'badge-draft' },
     low: { label: '낮음', badgeClass: 'badge-temporary' },
     medium: { label: '보통', badgeClass: 'badge-pending' },
     high: { label: '높음', badgeClass: 'badge-intensive' },
     veryHigh: { label: '매우 높음', badgeClass: 'badge-crisis' }
+  },
+  // 자기돌봄 메모의 구분 — 소진·감정 기록뿐 아니라 교육·연수, 슈퍼비전 등
+  // 실무자 개인이 남기고 싶은 기록을 폭넓게 담을 수 있게 한다.
+  SELFCARE_CATEGORIES: {
+    selfcare: { label: '소진·감정 기록', badgeClass: 'badge-crisis' },
+    training: { label: '교육·연수 기록', badgeClass: 'badge-intensive' },
+    supervision: { label: '슈퍼비전·자문 기록', badgeClass: 'badge-temporary' },
+    other: { label: '기타', badgeClass: 'badge-draft' }
   },
   // 대상자 간 가족 관계 연결에 쓰는 관계→반대쪽 관계 매핑. A에 "B는 나의 부모"를
   // 추가하면 B 쪽에는 자동으로 "A는 나의 자녀"가 생성된다(배우자·형제자매는 대칭).
@@ -1211,8 +1222,7 @@ const DashboardPrefs = {
   WIDGETS: {
     crisis: '🚨 위기관리 대상자 현황', overdue: '⚠ 기한 초과 후속조치', gap: '🕓 미접촉 대상자',
     medRenewal: '💊 복약 갱신 임박', reassessment: '📋 정기 재사정 필요', safetyGap: '🛡️ 안전 정보 공백 점검',
-    today: '🔴 오늘 할 일', draft: '📝 미완성 SOAP', recent: '최근 기록', selfCare: '🧘 자기돌봄 메모',
-    dataManage: '데이터 관리'
+    today: '🔴 오늘 할 일', draft: '📝 미완성 SOAP', recent: '최근 기록', dataManage: '데이터 관리'
   },
   hidden: {},
 
@@ -2481,12 +2491,13 @@ const SelfCare = {
   },
   get(id){ return State.selfCareNotes.get(id); },
 
-  async add({ date, stressLevel, note }){
+  async add({ date, category, stressLevel, note }){
     note = (note || '').trim();
     if (!note) throw new Error('내용을 입력해 주세요.');
     const entry = {
       id: Utils.uid('sc'), date: date || Utils.todayStr(),
-      stressLevel: CONSTANTS.STRESS_LEVELS[stressLevel] ? stressLevel : 'medium',
+      category: CONSTANTS.SELFCARE_CATEGORIES[category] ? category : 'selfcare',
+      stressLevel: CONSTANTS.STRESS_LEVELS[stressLevel] ? stressLevel : 'none',
       note
     };
     State.selfCareNotes.set(entry.id, entry);
@@ -3097,6 +3108,7 @@ const UI = {
       case 'resourceDirectory': main.innerHTML = Views.resourceDirectory(); Views.bindResourceDirectory(); break;
       case 'search': main.innerHTML = Views.search(); Views.bindSearch(); break;
       case 'stats': main.innerHTML = Views.stats(); Views.bindStats(); break;
+      case 'selfCare': main.innerHTML = Views.selfCarePage(); Views.bindSelfCarePage(); break;
       case 'settings': main.innerHTML = Views.settings(); Views.bindSettings(); break;
       default: main.innerHTML = '<p>알 수 없는 화면입니다.</p>';
     }
@@ -3313,6 +3325,7 @@ const Views = {
       (hide('medRenewal') ? '' : '<button class="summary-card overdue" data-scroll="medRenewalSection"><div class="num">' + medRenewals.length + '</div><div class="label">💊 복약 갱신 임박</div></button>') +
       (hide('reassessment') ? '' : '<button class="summary-card gap" data-scroll="reassessmentSection"><div class="num">' + reassessGaps.length + '</div><div class="label">📋 정기 재사정 필요</div></button>') +
       (hide('safetyGap') ? '' : '<button class="summary-card overdue" data-scroll="safetyGapSection"><div class="num">' + safetyGaps.length + '</div><div class="label">🛡️ 안전 정보 공백</div></button>') +
+      '<button class="summary-card upcoming" data-goto="selfCare"><div class="num">' + SelfCare.list().length + '</div><div class="label">🧘 자기돌봄</div></button>' +
       '</div>';
 
     // 위기관리 대상자 현황판 — 관리수준을 필터링해서 목록을 찾아가지 않아도,
@@ -3458,33 +3471,6 @@ const Views = {
       html += '</div>';
     }
 
-    // 실무자 자기돌봄 메모 — 특정 대상자와 무관한, 실무자 본인을 위한 기록.
-    // 통계나 리포트 어디에도 집계되지 않고, 오직 실무자 자신만 본다. 안전·행정
-    // 알림 패널들보다는 뒤에 두되, 미완성 SOAP·최근 기록 같은 참고용 패널보다는
-    // 앞에 두어 스크롤 없이 눈에 띄게 한다.
-    if (!hide('selfCare')){
-      const recentSelfCare = SelfCare.list().slice(0, 3);
-      html += '<div class="panel"><div class="panel-title">🧘 자기돌봄 메모</div>' +
-        '<p class="help-text" style="margin-bottom:10px;">특정 대상자와 무관하게, 위기 상황을 겪거나 소진을 느낀 스스로를 위해 남기는 개인 기록입니다. 통계에는 집계되지 않습니다.</p>';
-      if (recentSelfCare.length === 0){
-        html += '<div class="empty-msg">작성된 자기돌봄 메모가 없습니다.</div>';
-      } else {
-        recentSelfCare.forEach(n => {
-          const st = CONSTANTS.STRESS_LEVELS[n.stressLevel] || CONSTANTS.STRESS_LEVELS.medium;
-          html += '<div class="list-row"><div class="list-row-main">' +
-            '<div class="row-title">' + n.date + ' · <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span></div>' +
-            '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(n.note), 70) + '</div>' +
-            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
-        });
-      }
-      html += '<div class="divider"></div><div class="form-grid">' +
-        '<div class="field"><label>날짜</label><input type="date" id="scDate" value="' + Utils.todayStr() + '"></div>' +
-        '<div class="field"><label>소진도</label><select id="scStress">' +
-        Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '"' + (k === 'medium' ? ' selected' : '') + '>' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>' +
-        '<div class="field full"><label>내용</label><textarea id="scNote" style="min-height:60px;" placeholder="오늘 힘들었던 점, 스스로에게 필요한 것 등을 자유롭게 적어보세요."></textarea></div></div>' +
-        '<button class="btn btn-sm" id="addSelfCareBtn">＋ 기록하기</button></div>';
-    }
-
     // Draft SOAPs
     if (!hide('draft')){
       html += '<div class="panel" id="draftSection"><div class="panel-title">📝 미완성 SOAP</div>';
@@ -3608,27 +3594,6 @@ const Views = {
     document.getElementById('qbNewSoap').onclick = () => UI.navigate('soapEditor', {});
     document.getElementById('qbNewFollowUp').onclick = () => Views.openFollowUpModal();
     document.getElementById('qbNewSchedule').onclick = () => Views.openScheduleModal();
-
-    const addSelfCareBtn = document.getElementById('addSelfCareBtn');
-    if (addSelfCareBtn) addSelfCareBtn.onclick = async () => {
-      const note = document.getElementById('scNote').value;
-      if (!note.trim()){ toast('내용을 입력해 주세요.', 'error'); return; }
-      await SelfCare.add({
-        date: document.getElementById('scDate').value,
-        stressLevel: document.getElementById('scStress').value,
-        note
-      });
-      toast('자기돌봄 메모를 기록했습니다.');
-      UI.renderCurrentView();
-    };
-    document.querySelectorAll('[data-del-selfcare]').forEach(el => {
-      el.onclick = () => UI.confirm('이 자기돌봄 메모를 삭제할까요?', async () => {
-        const snap = SelfCare.snapshot(el.dataset.delSelfcare);
-        await SelfCare.remove(el.dataset.delSelfcare);
-        toastUndo('삭제했습니다.', async () => { await SelfCare.restoreSnapshot(snap); UI.renderCurrentView(); });
-        UI.renderCurrentView();
-      });
-    });
 
     Views.bindBackupControls();
   },
@@ -5907,6 +5872,75 @@ const Views = {
     };
     const exportAnnualReportCsvBtn = document.getElementById('exportAnnualReportCsvBtn');
     if (exportAnnualReportCsvBtn) exportAnnualReportCsvBtn.onclick = () => CSV.exportAnnualReport(Stats.annualReport(Views._reportYear));
+  },
+
+  /* ---------------- SELF CARE (실무자 자기돌봄 메모) ----------------
+     대상자 관리와 완전히 분리된, 실무자 본인만을 위한 개인 기록 공간.
+     소진·감정뿐 아니라 교육·연수, 슈퍼비전·자문 등 구분을 두어 폭넓게
+     쓸 수 있게 한다. 통계·리포트 어디에도 집계되지 않는다. */
+  selfCarePage(){
+    const categoryFilter = State.currentParams.categoryFilter || 'all';
+    let notes = SelfCare.list();
+    if (categoryFilter !== 'all') notes = notes.filter(n => (n.category || 'selfcare') === categoryFilter);
+
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">🧘 자기돌봄 메모</h1></div>';
+    html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">대상자 관리와 무관하게, 소진·감정 기록뿐 아니라 교육·연수, 슈퍼비전·자문 등 실무자 본인을 위한 기록을 자유롭게 남기는 공간입니다. 통계나 리포트 어디에도 집계되지 않고, 오직 본인만 확인합니다.</p>';
+
+    html += '<div class="panel" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">' +
+      '<div class="field" style="margin:0;max-width:220px;"><label>구분 필터</label><select id="scCategoryFilter">' +
+      '<option value="all"' + (categoryFilter === 'all' ? ' selected' : '') + '>전체</option>' +
+      Object.keys(CONSTANTS.SELFCARE_CATEGORIES).map(k => '<option value="' + k + '"' + (categoryFilter === k ? ' selected' : '') + '>' + CONSTANTS.SELFCARE_CATEGORIES[k].label + '</option>').join('') +
+      '</select></div></div>';
+
+    html += '<div class="panel">';
+    if (notes.length === 0){
+      html += '<div class="empty-msg">' + (categoryFilter === 'all' ? '작성된 기록이 없습니다.' : '해당 구분의 기록이 없습니다.') + '</div>';
+    } else {
+      notes.forEach(n => {
+        const cat = CONSTANTS.SELFCARE_CATEGORIES[n.category] || CONSTANTS.SELFCARE_CATEGORIES.selfcare;
+        const st = CONSTANTS.STRESS_LEVELS[n.stressLevel] || CONSTANTS.STRESS_LEVELS.none;
+        html += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + n.date + ' · <span class="badge ' + cat.badgeClass + '">' + cat.label + '</span>' +
+          ((n.stressLevel && n.stressLevel !== 'none') ? ' <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span>' : '') + '</div>' +
+          '<div class="row-sub" style="white-space:pre-line;">' + Utils.escapeHtml(n.note) + '</div>' +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
+      });
+    }
+    html += '</div>';
+
+    html += '<div class="panel"><div class="panel-title">새 기록 추가</div><div class="form-grid">' +
+      '<div class="field"><label>날짜</label><input type="date" id="scDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field"><label>구분</label><select id="scCategory">' +
+      Object.keys(CONSTANTS.SELFCARE_CATEGORIES).map(k => '<option value="' + k + '">' + CONSTANTS.SELFCARE_CATEGORIES[k].label + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>소진도(선택, 소진·감정 기록에만 해당)</label><select id="scStress">' +
+      Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '">' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>' +
+      '<div class="field full"><label>내용</label><textarea id="scNote" style="min-height:100px;" placeholder="오늘 힘들었던 점, 교육에서 배운 내용, 슈퍼비전에서 나온 조언 등을 자유롭게 적어보세요."></textarea></div></div>' +
+      '<button class="btn btn-sm btn-primary" id="addSelfCareBtn">＋ 기록하기</button></div>';
+
+    return html;
+  },
+  bindSelfCarePage(){
+    document.getElementById('scCategoryFilter').onchange = (e) => UI.navigate('selfCare', { categoryFilter: e.target.value });
+    document.getElementById('addSelfCareBtn').onclick = async () => {
+      const note = document.getElementById('scNote').value;
+      if (!note.trim()){ toast('내용을 입력해 주세요.', 'error'); return; }
+      await SelfCare.add({
+        date: document.getElementById('scDate').value,
+        category: document.getElementById('scCategory').value,
+        stressLevel: document.getElementById('scStress').value,
+        note
+      });
+      toast('기록했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-selfcare]').forEach(el => {
+      el.onclick = () => UI.confirm('이 기록을 삭제할까요?', async () => {
+        const snap = SelfCare.snapshot(el.dataset.delSelfcare);
+        await SelfCare.remove(el.dataset.delSelfcare);
+        toastUndo('삭제했습니다.', async () => { await SelfCare.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
   },
 
   /* ---------------- SETTINGS ---------------- */
