@@ -138,7 +138,7 @@
   }
   .field{margin-bottom:14px;}
   .field label{display:block;font-size:0.85rem;color:var(--text-muted);margin-bottom:5px;}
-  .field input[type=text],.field input[type=password],.field input[type=date],.field input[type=number],.field select,.field textarea{
+  .field input[type=text],.field input[type=password],.field input[type=date],.field input[type=time],.field input[type=number],.field select,.field textarea{
     width:100%;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);
   }
   .field textarea{resize:vertical;min-height:110px;}
@@ -460,7 +460,7 @@
     #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
     #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
+    #clNewSoap, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
@@ -1472,6 +1472,8 @@ async function loadAllDataIntoState(){
 
   const selfCareNotes = await Storage.loadAllDecrypted('selfCareNotes');
   selfCareNotes.forEach(n => State.selfCareNotes.set(n.id, n));
+
+  await Snippets.load();
 
   State.seedClientIds = (await Storage.getSetting('seedClientIds')) || [];
   State.recentClientIds = (await Storage.getSetting('recentClientIds')) || [];
@@ -3231,6 +3233,59 @@ const CSV = {
    restoring. This never leaves the device except when the user saves or
    moves the file themselves.
    ========================================================================= */
+/* =========================================================================
+   SNIPPETS (상용구) — 자주 쓰는 문구를 SOAP·간단 기록 입력칸에 넣는다. 문구에
+   대상자 정보가 섞일 수 있으므로 기록과 같은 키로 암호화해 설정 저장소에 둔다
+   (저장소 구조를 바꾸지 않기 위해 별도 테이블 대신 암호문 한 덩어리로 보관).
+   ========================================================================= */
+const Snippets = {
+  FIELDS: { S: 'S (주관적 정보)', O: 'O (객관적 정보)', A: 'A (사정)', P: 'P (계획)', any: '모든 칸' },
+  // 처음 한 번만 넣어 주는 예시 — 사실을 지어내지 않는 빈칸 양식이며 자유롭게 고치고 지울 수 있다.
+  STARTERS: [
+    { label: '전화 안부 확인', field: 'S', text: '전화로 안부를 확인함. 최근 지내는 상황: ' },
+    { label: '복약 확인', field: 'S', text: '복약: (규칙적으로 복용 / 간혹 누락 / 중단)함. 부작용 호소: (없음 / 있음 - )' },
+    { label: '수면·식사', field: 'S', text: '수면: (시간, 질) / 식사: (횟수, 양)' },
+    { label: '전화 미연결', field: 'S', text: '전화 연결을 시도하였으나 받지 않음(시도 시각: ). 문자 남김.' },
+    { label: '방문 관찰', field: 'O', text: '외모·위생: / 표정·행동: / 언어(속도·양): / 집 안 환경: ' },
+    { label: '재연락 계획', field: 'P', text: '다음 연락 예정일에 재연락하여 상태를 확인할 예정.' }
+  ],
+  items: [],
+
+  async load(){
+    const row = await Storage.getSetting('textSnippetsEnc');
+    if (!row){
+      this.items = this.STARTERS.map(x => Object.assign({ id: Utils.uid('snip') }, x));
+      await this.persist(false);
+      return;
+    }
+    try{
+      const data = await CryptoModule.decryptJSON(Auth.cryptoKey, row.iv, row.cipher);
+      this.items = Array.isArray(data.items) ? data.items : [];
+    }catch(e){ console.error(e); this.items = []; }
+  },
+  async persist(markDirty){
+    const { iv, cipher } = await CryptoModule.encryptJSON(Auth.cryptoKey, { version: 1, items: this.items });
+    await Storage.setSetting('textSnippetsEnc', { iv, cipher });
+    if (markDirty !== false) Backup.markDirty();
+  },
+  forField(field){ return this.items.filter(x => x.field === field || x.field === 'any'); },
+  get(id){ return this.items.find(x => x.id === id); },
+  _clean({ label, field, text }){
+    label = (label || '').trim(); text = (text || '').trim();
+    if (!label) throw new Error('이름을 입력해 주세요.');
+    if (!text) throw new Error('내용을 입력해 주세요.');
+    return { label, text, field: this.FIELDS[field] ? field : 'any' };
+  },
+  async add(data){ this.items.push(Object.assign({ id: Utils.uid('snip') }, this._clean(data))); await this.persist(); },
+  async update(id, data){
+    const it = this.get(id);
+    if (!it) throw new Error('상용구를 찾을 수 없습니다.');
+    Object.assign(it, this._clean(data));
+    await this.persist();
+  },
+  async remove(id){ this.items = this.items.filter(x => x.id !== id); await this.persist(); }
+};
+
 const Backup = {
   DATA_STORES: ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes'],
   // 마지막 백업 이후 기록이 바뀌었는지 추적한다. undefined = 아직 추적 전(이 기능이
@@ -3251,7 +3306,7 @@ const Backup = {
     await Storage.setSetting('backupDirtySince', null);
   },
 
-  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'seedClientIds'],
+  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'seedClientIds', 'textSnippetsEnc'],
   overdueCached: false,
 
   async exportAll(){
@@ -4041,6 +4096,7 @@ const Views = {
     // Quick buttons
     html += '<div class="quick-btns">' +
       '<button class="btn-quick" id="qbNewSoap">＋ 새 SOAP 기록</button>' +
+      '<button class="btn-quick" id="qbQuickRecord">＋ 간단 기록</button>' +
       '<button class="btn-quick" id="qbNewFollowUp">＋ 후속조치 등록</button>' +
       '<button class="btn-quick" id="qbNewSchedule">＋ 일정 등록</button>' +
       '</div>';
@@ -4129,6 +4185,7 @@ const Views = {
     if (notifBtn) notifBtn.onclick = async () => { await Notifications.requestPermission(); UI.renderCurrentView(); };
 
     document.getElementById('qbNewSoap').onclick = () => UI.navigate('soapEditor', {});
+    document.getElementById('qbQuickRecord').onclick = () => Views.openQuickRecordModal();
     document.getElementById('qbNewFollowUp').onclick = () => Views.openFollowUpModal();
     document.getElementById('qbNewSchedule').onclick = () => Views.openScheduleModal();
 
@@ -4276,6 +4333,7 @@ const Views = {
       '</div></div>' +
       '<div class="quick-btns" style="margin-top:14px;">' +
       '<button class="btn-quick" id="clNewSoap">＋ 새 SOAP</button>' +
+      '<button class="btn-quick" id="clQuickRecord">＋ 간단 기록</button>' +
       '<button class="btn-quick" id="clNewFollowUp">＋ 후속조치</button>' +
       '<button class="btn-quick" id="clNewSchedule">＋ 일정</button>' +
       '</div></div>';
@@ -5146,6 +5204,7 @@ const Views = {
       );
     };
     document.getElementById('clNewSoap').onclick = () => UI.navigate('soapEditor', { prefillClientId: id });
+    document.getElementById('clQuickRecord').onclick = () => Views.openQuickRecordModal(id);
     document.getElementById('clNewFollowUp').onclick = () => Views.openFollowUpModal(id);
     document.getElementById('clNewSchedule').onclick = () => Views.openScheduleModal(id);
 
@@ -5847,7 +5906,8 @@ const Views = {
     }
 
     html += '<div class="panel"><div class="form-grid">';
-    html += '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(soap.clientId, 'soapClientPicker') + '</div>';
+    html += '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(soap.clientId, 'soapClientPicker') +
+      (soap.id ? '' : '<button type="button" class="btn-link" id="copyPrevSoapBtn" style="margin-top:6px;text-align:left;">지난 기록 불러오기</button>') + '</div>';
     html += '<div class="field"><label>날짜</label><input type="date" id="soapDate" value="' + soap.date + '"></div>';
     html += '<div class="field"><label>시간(선택)</label><input type="time" id="soapTime" value="' + (soap.time || '') + '"></div>';
     html += '<div class="field"><label>접촉 유형</label><select id="soapContactType">' +
@@ -5859,14 +5919,14 @@ const Views = {
       '</div></div>';
     html += '</div></div>';
 
-    html += '<div class="panel"><div class="field full"><label>S (주관적 정보)</label>' +
+    html += '<div class="panel"><div class="field full"><label for="soapS">S (주관적 정보)</label>' + Views.snippetBarHtml('S', 'soapS') +
       '<textarea id="soapS" placeholder="대상자가 표현한 주요 호소, 현재 상황, 변화, 욕구 등을 기록하세요.">' + Utils.escapeHtml(soap.S) + '</textarea></div>' +
-      '<div class="field full"><label>O (객관적 정보)</label>' +
+      '<div class="field full"><label for="soapO">O (객관적 정보)</label>' + Views.snippetBarHtml('O', 'soapO', { manage: false }) +
       '<textarea id="soapO" placeholder="상담 중 관찰된 모습, 행동, 말투, 활동상태, 확인된 사실 등을 기록하세요.">' + Utils.escapeHtml(soap.O) + '</textarea></div></div>';
 
     html += '<div class="panel">' +
       '<div class="panel-title">A (사정)<span><button class="btn btn-sm btn-primary" id="genABtn">✨ A 자동작성</button></span></div>' +
-      '<div class="field full"><textarea id="soapA" placeholder="자동작성 버튼을 눌러 초안을 생성하거나 직접 작성하세요.">' + Utils.escapeHtml(soap.A) + '</textarea></div>' +
+      '<div class="field full">' + Views.snippetBarHtml('A', 'soapA', { manage: false }) + '<textarea id="soapA" aria-label="A (사정)" placeholder="자동작성 버튼을 눌러 초안을 생성하거나 직접 작성하세요.">' + Utils.escapeHtml(soap.A) + '</textarea></div>' +
       '<div id="checklistBox"></div>' +
       '<div style="display:flex;gap:8px;margin-top:10px;">' +
       '<button class="btn btn-sm" id="regenABtn">✨ A 다시 작성</button>' +
@@ -5877,7 +5937,7 @@ const Views = {
       '<div class="checkbox-group" style="margin-bottom:12px;">' +
       CONSTANTS.QUICK_P_ACTIONS.map(a => '<label class="chip-check' + (soap.PActions.includes(a) ? ' checked' : '') + '"><input type="checkbox" class="pActionChk" value="' + a + '"' + (soap.PActions.includes(a) ? ' checked' : '') + '>' + a + '</label>').join('') +
       '</div>' +
-      '<div class="field full"><label>후속조치 내용 (자유 입력)</label><textarea id="soapPText" style="min-height:70px;" placeholder="예: 다음 주 화요일 대상자에게 전화하여 수면 상태 확인 예정.">' + Utils.escapeHtml(soap.PText) + '</textarea></div>' +
+      '<div class="field full"><label for="soapPText">후속조치 내용 (자유 입력)</label>' + Views.snippetBarHtml('P', 'soapPText', { manage: false }) + '<textarea id="soapPText" style="min-height:70px;" placeholder="예: 다음 주 화요일 대상자에게 전화하여 수면 상태 확인 예정.">' + Utils.escapeHtml(soap.PText) + '</textarea></div>' +
       '<div class="field" style="max-width:220px;"><label>예정일</label><input type="date" id="soapPDate" value="' + (soap.pDate || '') + '"></div>' +
       '<p class="help-text">예정일을 입력하고 최종저장하면 위 선택 항목이 자동으로 후속조치로 등록됩니다.</p>' +
       '</div>';
@@ -5936,6 +5996,13 @@ const Views = {
     document.querySelectorAll('.chip-check input').forEach(chk => {
       chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
     });
+    Views.bindSnippetBars(document.getElementById('appMain'));
+    const copyPrevBtn = document.getElementById('copyPrevSoapBtn');
+    if (copyPrevBtn) copyPrevBtn.onclick = () => {
+      const cid = Views.resolveClientPickerValue(document.getElementById('soapClientPicker').value);
+      if (!cid || !Clients.get(cid)){ toast('먼저 대상자를 선택해 주세요.', 'error'); return; }
+      Views.openCopyPreviousModal(cid);
+    };
 
     const scheduleAutosave = () => {
       // Guards against a stray input/change event firing from a detached
@@ -7412,6 +7479,173 @@ const Views = {
       toast('후속 모니터링 후속조치를 등록했습니다.');
       UI.renderCurrentView();
     };
+  },
+
+  /* ---------------- 기록 효율화: 상용구 · 간단 기록 · 지난 기록 불러오기 ---------------- */
+  // 입력칸 옆에 붙는 "상용구 넣기" 선택칸. field는 S/O/A/P, targetId는 글을 넣을 textarea.
+  snippetBarHtml(field, targetId, opts){
+    opts = opts || {};
+    return '<div class="snippet-bar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">' +
+      '<select class="snippetSelect" data-field="' + field + '" data-target="' + targetId + '" aria-label="' + field + ' 상용구 넣기" style="max-width:240px;">' +
+      Views._snippetOptionsHtml(field) + '</select>' +
+      (opts.manage === false ? '' : '<button type="button" class="btn-link" data-manage-snippets>상용구 관리</button>') + '</div>';
+  },
+  _snippetOptionsHtml(field){
+    return '<option value="">상용구 넣기…</option>' +
+      Snippets.forField(field).map(x => '<option value="' + x.id + '">' + Utils.escapeHtml(x.label) + '</option>').join('');
+  },
+  refreshSnippetSelects(){
+    document.querySelectorAll('.snippetSelect').forEach(sel => { sel.innerHTML = Views._snippetOptionsHtml(sel.dataset.field); });
+  },
+  // 커서 위치에 문구를 넣는다(앞에 글이 있고 줄 처음이 아니면 줄을 바꿔서). 입력 이벤트를 보내 자동저장도 따라간다.
+  insertAtCursor(ta, text){
+    const start = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+    const end = ta.selectionEnd != null ? ta.selectionEnd : start;
+    const before = ta.value.slice(0, start);
+    const lead = before && !before.endsWith('\n') ? '\n' : '';
+    ta.value = before + lead + text + ta.value.slice(end);
+    const pos = (before + lead + text).length;
+    ta.setSelectionRange(pos, pos);
+    ta.focus();
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+  bindSnippetBars(root){
+    (root || document).querySelectorAll('.snippetSelect').forEach(sel => {
+      sel.onchange = () => {
+        const it = Snippets.get(sel.value);
+        sel.value = '';
+        const ta = document.getElementById(sel.dataset.target);
+        if (it && ta) Views.insertAtCursor(ta, it.text);
+      };
+    });
+    (root || document).querySelectorAll('[data-manage-snippets]').forEach(btn => { btn.onclick = () => Views.openSnippetManager(); });
+  },
+  openSnippetManager(editId){
+    const editing = editId ? Snippets.get(editId) : null;
+    UI.openModal(
+      '<h3>상용구 관리</h3>' +
+      '<p class="help-text" style="margin-bottom:10px;">자주 쓰는 문구를 등록해 두면 SOAP과 간단 기록 입력칸에서 골라 넣을 수 있습니다. 문구는 기록과 같은 방식으로 암호화되어 저장됩니다.</p>' +
+      '<div style="max-height:34vh;overflow:auto;margin-bottom:12px;">' +
+      (Snippets.items.length === 0 ? '<div class="empty-msg">등록된 상용구가 없습니다.</div>' : Snippets.items.map(x =>
+        '<div class="list-row"><div class="list-row-main"><div class="row-title">' + Utils.escapeHtml(x.label) + ' <span class="badge badge-draft">' + Utils.escapeHtml(Snippets.FIELDS[x.field] || '모든 칸') + '</span></div>' +
+        '<div class="row-sub" style="white-space:pre-line;">' + Utils.escapeHtml(Utils.truncate ? Utils.truncate(x.text, 80) : x.text.slice(0, 80)) + '</div></div>' +
+        '<div class="row-actions"><button class="btn btn-sm" data-edit-snip="' + x.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-snip="' + x.id + '">삭제</button></div></div>').join('')) +
+      '</div><div class="divider"></div>' +
+      '<div class="panel-title" style="margin-bottom:8px;">' + (editing ? '상용구 수정' : '새 상용구') + '</div>' +
+      '<div class="form-grid"><div class="field"><label>이름</label><input type="text" id="snipLabel" maxlength="30" value="' + Utils.escapeHtml(editing ? editing.label : '') + '"></div>' +
+      '<div class="field"><label>넣을 칸</label><select id="snipField">' + Object.keys(Snippets.FIELDS).map(k => '<option value="' + k + '"' + ((editing ? editing.field : 'any') === k ? ' selected' : '') + '>' + Snippets.FIELDS[k] + '</option>').join('') + '</select></div>' +
+      '<div class="field full"><label>내용</label><textarea id="snipText" style="min-height:80px;">' + Utils.escapeHtml(editing ? editing.text : '') + '</textarea></div></div>' +
+      '<div class="error-msg hidden" id="snipError" role="alert"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
+      (editing ? '<button class="btn" id="snipCancel">수정 취소</button>' : '') +
+      '<button class="btn" id="snipClose">닫기</button><button class="btn btn-primary" id="snipSave">' + (editing ? '저장' : '＋ 추가') + '</button></div>'
+    );
+    document.getElementById('snipClose').onclick = () => UI.closeModal();
+    const cancel = document.getElementById('snipCancel');
+    if (cancel) cancel.onclick = () => Views.openSnippetManager();
+    document.querySelectorAll('[data-edit-snip]').forEach(b => { b.onclick = () => Views.openSnippetManager(b.dataset.editSnip); });
+    document.querySelectorAll('[data-del-snip]').forEach(b => {
+      b.onclick = async () => { await Snippets.remove(b.dataset.delSnip); Views.refreshSnippetSelects(); Views.openSnippetManager(); };
+    });
+    document.getElementById('snipSave').onclick = async () => {
+      try{
+        const data = { label: document.getElementById('snipLabel').value, field: document.getElementById('snipField').value, text: document.getElementById('snipText').value };
+        if (editing) await Snippets.update(editing.id, data); else await Snippets.add(data);
+        Views.refreshSnippetSelects();
+        Views.openSnippetManager();
+      }catch(e){
+        const err = document.getElementById('snipError');
+        err.textContent = e.message;
+        err.classList.remove('hidden');
+      }
+    };
+  },
+
+  // 간단 기록 — 전화 상담처럼 짧은 접촉을 SOAP 전체 화면 없이 한 번에 남긴다. 저장되는 것은
+  // 일반 SOAP 기록(내용은 S칸)이라 목록·검색·타임라인에 그대로 나오고, 필요하면 나중에 열어 보충할 수 있다.
+  openQuickRecordModal(prefillClientId){
+    const now = new Date();
+    const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+    UI.openModal(
+      '<h3>간단 기록</h3>' +
+      '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(prefillClientId || '', 'qrClient') + '</div>' +
+      '<div class="form-grid"><div class="field"><label>날짜</label><input type="date" id="qrDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field"><label>시간</label><input type="time" id="qrTime" value="' + hhmm + '"></div>' +
+      '<div class="field"><label>접촉 유형</label><select id="qrContactType">' + CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div></div>' +
+      '<div class="field"><label>상담 영역 (선택)</label><div class="checkbox-group">' +
+      CONSTANTS.AREAS.map(a => '<label class="chip-check"><input type="checkbox" class="qrAreaChk" value="' + a + '">' + a + '</label>').join('') + '</div></div>' +
+      '<div class="field"><label>내용</label>' + Views.snippetBarHtml('S', 'qrText', { manage: false }) +
+      '<textarea id="qrText" style="min-height:110px;" placeholder="통화·면담 내용을 간단히 적어 주세요. (Ctrl/Cmd+Enter로 저장)"></textarea></div>' +
+      '<div class="field"><label>후속조치 (선택)</label><div class="checkbox-group">' +
+      CONSTANTS.QUICK_P_ACTIONS.map(a => '<label class="chip-check"><input type="checkbox" class="qrPChk" value="' + a + '">' + a + '</label>').join('') + '</div>' +
+      '<div style="max-width:200px;margin-top:8px;"><label for="qrPDate" style="font-size:0.8rem;color:var(--text-muted);">예정일</label><input type="date" id="qrPDate"></div></div>' +
+      '<div class="error-msg hidden" id="qrError" role="alert"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="qrCancel">취소</button><button class="btn btn-primary" id="qrSave">저장</button></div>'
+    );
+    document.querySelectorAll('#modalBox .chip-check input').forEach(chk => {
+      chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
+    });
+    Views.bindSnippetBars(document.getElementById('modalBox'));
+    const save = async () => {
+      try{
+        const soap = SoapModule.createBlank({ clientId: Views.resolveClientPickerValue(document.getElementById('qrClient').value) });
+        const text = document.getElementById('qrText').value;
+        if (!text.trim()) throw new Error('내용을 입력해 주세요.');
+        soap.date = document.getElementById('qrDate').value;
+        soap.time = document.getElementById('qrTime').value;
+        soap.contactType = document.getElementById('qrContactType').value;
+        soap.areas = Array.from(document.querySelectorAll('.qrAreaChk:checked')).map(el => el.value);
+        soap.S = text;
+        soap.PActions = Array.from(document.querySelectorAll('.qrPChk:checked')).map(el => el.value);
+        soap.pDate = document.getElementById('qrPDate').value;
+        if (soap.PActions.length && !soap.pDate) throw new Error('후속조치를 선택했다면 예정일을 입력해 주세요.');
+        await SoapModule.save(soap, true);
+        UI.closeModal();
+        toast('간단 기록을 저장했습니다.' + (soap.PActions.length ? ' 후속조치도 등록했습니다.' : ''));
+        UI.renderCurrentView();
+      }catch(e){
+        const err = document.getElementById('qrError');
+        err.textContent = e.message || '저장에 실패했습니다.';
+        err.classList.remove('hidden');
+      }
+    };
+    document.getElementById('qrSave').onclick = save;
+    document.getElementById('qrCancel').onclick = () => UI.closeModal();
+    document.getElementById('qrText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); save(); } });
+  },
+
+  // 지난 기록 불러오기 — 같은 대상자의 최근 SOAP 내용을 새 기록 입력칸에 채운다(날짜·시간·후속조치는 가져오지 않음).
+  openCopyPreviousModal(clientId){
+    const recent = SoapModule.list().filter(x => x.clientId === clientId && (!Views._draftCache || x.id !== Views._draftCache.id)).slice(0, 6);
+    const hasCurrent = ['soapS', 'soapO', 'soapA', 'soapPText'].some(id => document.getElementById(id).value.trim());
+    UI.openModal(
+      '<h3>지난 기록 불러오기 — ' + Utils.escapeHtml(clientId) + '</h3>' +
+      '<p class="help-text" style="margin-bottom:10px;">고른 기록의 S·O·A·P 내용과 상담 영역을 지금 입력칸에 채웁니다. ' +
+      (hasCurrent ? '<strong>현재 입력한 내용은 덮어써집니다.</strong> ' : '') + '불러온 뒤에는 오늘 상황에 맞게 반드시 고쳐 쓰세요.</p>' +
+      (recent.length === 0 ? '<div class="empty-msg">불러올 지난 기록이 없습니다.</div>' : recent.map(x =>
+        '<div class="list-row"><div class="list-row-main"><div class="row-title">' + Utils.formatSoapDate(x) + ' · ' + Utils.escapeHtml(x.contactType) +
+        (x.status === 'draft' ? ' <span class="badge badge-draft">임시저장</span>' : '') + '</div>' +
+        '<div class="row-sub">' + Utils.escapeHtml((x.S || x.O || x.A || '').slice(0, 90) || '(내용 없음)') + '</div></div>' +
+        '<div class="row-actions"><button class="btn btn-sm btn-primary" data-copy-soap="' + x.id + '">불러오기</button></div></div>').join('')) +
+      '<div style="display:flex;justify-content:flex-end;margin-top:12px;"><button class="btn" id="copyPrevClose">닫기</button></div>'
+    );
+    document.getElementById('copyPrevClose').onclick = () => UI.closeModal();
+    document.querySelectorAll('[data-copy-soap]').forEach(btn => {
+      btn.onclick = () => {
+        const src = SoapModule.get(btn.dataset.copySoap);
+        if (!src) return;
+        const setVal = (id, v) => { const el = document.getElementById(id); el.value = v || ''; el.dispatchEvent(new Event('input', { bubbles: true })); };
+        setVal('soapS', src.S); setVal('soapO', src.O); setVal('soapA', src.A); setVal('soapPText', src.PText);
+        document.getElementById('soapContactType').value = src.contactType;
+        document.getElementById('soapSubject').value = src.subject || 'client';
+        document.querySelectorAll('.areaChk').forEach(chk => {
+          chk.checked = (src.areas || []).includes(chk.value);
+          chk.closest('.chip-check').classList.toggle('checked', chk.checked);
+        });
+        UI.closeModal();
+        toast(Utils.formatSoapDate(src) + ' 기록을 불러왔습니다. 오늘 상황에 맞게 고쳐 쓰세요.');
+      };
+    });
   },
 
   // editId가 있으면 새로 등록하는 대신 기존 후속조치를 불러와 수정한다(반복 등록 없음).
