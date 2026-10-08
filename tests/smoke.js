@@ -126,6 +126,29 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     assert(r.made === 2 && r.left === 0 && r.status === 'active', '종결/재등록 결과가 다름: ' + JSON.stringify(r));
   });
 
+  await step('월말 마감 점검이 빠진 기록을 짚고 화면에 표시된다', async () => {
+    const r = await page.evaluate(async () => {
+      const d = Utils.addDaysStr(Utils.todayStr(), -40), m = d.slice(0, 7);
+      await Clients.add({ id: 'ME1', alias: '마감', managementLevel: 'intensive', registrationDate: Utils.addDaysStr(d, -30) });
+      const s = SoapModule.createBlank({ clientId: 'ME1' }); s.date = d; s.S = '임시';
+      await SoapModule.save(s, false);
+      await Schedules.add({ clientId: 'ME1', date: d, contactType: '방문' });
+      await FollowUps.add({ clientId: 'ME1', type: '기타', text: '밀림', dueDate: d });
+      await Clients.addCrisisEvent('ME1', { type: '자해', date: d, time: '10:00', description: 'x', action: '' });
+      const c = Stats.monthEndCheck(m);
+      const none = Stats.monthEndCheck('2000-01');
+      Views._reportMode = 'month'; Views._reportMonth = m;
+      UI.navigate('stats', {});
+      return { draft: c.draftSoaps.length, sch: c.missedSchedules.length, fu: c.overdueFollowUps.length, cr: c.openCrisis.length, nc: c.noContactMonth.filter(x => x.clientId === 'ME1').length, noneTotal: none.draftSoaps.length + none.missedSchedules.length + none.openCrisis.length };
+    });
+    assert(r.draft === 1 && r.sch === 1 && r.fu === 1 && r.cr === 1, '월말 점검 집계가 다름: ' + JSON.stringify(r));
+    assert(r.nc === 0 && r.noneTotal === 0, '월말 점검 오탐: ' + JSON.stringify(r));
+    await page.waitForTimeout(200);
+    const txt = await page.evaluate(() => (document.getElementById('monthEndCheck') || {}).textContent || '');
+    assert(txt.includes('확인 필요') && txt.includes('ME1'), '월말 마감 점검 패널이 표시되지 않음');
+    noNewErrors('월말 마감 점검');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],

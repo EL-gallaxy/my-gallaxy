@@ -452,6 +452,7 @@
 
   /* signature lines shown only when printing */
   .print-signature{display:none;}
+  @media print{ #monthEndCheck{display:none !important;} }
   @media print{
     .print-signature{display:flex !important;gap:18px 40px;flex-wrap:wrap;margin-top:32px;padding-top:16px;border-top:1px solid #999;}
     .print-signature .sig-line{flex:1 1 250px;white-space:nowrap;font-size:0.85rem;color:#333;}
@@ -3534,6 +3535,59 @@ const Stats = {
       contactTypeCounts,
       subjectCounts, familySessionCount, referralStatusCounts, referralTotal
     };
+  },
+
+  // 월말 마감 점검 — 보고서를 쓰기 전에 빠진 기록·처리 안 된 일정을 짚는다. 새 판단을 만들지 않고
+  // 이미 입력된 값끼리 대조해 "해당 월에 정리할 것"만 모은다. 항목마다 대상자 ID와 한 줄 설명을 돌려준다.
+  monthEndCheck(monthStr){
+    const today = Utils.todayStr();
+    const inMonth = (d) => (d || '').startsWith(monthStr);
+    const lastDay = new Date(parseInt(monthStr.slice(0, 4), 10), parseInt(monthStr.slice(5, 7), 10), 0).getDate();
+    const monthEnd = monthStr + '-' + String(lastDay).padStart(2, '0');
+    const clients = Clients.list();
+    const byDate = (arr) => arr.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const out = {};
+
+    out.draftSoaps = byDate(SoapModule.list().filter(s => inMonth(s.date) && s.status === 'draft')
+      .map(s => ({ clientId: s.clientId, date: s.date, text: '임시저장 상태(확정 안 됨) · ' + (s.contactType || '') })));
+
+    out.missedSchedules = byDate(Array.from(State.schedules.values())
+      .filter(sc => inMonth(sc.date) && sc.status === 'planned' && sc.date < today)
+      .map(sc => ({ clientId: sc.clientId, date: sc.date, text: '예정만 남아 있고 완료/취소 처리 안 됨 · ' + (sc.contactType || '') })));
+
+    out.overdueFollowUps = byDate(FollowUps.list()
+      .filter(f => f.status === 'pending' && f.dueDate && f.dueDate <= monthEnd && f.dueDate < today)
+      .map(f => ({ clientId: f.clientId, date: f.dueDate, text: '기한 ' + f.dueDate + ' · ' + (f.type || '') + (f.text ? ' ' + f.text : '') })));
+
+    out.openCrisis = [];
+    clients.forEach(c => (c.crisisEvents || []).forEach(ev => {
+      if (!inMonth(ev.date)) return;
+      const lack = [];
+      if (!(ev.steps || []).length) lack.push('대응 경과');
+      if (!ev.outcome) lack.push('결과');
+      if (lack.length) out.openCrisis.push({ clientId: c.id, date: ev.date, text: ev.type + ' · ' + lack.join('·') + ' 미기록' });
+    }));
+    byDate(out.openCrisis);
+
+    out.referralNoResult = [];
+    clients.forEach(c => (c.resourceLinks || []).forEach(r => {
+      if (!inMonth(r.date)) return;
+      if (!r.status || r.status === 'referred') out.referralNoResult.push({ clientId: c.id, date: r.date, text: (r.name || r.agency || r.type || '연계') + ' · 결과 미확인' });
+    }));
+    byDate(out.referralNoResult);
+
+    out.closureNoReason = byDate(clients.filter(c => c.status === 'closed' && inMonth(c.closedDate) && !c.closedReason)
+      .map(c => ({ clientId: c.id, date: c.closedDate, text: '종결 사유 미기록' })));
+
+    const contacted = new Set(SoapModule.list().filter(s => inMonth(s.date)).map(s => s.clientId));
+    out.noContactMonth = clients
+      .filter(c => c.status !== 'closed' && ['crisis', 'intensive'].includes(c.managementLevel) && (c.registrationDate || '') <= monthEnd && !contacted.has(c.id))
+      .map(c => ({ clientId: c.id, date: '', text: (CONSTANTS.MANAGEMENT_LEVELS[c.managementLevel].label || c.managementLevel) + ' · 이 달 상담 기록 없음' }));
+
+    out.contactGap = Clients.contactGapList().map(g => ({ clientId: g.clientId, date: '', text: '마지막 대면 접촉 후 ' + Utils.formatElapsedDays(g.days) + ' 경과' }));
+    out.reassessGap = Clients.reassessmentGapList().map(g => ({ clientId: g.clientId, date: '', text: '정기 재사정 ' + Utils.formatElapsedDays(g.days) + ' 경과' }));
+    out.planOverdue = Clients.getPlanReviews().filter(r => r.overdue).map(r => ({ clientId: r.clientId, date: r.plan.nextReviewDate, text: '서비스계획 점검일 ' + r.plan.nextReviewDate + ' 경과' }));
+    return out;
   },
 
   // 성과 지표(연 단위) — 활동량이 아니라 "서비스 이후 어떻게 되었는가"를 보는 지표. 입원·위기 건수,
@@ -7831,6 +7885,36 @@ const Views = {
       '<button class="tab-btn' + (mode === 'year' ? ' active' : '') + '" id="reportModeYearBtn">연간</button>' +
       '</div>';
   },
+  monthEndCheckHtml(monthStr){
+    const r = Stats.monthEndCheck(monthStr);
+    const e = Utils.escapeHtml;
+    const groups = [
+      ['draftSoaps', '확정 안 된 상담 기록(임시저장)', '해당 월'],
+      ['missedSchedules', '지난 일정 중 처리 안 된 것', '해당 월'],
+      ['overdueFollowUps', '기한이 지난 후속조치', '해당 월'],
+      ['openCrisis', '위기개입 기록 보완 필요', '해당 월'],
+      ['referralNoResult', '연계 결과 미확인', '해당 월'],
+      ['closureNoReason', '종결 사유 미기록', '해당 월'],
+      ['noContactMonth', '이 달 접촉 없는 위기·집중관리 대상자', '해당 월'],
+      ['contactGap', '대면 접촉 공백', '현재 기준'],
+      ['reassessGap', '정기 재사정 필요', '현재 기준'],
+      ['planOverdue', '서비스계획 점검일 경과', '현재 기준']
+    ];
+    const total = groups.reduce((n, g) => n + r[g[0]].length, 0);
+    let html = '<div class="divider"></div><details class="panel" id="monthEndCheck"' + (total ? ' open' : '') + '><summary class="panel-title">' + icon('clipboardList') + ' 월말 마감 점검 (' + (total ? total + '건 확인 필요' : '정리할 항목 없음') + ')</summary>' +
+      '<p class="help-text">보고서를 확정하기 전에 빠진 기록을 확인하는 용도입니다. 항목을 누르면 대상자 화면으로 이동합니다.</p>';
+    groups.forEach(g => {
+      const list = r[g[0]];
+      if (!list.length) return;
+      html += '<p style="font-weight:600;font-size:0.9rem;margin:10px 0 4px;">' + g[1] + ' · ' + list.length + '건 <span class="help-text">(' + g[2] + ')</span></p>';
+      list.slice(0, 30).forEach(it => {
+        html += '<div class="gap-row" data-goto-client="' + e(it.clientId) + '" style="cursor:pointer;"><strong>' + e(it.clientId) + '</strong>' +
+          (it.date ? ' <span class="help-text">' + e(it.date) + '</span>' : '') + ' · ' + e(it.text) + '</div>';
+      });
+      if (list.length > 30) html += '<p class="help-text">외 ' + (list.length - 30) + '건</p>';
+    });
+    return html + '</details>';
+  },
   renderMonthlyReport(monthStr){
     const r = Stats.monthlyReport(monthStr);
     let html = '<div class="panel"><div class="page-header" style="margin-bottom:14px;">' +
@@ -7889,6 +7973,7 @@ const Views = {
 
     html += '</div>';
     html += Views.printSignatureHtml();
+    html += Views.monthEndCheckHtml(monthStr);
     return html;
   },
 
@@ -8086,6 +8171,9 @@ const Views = {
     ).join('') + '</div>';
   },
   bindStats(){
+    document.querySelectorAll('#monthEndCheck [data-goto-client]').forEach(el => {
+      el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient });
+    });
     document.getElementById('goOutcomesBtn').onclick = () => UI.navigate('outcomes', {});
     document.getElementById('journalDateInput').onchange = (e) => {
       Views._journalDate = e.target.value;
