@@ -6448,75 +6448,73 @@ const Views = {
     if (exportAnnualReportCsvBtn) exportAnnualReportCsvBtn.onclick = () => CSV.exportAnnualReport(Stats.annualReport(Views._reportYear));
   },
 
-  /* ---------------- SELF CARE (실무자 자기돌봄 메모) ----------------
-     대상자 관리와 완전히 분리된, 실무자 본인만을 위한 소진·감정 기록 전용
-     공간. 교육·연수, 슈퍼비전·자문 등은 별도의 "📚 교육·슈퍼비전" 메뉴에서
-     다룬다(같은 SelfCare 저장소를 구분값으로만 나눠 쓴다). 통계·리포트
-     어디에도 집계되지 않는다. */
-  selfCarePage(){
-    const notes = SelfCare.list().filter(n => (n.category || 'selfcare') === 'selfcare');
-    const editing = State.currentParams.editId ? SelfCare.get(State.currentParams.editId) : null;
-
-    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('heart', { size: 22 }) + ' 자기돌봄 메모</h1></div>';
-    html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">대상자 관리와 무관하게, 소진·감정 상태를 스스로 기록하는 공간입니다. 교육·연수나 슈퍼비전·자문 기록은 "📚 교육·슈퍼비전" 메뉴를 이용하세요. 통계나 리포트 어디에도 집계되지 않고, 오직 본인만 확인합니다.</p>';
-
-    html += '<div class="panel">';
+  /* ---------------- SELF CARE / TRAINING 공통 ----------------
+     자기돌봄 메모와 교육·슈퍼비전 기록은 같은 SelfCare 저장소를 category로만
+     나눠 쓰고 화면 구조(목록·폼·수정·삭제)도 같다. 그래서 그리는 코드와 이벤트
+     연결을 아래 공통 함수에 두고, 두 화면은 달라지는 부분(cfg)만 넘긴다.
+       p            ID 접두사(sc/tr) — 폼 요소 ID와 폼 패널 ID에 쓰인다
+       view         화면 이름(navigate 대상)
+       editAttr     행의 수정 버튼 data 속성
+       rowAttr      행에 붙일 추가 속성(검색용 표식)
+       rowSub(n)    날짜 옆에 붙일 배지 HTML
+       middleField  폼 가운데 칸(소진도/구분) HTML과 그 값을 읽는 함수
+       navParams()  화면 전환 때 유지할 파라미터(구분 필터 등) */
+  _noteListHtml(notes, editing, cfg, emptyMsg){
+    let html = '<div class="panel"' + (cfg.listId ? ' id="' + cfg.listId + '"' : '') + '>';
     if (notes.length === 0){
-      html += '<div class="empty-msg">작성된 기록이 없습니다.</div>';
+      html += '<div class="empty-msg">' + emptyMsg + '</div>';
     } else {
       notes.forEach(n => {
-        const st = CONSTANTS.STRESS_LEVELS[n.stressLevel] || CONSTANTS.STRESS_LEVELS.none;
-        html += '<div class="list-row"' + (editing && editing.id === n.id ? ' style="outline:2px solid var(--accent);outline-offset:-2px;"' : '') + '><div class="list-row-main">' +
+        html += '<div class="list-row"' + (cfg.rowAttr ? ' ' + cfg.rowAttr : '') + (editing && editing.id === n.id ? ' style="outline:2px solid var(--accent);outline-offset:-2px;"' : '') + '><div class="list-row-main">' +
           '<div class="row-title">' + Utils.escapeHtml(n.title || '(제목 없음)') + '</div>' +
-          '<div class="row-sub">' + n.date + ((n.stressLevel && n.stressLevel !== 'none') ? ' · <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span>' : '') + '</div>' +
+          '<div class="row-sub">' + n.date + cfg.rowSub(n) + '</div>' +
           '<div class="row-sub" style="white-space:pre-line;margin-top:4px;">' + Utils.escapeHtml(n.note) + '</div>' +
-          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-selfcare="' + n.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
+          '</div><div class="row-actions"><button class="btn btn-sm" ' + cfg.editAttr + '="' + n.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
       });
+      if (cfg.searchable) html += '<div class="empty-msg hidden" data-tr-no-match>검색 결과가 없습니다.</div>';
     }
-    html += '</div>';
-
-    const selStress = editing ? (editing.stressLevel || 'none') : 'none';
-    html += '<div class="panel" id="scFormPanel"><div class="panel-title">' + (editing ? '기록 수정' : '새 기록 추가') + '</div><div class="form-grid">' +
-      '<div class="field full"><label>제목</label><input type="text" id="scTitle" maxlength="100" placeholder="예: 힘들었던 하루, 감사한 일" value="' + Utils.escapeHtml(editing ? (editing.title || '') : '') + '"></div>' +
-      '<div class="field"><label>날짜</label><input type="date" id="scDate" value="' + (editing ? editing.date : Utils.todayStr()) + '"></div>' +
-      '<div class="field"><label>소진도(선택)</label><select id="scStress">' +
-      Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '"' + (selStress === k ? ' selected' : '') + '>' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>' +
-      '<div class="field full"><label>내용</label><textarea id="scNote" style="min-height:100px;" placeholder="오늘 힘들었던 점, 스스로에게 필요한 것 등을 자유롭게 적어보세요.">' + Utils.escapeHtml(editing ? editing.note : '') + '</textarea></div></div>' +
-      '<div style="display:flex;gap:8px;">' +
-      '<button class="btn btn-sm btn-primary" id="addSelfCareBtn">' + (editing ? '저장' : '＋ 기록하기') + '</button>' +
-      (editing ? '<button class="btn btn-sm" id="cancelSelfCareEditBtn">취소</button>' : '') +
-      '</div></div>';
-
-    return html;
+    return html + '</div>';
   },
-  bindSelfCarePage(){
+  _noteFormHtml(cfg, editing){
+    const p = cfg.p;
+    return '<div class="panel" id="' + p + 'FormPanel"><div class="panel-title">' + (editing ? '기록 수정' : '새 기록 추가') + '</div><div class="form-grid">' +
+      '<div class="field full"><label>제목</label><input type="text" id="' + p + 'Title" maxlength="100" placeholder="' + cfg.titlePh + '" value="' + Utils.escapeHtml(editing ? (editing.title || '') : '') + '"></div>' +
+      '<div class="field"><label>날짜</label><input type="date" id="' + p + 'Date" value="' + (editing ? editing.date : Utils.todayStr()) + '"></div>' +
+      cfg.middleFieldHtml(editing) +
+      '<div class="field full"><label>내용</label><textarea id="' + p + 'Note" style="min-height:100px;" placeholder="' + cfg.notePh + '">' + Utils.escapeHtml(editing ? editing.note : '') + '</textarea></div></div>' +
+      '<div style="display:flex;gap:8px;">' +
+      '<button class="btn btn-sm btn-primary" id="' + cfg.addId + '">' + (editing ? '저장' : '＋ 기록하기') + '</button>' +
+      (editing ? '<button class="btn btn-sm" id="' + cfg.cancelId + '">취소</button>' : '') +
+      '</div></div>';
+  },
+  bindNotePage(cfg){
+    const p = cfg.p;
+    const keep = cfg.navParams();
     const editId = State.currentParams.editId && SelfCare.get(State.currentParams.editId) ? State.currentParams.editId : null;
     // navigate()가 렌더 직후 스크롤을 맨 위로 되돌리므로 한 프레임 뒤에 폼으로 이동한다.
-    if (editId) requestAnimationFrame(() => { const p = document.getElementById('scFormPanel'); if (p) p.scrollIntoView({ block: 'start' }); });
-    document.getElementById('addSelfCareBtn').onclick = async () => {
-      const note = document.getElementById('scNote').value;
+    if (editId) requestAnimationFrame(() => { const panel = document.getElementById(p + 'FormPanel'); if (panel) panel.scrollIntoView({ block: 'start' }); });
+    document.getElementById(cfg.addId).onclick = async () => {
+      const note = document.getElementById(p + 'Note').value;
       if (!note.trim()){ toast('내용을 입력해 주세요.', 'error'); return; }
-      const fields = {
-        date: document.getElementById('scDate').value,
-        category: 'selfcare',
-        stressLevel: document.getElementById('scStress').value,
-        title: document.getElementById('scTitle').value,
+      const fields = Object.assign({
+        date: document.getElementById(p + 'Date').value,
+        title: document.getElementById(p + 'Title').value,
         note
-      };
+      }, cfg.readMiddle());
       if (editId){
         await SelfCare.update(editId, fields);
         toast('수정했습니다.');
-        UI.navigate('selfCare');
+        UI.navigate(cfg.view, keep);
       } else {
         await SelfCare.add(fields);
         toast('기록했습니다.');
         UI.renderCurrentView();
       }
     };
-    const cancelEditBtn = document.getElementById('cancelSelfCareEditBtn');
-    if (cancelEditBtn) cancelEditBtn.onclick = () => UI.navigate('selfCare');
-    document.querySelectorAll('[data-edit-selfcare]').forEach(el => {
-      el.onclick = () => UI.navigate('selfCare', { editId: el.dataset.editSelfcare });
+    const cancelBtn = document.getElementById(cfg.cancelId);
+    if (cancelBtn) cancelBtn.onclick = () => UI.navigate(cfg.view, keep);
+    document.querySelectorAll('[' + cfg.editAttr + ']').forEach(el => {
+      el.onclick = () => UI.navigate(cfg.view, Object.assign({}, keep, { editId: el.getAttribute(cfg.editAttr) }));
     });
     document.querySelectorAll('[data-del-selfcare]').forEach(el => {
       el.onclick = () => UI.confirm('이 기록을 삭제할까요?', async () => {
@@ -6528,13 +6526,69 @@ const Views = {
     });
   },
 
+  /* ---------------- SELF CARE (실무자 자기돌봄 메모) ----------------
+     대상자 관리와 완전히 분리된, 실무자 본인만을 위한 소진·감정 기록 전용
+     공간. 교육·연수, 슈퍼비전·자문 등은 별도의 "📚 교육·슈퍼비전" 메뉴에서
+     다룬다(같은 SelfCare 저장소를 구분값으로만 나눠 쓴다). 통계·리포트
+     어디에도 집계되지 않는다. */
+  _selfCareCfg: {
+    p: 'sc', view: 'selfCare', editAttr: 'data-edit-selfcare', addId: 'addSelfCareBtn', cancelId: 'cancelSelfCareEditBtn',
+    titlePh: '예: 힘들었던 하루, 감사한 일',
+    notePh: '오늘 힘들었던 점, 스스로에게 필요한 것 등을 자유롭게 적어보세요.',
+    navParams: () => ({}),
+    rowSub(n){
+      const st = CONSTANTS.STRESS_LEVELS[n.stressLevel] || CONSTANTS.STRESS_LEVELS.none;
+      return (n.stressLevel && n.stressLevel !== 'none') ? ' · <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span>' : '';
+    },
+    middleFieldHtml(editing){
+      const sel = editing ? (editing.stressLevel || 'none') : 'none';
+      return '<div class="field"><label>소진도(선택)</label><select id="scStress">' +
+        Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '"' + (sel === k ? ' selected' : '') + '>' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>';
+    },
+    readMiddle: () => ({ category: 'selfcare', stressLevel: document.getElementById('scStress').value })
+  },
+  selfCarePage(){
+    const cfg = Views._selfCareCfg;
+    const notes = SelfCare.list().filter(n => (n.category || 'selfcare') === 'selfcare');
+    const editing = State.currentParams.editId ? SelfCare.get(State.currentParams.editId) : null;
+
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('heart', { size: 22 }) + ' 자기돌봄 메모</h1></div>';
+    html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">대상자 관리와 무관하게, 소진·감정 상태를 스스로 기록하는 공간입니다. 교육·연수나 슈퍼비전·자문 기록은 "📚 교육·슈퍼비전" 메뉴를 이용하세요. 통계나 리포트 어디에도 집계되지 않고, 오직 본인만 확인합니다.</p>';
+    html += Views._noteListHtml(notes, editing, cfg, '작성된 기록이 없습니다.');
+    html += Views._noteFormHtml(cfg, editing);
+    return html;
+  },
+  bindSelfCarePage(){
+    Views.bindNotePage(Views._selfCareCfg);
+  },
+
   /* ---------------- TRAINING / SUPERVISION (교육·슈퍼비전 기록) ----------------
      자기돌봄 메모와 저장소는 같지만(SelfCare, category로 구분), 소진·감정과
      성격이 달라 실무자가 헷갈리지 않도록 별도 메뉴로 분리했다. 소진도 개념이
      적용되지 않으므로 이 화면에는 소진도 필드가 아예 없다. */
+  _trainingCategories(){
+    return Object.keys(CONSTANTS.SELFCARE_CATEGORIES).filter(k => k !== 'selfcare');
+  },
+  _trainingCfg: {
+    p: 'tr', view: 'training', editAttr: 'data-edit-training', addId: 'addTrainingBtn', cancelId: 'cancelTrainingEditBtn',
+    listId: 'trNotesPanel', rowAttr: 'data-tr-row', searchable: true,
+    titlePh: '예: 사례관리 실천 기법 교육, 3월 집단 슈퍼비전',
+    notePh: '교육에서 배운 내용, 슈퍼비전에서 나온 조언 등을 자유롭게 적어보세요.',
+    navParams: () => ({ categoryFilter: State.currentParams.categoryFilter || 'all' }),
+    rowSub(n){
+      const cat = CONSTANTS.SELFCARE_CATEGORIES[n.category] || CONSTANTS.SELFCARE_CATEGORIES.other;
+      return ' · <span class="badge ' + cat.badgeClass + '">' + cat.label + '</span>';
+    },
+    middleFieldHtml(editing){
+      const sel = editing ? editing.category : Views._trainingCategories()[0];
+      return '<div class="field"><label>구분</label><select id="trCategory">' +
+        Views._trainingCategories().map(k => '<option value="' + k + '"' + (sel === k ? ' selected' : '') + '>' + CONSTANTS.SELFCARE_CATEGORIES[k].label + '</option>').join('') + '</select></div>';
+    },
+    readMiddle: () => ({ category: document.getElementById('trCategory').value })
+  },
   trainingPage(){
+    const cfg = Views._trainingCfg;
     const categoryFilter = State.currentParams.categoryFilter || 'all';
-    const nonSelfCareCategories = Object.keys(CONSTANTS.SELFCARE_CATEGORIES).filter(k => k !== 'selfcare');
     let notes = SelfCare.list().filter(n => (n.category || 'selfcare') !== 'selfcare');
     if (categoryFilter !== 'all') notes = notes.filter(n => n.category === categoryFilter);
     const editing = State.currentParams.editId ? SelfCare.get(State.currentParams.editId) : null;
@@ -6547,37 +6601,11 @@ const Views = {
       '<input type="text" id="trKeywordFilter" placeholder="기록 내용 검색"></div>' +
       '<div class="field" style="margin:0;max-width:220px;"><label>구분 필터</label><select id="trCategoryFilter">' +
       '<option value="all"' + (categoryFilter === 'all' ? ' selected' : '') + '>전체</option>' +
-      nonSelfCareCategories.map(k => '<option value="' + k + '"' + (categoryFilter === k ? ' selected' : '') + '>' + CONSTANTS.SELFCARE_CATEGORIES[k].label + '</option>').join('') +
+      Views._trainingCategories().map(k => '<option value="' + k + '"' + (categoryFilter === k ? ' selected' : '') + '>' + CONSTANTS.SELFCARE_CATEGORIES[k].label + '</option>').join('') +
       '</select></div></div>';
 
-    html += '<div class="panel" id="trNotesPanel">';
-    if (notes.length === 0){
-      html += '<div class="empty-msg">' + (categoryFilter === 'all' ? '작성된 기록이 없습니다.' : '해당 구분의 기록이 없습니다.') + '</div>';
-    } else {
-      notes.forEach(n => {
-        const cat = CONSTANTS.SELFCARE_CATEGORIES[n.category] || CONSTANTS.SELFCARE_CATEGORIES.other;
-        html += '<div class="list-row" data-tr-row' + (editing && editing.id === n.id ? ' style="outline:2px solid var(--accent);outline-offset:-2px;"' : '') + '><div class="list-row-main">' +
-          '<div class="row-title">' + Utils.escapeHtml(n.title || '(제목 없음)') + '</div>' +
-          '<div class="row-sub">' + n.date + ' · <span class="badge ' + cat.badgeClass + '">' + cat.label + '</span></div>' +
-          '<div class="row-sub" style="white-space:pre-line;margin-top:4px;">' + Utils.escapeHtml(n.note) + '</div>' +
-          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-training="' + n.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
-      });
-      html += '<div class="empty-msg hidden" data-tr-no-match>검색 결과가 없습니다.</div>';
-    }
-    html += '</div>';
-
-    const formCategory = editing ? editing.category : nonSelfCareCategories[0];
-    html += '<div class="panel" id="trFormPanel"><div class="panel-title">' + (editing ? '기록 수정' : '새 기록 추가') + '</div><div class="form-grid">' +
-      '<div class="field full"><label>제목</label><input type="text" id="trTitle" maxlength="100" placeholder="예: 사례관리 실천 기법 교육, 3월 집단 슈퍼비전" value="' + Utils.escapeHtml(editing ? (editing.title || '') : '') + '"></div>' +
-      '<div class="field"><label>날짜</label><input type="date" id="trDate" value="' + (editing ? editing.date : Utils.todayStr()) + '"></div>' +
-      '<div class="field"><label>구분</label><select id="trCategory">' +
-      nonSelfCareCategories.map(k => '<option value="' + k + '"' + (formCategory === k ? ' selected' : '') + '>' + CONSTANTS.SELFCARE_CATEGORIES[k].label + '</option>').join('') + '</select></div>' +
-      '<div class="field full"><label>내용</label><textarea id="trNote" style="min-height:100px;" placeholder="교육에서 배운 내용, 슈퍼비전에서 나온 조언 등을 자유롭게 적어보세요.">' + Utils.escapeHtml(editing ? editing.note : '') + '</textarea></div></div>' +
-      '<div style="display:flex;gap:8px;">' +
-      '<button class="btn btn-sm btn-primary" id="addTrainingBtn">' + (editing ? '저장' : '＋ 기록하기') + '</button>' +
-      (editing ? '<button class="btn btn-sm" id="cancelTrainingEditBtn">취소</button>' : '') +
-      '</div></div>';
-
+    html += Views._noteListHtml(notes, editing, cfg, categoryFilter === 'all' ? '작성된 기록이 없습니다.' : '해당 구분의 기록이 없습니다.');
+    html += Views._noteFormHtml(cfg, editing);
     return html;
   },
   bindTrainingPage(){
@@ -6597,42 +6625,7 @@ const Views = {
       const noMatchMsg = document.querySelector('#trNotesPanel [data-tr-no-match]');
       if (noMatchMsg) noMatchMsg.classList.toggle('hidden', !q || visibleCount > 0);
     };
-    const categoryFilter = State.currentParams.categoryFilter || 'all';
-    const editId = State.currentParams.editId && SelfCare.get(State.currentParams.editId) ? State.currentParams.editId : null;
-    // navigate()가 렌더 직후 스크롤을 맨 위로 되돌리므로 한 프레임 뒤에 폼으로 이동한다.
-    if (editId) requestAnimationFrame(() => { const p = document.getElementById('trFormPanel'); if (p) p.scrollIntoView({ block: 'start' }); });
-    document.getElementById('addTrainingBtn').onclick = async () => {
-      const note = document.getElementById('trNote').value;
-      if (!note.trim()){ toast('내용을 입력해 주세요.', 'error'); return; }
-      const fields = {
-        date: document.getElementById('trDate').value,
-        category: document.getElementById('trCategory').value,
-        title: document.getElementById('trTitle').value,
-        note
-      };
-      if (editId){
-        await SelfCare.update(editId, fields);
-        toast('수정했습니다.');
-        UI.navigate('training', { categoryFilter });
-      } else {
-        await SelfCare.add(Object.assign({ stressLevel: 'none' }, fields));
-        toast('기록했습니다.');
-        UI.renderCurrentView();
-      }
-    };
-    const cancelEditBtn = document.getElementById('cancelTrainingEditBtn');
-    if (cancelEditBtn) cancelEditBtn.onclick = () => UI.navigate('training', { categoryFilter });
-    document.querySelectorAll('[data-edit-training]').forEach(el => {
-      el.onclick = () => UI.navigate('training', { categoryFilter, editId: el.dataset.editTraining });
-    });
-    document.querySelectorAll('[data-del-selfcare]').forEach(el => {
-      el.onclick = () => UI.confirm('이 기록을 삭제할까요?', async () => {
-        const snap = SelfCare.snapshot(el.dataset.delSelfcare);
-        await SelfCare.remove(el.dataset.delSelfcare);
-        toastUndo('삭제했습니다.', async () => { await SelfCare.restoreSnapshot(snap); UI.renderCurrentView(); });
-        UI.renderCurrentView();
-      });
-    });
+    Views.bindNotePage(Views._trainingCfg);
   },
 
   /* ---------------- SETTINGS ---------------- */
