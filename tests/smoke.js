@@ -1,0 +1,214 @@
+'use strict';
+// 브라우저 점검 — 실제 크롬으로 앱을 열어 핵심 흐름이 동작하는지, 화면이 오류 없이 그려지는지,
+// 접근성 심각 위반이 없는지 확인한다. 데이터는 매번 새 브라우저에 만들고 끝나면 버린다.
+const fs = require('fs');
+const path = require('path');
+const { chromium } = require('playwright');
+const { start, ROOT } = require('./serve');
+
+const PASSWORD = 'ci-test-pass-1';
+const axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
+
+const failures = [];
+let stepNo = 0;
+async function step(name, fn){
+  stepNo++;
+  const t = Date.now();
+  try{
+    await fn();
+    console.log('  ✓ ' + name + ' (' + ((Date.now() - t) / 1000).toFixed(1) + 's)');
+  }catch(e){
+    failures.push(name + ' — ' + (e && e.message ? e.message.split('\n')[0] : e));
+    console.error('  ✗ ' + name + '\n      ' + (e && e.message ? e.message.split('\n').slice(0, 3).join('\n      ') : e));
+  }
+}
+function assert(cond, msg){ if (!cond) throw new Error(msg); }
+
+(async () => {
+  const { server, url } = await start();
+  const browser = await chromium.launch({ args: ['--no-sandbox'] });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  const noNewErrors = (label) => { assert(pageErrors.length === 0, label + ' 중 화면 오류: ' + pageErrors.splice(0).join(' | ')); };
+
+  const app = url + '/case_management_on.html';
+  const show = () => page.evaluate(() => {
+    document.querySelectorAll('.detail-tab-group').forEach(g => g.classList.add('active'));
+    document.querySelectorAll('details').forEach(d => { d.open = true; });
+  });
+  const click = async (sel) => { await page.evaluate((s) => document.querySelector(s).click(), sel); await page.waitForTimeout(200); };
+  const axeCheck = async (label) => {
+    await page.addScriptTag({ content: axeSource });
+    const bad = await page.evaluate(async () => {
+      const res = await axe.run(document, { resultTypes: ['violations'] });
+      return res.violations.filter(v => v.impact === 'critical' || v.impact === 'serious').map(v => v.id + ' x' + v.nodes.length + ' | ' + v.nodes[0].html.replace(/\s+/g, ' ').slice(0, 90));
+    });
+    assert(bad.length === 0, label + ' 접근성 위반: ' + bad.join(' ; '));
+  };
+
+  console.log('사례관리 ON 브라우저 점검');
+
+  await step('앱이 열리고 비밀번호를 설정해 대시보드에 들어간다', async () => {
+    await page.goto(app);
+    await page.waitForSelector('#ackNoticeCheckbox', { state: 'visible' });
+    await page.check('#ackNoticeCheckbox');
+    await page.click('text=다음');
+    await page.fill('#setupPw1', PASSWORD);
+    await page.fill('#setupPw2', PASSWORD);
+    await page.click('#setupSubmitBtn');
+    await page.waitForSelector('#appShell:not(.hidden)');
+    await page.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    await page.keyboard.press('Escape');
+    noNewErrors('첫 실행');
+  });
+
+  await step('대상자·SOAP·후속조치·일정을 저장하고 최종 SOAP 수정 이력을 남긴다', async () => {
+    const r = await page.evaluate(async () => {
+      const level = Object.keys(CONSTANTS.MANAGEMENT_LEVELS)[0];
+      await Clients.add({ id: 'CI1', alias: '점검1', managementLevel: level });
+      await Clients.add({ id: 'CI2', alias: '점검2', managementLevel: level });
+      const s = SoapModule.createBlank({ clientId: 'CI1' });
+      s.S = '원본 S'; s.A = '원본 A'; s.PActions = ['대상자 재연락']; s.pDate = Utils.addDaysStr(Utils.todayStr(), 7);
+      await SoapModule.save(s, true);
+      const edit = JSON.parse(JSON.stringify(SoapModule.get(s.id)));
+      edit.S = '수정한 S';
+      await SoapModule.save(edit, true);
+      await FollowUps.add({ clientId: 'CI1', type: '기타', text: '점검', dueDate: Utils.todayStr() });
+      await Schedules.add({ clientId: 'CI1', date: Utils.todayStr(), contactType: '방문', memo: '점검' });
+      return { revisions: (SoapModule.get(s.id).revisions || []).length, followUps: FollowUps.list().filter(f => f.clientId === 'CI1').length };
+    });
+    assert(r.revisions === 1, '최종 기록을 고쳤는데 수정 이력이 ' + r.revisions + '건');
+    assert(r.followUps >= 2, 'SOAP 후속조치가 만들어지지 않음');
+  });
+
+  await step('입원·위기 대응·가족 상담·연계·서비스계획·평가·강점선호를 저장한다', async () => {
+    await page.evaluate(async () => {
+      const today = Utils.todayStr();
+      await Clients.addAdmission('CI1', { type: '입원', date: Utils.addDaysStr(today, -10), kind: '보호입원', expectedDischarge: Utils.addDaysStr(today, 5) });
+      await Clients.addEmergencyContact('CI1', { name: '보호자', relation: '부모', phone: '010-0000-0000' });
+      await Clients.addCrisisEvent('CI1', { type: '자해', date: today, time: '10:00', description: '경위', action: '조치' });
+      const ev = Clients.get('CI1').crisisEvents[0];
+      await Clients.saveCrisisResponse('CI1', ev.id, { steps: [{ time: '10:30', type: '현장 출동·방문', note: 'b' }, { time: '10:00', type: '위기 인지·최초 접촉', note: 'a' }], outcome: '응급입원' });
+      const ecId = Clients.get('CI1').emergencyContacts[0].id;
+      await Clients.addFamilySession('CI1', { date: today, method: '전화', participantIds: [ecId], topics: ['질병 이해'], nextDate: Utils.addDaysStr(today, 14), agreement: '합의' });
+      await Clients.addResourceLink('CI1', { type: '기타', name: '점검기관', date: Utils.addDaysStr(today, -20), status: 'referred', checkDate: Utils.addDaysStr(today, -2) });
+      await Clients.addServicePlan('CI1', { date: today, status: 'active', nextReviewDate: Utils.addDaysStr(today, 3), needs: [{ area: '신체건강', hasNeed: true, note: 'n' }], items: [{ area: '신체건강', goal: 'g', service: 's', status: 'in_progress' }] });
+      const items = [1, 1, 1, 1, 1, 1, 1, 1, 1];
+      await Clients.addAssessment('CI1', { scale: 'PHQ-9 (우울 선별)', items, date: Utils.addDaysStr(today, -40) });
+      await Clients.addAssessment('CI1', { scale: 'PHQ-9 (우울 선별)', items: [0, 0, 1, 1, 0, 1, 0, 0, 0], date: today });
+      await Clients.saveRecoveryProfile('CI1', { general: { strengths: '강점' }, crisis: { helpful: '조용한 곳', unwanted: '강제 이송' } });
+    });
+    const r = await page.evaluate(() => ({ steps: Clients.get('CI1').crisisEvents[0].steps.map(x => x.time).join(','), pend: Clients.getPendingReferrals().length, rev: Clients.getPlanReviews().length, inpt: Clients.getInpatients().length, score: Clients.get('CI1').assessments[0].score }));
+    assert(r.steps === '10:00,10:30', '위기 대응 단계가 시각순으로 저장되지 않음: ' + r.steps);
+    assert(r.pend === 1 && r.rev === 1 && r.inpt === 1, '대시보드 알림 대상 계산 오류: ' + JSON.stringify(r));
+    assert(r.score === '9', 'PHQ-9 합계 계산 오류: ' + r.score);
+  });
+
+  await step('종결(사후 확인 후속조치)과 재등록이 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      await Clients.close('CI2', { reason: '자립/목표 달성', date: Utils.todayStr(), outcome: '목표 달성', summary: '요약', aftercareMonths: [3, 6] });
+      const made = FollowUps.list().filter(f => f.clientId === 'CI2' && f.type === '종결 후 사후 확인').length;
+      await Clients.reopen('CI2');
+      const left = FollowUps.list().filter(f => f.clientId === 'CI2' && f.type === '종결 후 사후 확인').length;
+      return { made, left, status: Clients.get('CI2').status };
+    });
+    assert(r.made === 2 && r.left === 0 && r.status === 'active', '종결/재등록 결과가 다름: ' + JSON.stringify(r));
+  });
+
+  await step('주요 화면이 모두 오류 없이 그려진다', async () => {
+    const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
+      ['resourceDirectory', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
+      ['handoverSummary', { id: 'CI1' }], ['dailyBriefing', {}]];
+    for (const [v, params] of views){
+      await page.evaluate(([name, p]) => UI.navigate(name, p), [v, params]);
+      await page.waitForTimeout(120);
+      const txt = await page.evaluate(() => document.getElementById('appMain').textContent);
+      assert(txt.length > 30 && !txt.includes('알 수 없는 화면'), v + ' 화면이 비어 있거나 알 수 없는 화면임');
+    }
+    const plan = await page.evaluate(() => Clients.get('CI1').servicePlans[0].id);
+    const ev = await page.evaluate(() => Clients.get('CI1').crisisEvents[0].id);
+    for (const [v, params] of [['servicePlanEditor', { clientId: 'CI1', planId: plan }], ['servicePlanPrint', { clientId: 'CI1', planId: plan }], ['crisisReport', { clientId: 'CI1', eventId: ev }]]){
+      await page.evaluate(([name, p]) => UI.navigate(name, p), [v, params]);
+      await page.waitForTimeout(120);
+      const txt = await page.evaluate(() => document.getElementById('appMain').textContent);
+      assert(txt.length > 30, v + ' 화면이 비어 있음');
+    }
+    noNewErrors('화면 이동');
+  });
+
+  await step('대화상자(간단 기록·종결·연계 결과·위기 대응·긴급 정보·상용구)가 열린다', async () => {
+    await page.evaluate(() => UI.navigate('clientDetail', { id: 'CI1' }));
+    await page.waitForTimeout(200);
+    await show();
+    const open = async (fn, titlePart) => {
+      await page.evaluate(fn);
+      await page.waitForTimeout(150);
+      const title = await page.evaluate(() => (document.querySelector('#modalBox h3') || {}).textContent || '');
+      assert(title.includes(titlePart), '"' + titlePart + '" 대화상자가 열리지 않음(현재: ' + title + ')');
+      await page.evaluate(() => UI.closeModal());
+    };
+    await open(() => Views.openQuickRecordModal('CI1'), '간단 기록');
+    await open(() => Views.openClosureModal('CI1', false), '종결');
+    await open(() => Views.openReferralResultModal('CI1', Clients.get('CI1').resourceLinks[0].id), '연계 결과');
+    await open(() => Views.openCrisisResponseModal('CI1', Clients.get('CI1').crisisEvents[0].id), '대응 경과');
+    await open(() => Views.openEmergencyInfoModal('CI1'), '긴급 정보');
+    await open(() => Views.openSnippetManager(), '상용구');
+    noNewErrors('대화상자');
+  });
+
+  await step('간단 기록을 화면에서 저장할 수 있다', async () => {
+    await page.evaluate(() => Views.openQuickRecordModal('CI1'));
+    await page.fill('#qrText', '점검용 간단 기록');
+    await click('#qrSave');
+    const saved = await page.evaluate(() => SoapModule.list().some(s => s.S === '점검용 간단 기록' && s.status === 'final'));
+    assert(saved, '간단 기록이 저장되지 않음');
+  });
+
+  await step('새로고침 후 다시 로그인해도 기록이 그대로 있다', async () => {
+    const before = await page.evaluate(() => ({ c: Clients.list().length, s: SoapModule.list().length, f: FollowUps.list().length }));
+    await page.reload();
+    await page.waitForSelector('#loginPw', { state: 'visible' });
+    await page.fill('#loginPw', PASSWORD);
+    await page.click('#loginSubmitBtn');
+    await page.waitForSelector('#appShell:not(.hidden)');
+    await page.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    const after = await page.evaluate(() => ({ c: Clients.list().length, s: SoapModule.list().length, f: FollowUps.list().length }));
+    assert(JSON.stringify(before) === JSON.stringify(after), '다시 로그인한 뒤 기록 수가 다름: ' + JSON.stringify(before) + ' → ' + JSON.stringify(after));
+    noNewErrors('재로그인');
+  });
+
+  await step('백업 파일에 모든 기록이 들어 있고 평문이 새지 않는다', async () => {
+    const r = await page.evaluate(async () => {
+      await Snippets.add({ label: '평문확인라벨', field: 'S', text: '평문확인내용XYZ' });
+      const d = await Backup.exportAll();
+      const raw = JSON.stringify(d);
+      return { clients: d.clients.length, soaps: d.soaps.length, hasSnippets: !!d.settings.textSnippetsEnc, leaked: raw.includes('평문확인내용XYZ') || raw.includes('점검1') || raw.includes('원본 S') };
+    });
+    assert(r.clients >= 2 && r.soaps >= 2, '백업에 기록이 빠짐: ' + JSON.stringify(r));
+    assert(r.hasSnippets, '백업에 상용구가 빠짐');
+    assert(!r.leaked, '백업 파일에 암호화되지 않은 내용이 들어 있음');
+  });
+
+  await step('핵심 화면에 접근성 심각 위반이 없다 (라이트·다크)', async () => {
+    for (const scheme of ['light', 'dark']){
+      await page.emulateMedia({ colorScheme: scheme });
+      for (const [v, params] of [['dashboard', {}], ['clientDetail', { id: 'CI1' }], ['outcomes', {}], ['soapEditor', { prefillClientId: 'CI1' }]]){
+        await page.evaluate(([name, p]) => UI.navigate(name, p), [v, params]);
+        await page.waitForTimeout(150);
+        await show();
+        await axeCheck(scheme + ' ' + v);
+      }
+    }
+    await page.emulateMedia({ colorScheme: 'light' });
+  });
+
+  await browser.close();
+  server.close();
+
+  if (failures.length){
+    console.error('\n브라우저 점검 실패 ' + failures.length + '건:\n - ' + failures.join('\n - '));
+    process.exit(1);
+  }
+  console.log('\n브라우저 점검 통과 (' + stepNo + '단계)');
+})().catch((e) => { console.error('점검 실행 중 오류:', e); process.exit(1); });

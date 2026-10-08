@@ -33,6 +33,7 @@
     --draft:#6b6a64;
     --draft-soft:#eeede9;
     --on-accent:#ffffff;
+    --on-danger:#ffffff;
     --chart-1:#2a78d6;
     --warn-text:#8a5712;
     --good-text:#2f6a47;
@@ -56,7 +57,7 @@
       --good:#7ec39a; --good-soft:#1f3327;
       --draft:#a8a7a3; --draft-soft:#333333;
       --notice-text:#e6c98f;
-      --on-accent:#0f1f1c; --warn-text:#e0ac6b; --good-text:#7ec39a; --chart-1:#3987e5;
+      --on-accent:#0f1f1c; --on-danger:#1b1c1e; --warn-text:#e0ac6b; --good-text:#7ec39a; --chart-1:#3987e5;
       color-scheme:dark;
     }
   }
@@ -70,7 +71,7 @@
     --good:#7ec39a; --good-soft:#1f3327;
     --draft:#a8a7a3; --draft-soft:#333333;
     --notice-text:#e6c98f;
-    --on-accent:#0f1f1c; --warn-text:#e0ac6b; --good-text:#7ec39a; --chart-1:#3987e5;
+    --on-accent:#0f1f1c; --on-danger:#1b1c1e; --warn-text:#e0ac6b; --good-text:#7ec39a; --chart-1:#3987e5;
     color-scheme:dark;
   }
   /* 글자 크기 설정(설정 > 글자 크기) — 라이트/다크 테마와 독립적으로 적용된다 */
@@ -241,7 +242,7 @@
   .badge-pending{background:var(--warn-soft);color:var(--warn-text);}
   .badge-completed{background:var(--draft-soft);color:var(--draft);}
   .badge-closed{background:var(--draft-soft);color:var(--draft);}
-  .badge-crisis-flag{background:var(--danger);color:#fff;}
+  .badge-crisis-flag{background:var(--danger);color:var(--on-danger);}
 
   /* collapsible client-detail panels (입퇴원 이력, 위기개입 기록 등) — the
      expand/collapse chevron used to be a tiny 0.75rem glyph in the faintest
@@ -289,7 +290,7 @@
   .calendar-cell.today{border-color:var(--accent);font-weight:700;}
   .calendar-cell.selected{background:var(--accent);color:var(--on-accent);border-color:var(--accent);}
   .calendar-dot{
-    background:var(--danger);color:#fff;border-radius:10px;font-size:0.65rem;padding:0 5px;line-height:1.4;min-width:16px;text-align:center;
+    background:var(--danger);color:var(--on-danger);border-radius:10px;font-size:0.65rem;padding:0 5px;line-height:1.4;min-width:16px;text-align:center;
   }
   .calendar-cell.selected .calendar-dot{background:var(--on-accent);color:var(--accent);}
 
