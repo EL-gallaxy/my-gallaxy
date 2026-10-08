@@ -297,6 +297,42 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('디브리핑');
   });
 
+  await step('위기 빠른 기록과 디브리핑 미작성 알림이 동작한다', async () => {
+    await page.evaluate(() => UI.navigate('dashboard', {}));
+    await page.waitForTimeout(200);
+    await page.evaluate(() => document.getElementById('qbQuickDebrief').click());
+    await page.waitForTimeout(150);
+    const r1 = await page.evaluate(async () => {
+      document.getElementById('qdSubject').value = '빠른기록 미등록';
+      document.getElementById('qdDate').value = Utils.addDaysStr(Utils.todayStr(), -5);
+      document.getElementById('qdType').value = '112 신고';
+      document.getElementById('qdSave').click();
+      await new Promise(r => setTimeout(r, 300));
+      const d = Debriefings.list().find(x => x.subjectNote === '빠른기록 미등록');
+      return { saved: !!d, incomplete: d && Debriefings.isIncomplete(d), kind: d && d.kind };
+    });
+    assert(r1.saved && r1.incomplete && r1.kind === 'crisisUnreg', '빠른 기록이 저장되지 않음: ' + JSON.stringify(r1));
+    const r2 = await page.evaluate(async () => {
+      const p = Debriefings.pendingList();
+      const quick = p.find(x => x.label.includes('빠른기록 미등록'));
+      const recent = Debriefings.blank({ kind: 'crisisUnreg' }); recent.subjectNote = '오늘건'; await Debriefings.save(recent, false);
+      const p2 = Debriefings.pendingList();
+      await Thresholds.save({ debrief: '1' });
+      const p3 = Debriefings.pendingList();
+      await Thresholds.reset();
+      UI.navigate('dashboard', {});
+      return { found: !!quick, days: quick && quick.days, todayHidden: !p2.some(x => x.label.includes('오늘건')), onDay1: p3.length >= p2.length, back: CONSTANTS.DEBRIEF_DUE_DAYS };
+    });
+    assert(r2.found && r2.days === 5 && r2.todayHidden && r2.back === 3, '미작성 알림 계산이 다름: ' + JSON.stringify(r2));
+    await page.waitForTimeout(250);
+    const panel = await page.evaluate(() => (document.getElementById('debriefGapSection') || {}).textContent || '');
+    assert(panel.includes('빠른기록 미등록') && panel.includes('5일 경과'), '대시보드에 디브리핑 미작성 알림이 없음');
+    await page.evaluate(() => document.querySelector('#debriefGapSection [data-goto-debrief]').click());
+    await page.waitForTimeout(200);
+    assert(await page.evaluate(() => State.currentView === 'debriefEditor' && !!document.getElementById('dbFacts')), '알림을 눌러도 작성 화면으로 이동하지 않음');
+    noNewErrors('빠른 기록·미작성 알림');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
