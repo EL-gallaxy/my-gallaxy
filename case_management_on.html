@@ -4900,8 +4900,34 @@ const UI = {
     });
   },
 
+  // 화면을 그리다 오류가 나면 빈 화면 대신 안내와 "오류 내용 복사" 버튼을 보여 준다(메뉴는 그대로 쓸 수 있다).
+  errorLog: [],
+  _lastErrorToastAt: 0,
+  logError(err, where){
+    const e = err instanceof Error ? err : new Error(String(err && err.message ? err.message : err));
+    const entry = { time: new Date().toISOString(), where: where || '', view: State.currentView || '', message: e.message || String(e), stack: String(e.stack || '').split('\n').slice(0, 5).join('\n') };
+    UI.errorLog.push(entry);
+    if (UI.errorLog.length > 20) UI.errorLog.shift();
+    console.error('[앱 오류]', entry.where, entry.view, entry.message);
+    return entry;
+  },
+  errorReportText(){
+    const head = ['사례관리 ON 오류 보고', '시각: ' + new Date().toISOString(), '브라우저: ' + navigator.userAgent, '화면: ' + (State.currentView || '')];
+    const body = UI.errorLog.map((x, i) => '[' + (i + 1) + '] ' + x.time + ' (' + x.where + ' / ' + x.view + ') ' + x.message + (x.stack ? '\n' + x.stack : ''));
+    return head.concat(['', '대상자 이름·내용은 포함되지 않습니다.', ''], body.length ? body : ['(기록된 오류 없음)']).join('\n');
+  },
+  showRenderError(main, err){
+    UI.logError(err, '화면 표시');
+    main.innerHTML = '<div class="panel" id="renderErrorPanel" role="alert"><div class="panel-title">⚠ 이 화면을 표시하지 못했습니다</div>' +
+      '<p style="font-size:0.9rem;margin-bottom:8px;">저장된 기록은 그대로입니다. 다른 메뉴는 계속 쓸 수 있습니다. 같은 문제가 반복되면 아래 내용을 복사해서 알려 주세요. 대상자 이름이나 기록 내용은 들어 있지 않습니다.</p>' +
+      '<pre style="white-space:pre-wrap;font-size:0.8rem;background:var(--surface-alt);padding:8px;border-radius:6px;">' + Utils.escapeHtml(String(err && err.message ? err.message : err)) + '</pre>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button class="btn btn-sm btn-primary" id="renderErrCopyBtn">오류 내용 복사</button><button class="btn btn-sm" id="renderErrHomeBtn">대시보드로</button></div></div>';
+    document.getElementById('renderErrCopyBtn').onclick = () => copyToClipboard(UI.errorReportText());
+    document.getElementById('renderErrHomeBtn').onclick = () => { Views._dirty = false; UI.navigate('dashboard', {}); };
+  },
   renderCurrentView(){
     const main = document.getElementById('appMain');
+    try{
     switch (State.currentView){
       case 'dashboard': main.innerHTML = Views.dashboard(); Views.bindDashboard(); break;
       case 'clients': main.innerHTML = Views.clientsList(); Views.bindClientsList(); break;
@@ -4934,7 +4960,10 @@ const UI = {
       case 'settings': main.innerHTML = Views.settings(); Views.bindSettings(); break;
       default: main.innerHTML = '<p>알 수 없는 화면입니다.</p>';
     }
-    A11y.enhance(main);
+    }catch(err){
+      UI.showRenderError(main, err);
+    }
+    try{ A11y.enhance(main); }catch(err){ UI.logError(err, '접근성 보정'); }
   }
 };
 
@@ -9532,7 +9561,7 @@ const Views = {
       ['backupSection', '데이터 백업 및 복원'], ['autoBackupSection', '자동 백업'], ['printSettingsSection', '인쇄 문서 설정'],
       ['tourSection', '앱 둘러보기'], ['simpleModeSection', '간소화 모드'],
       ['dashboardWidgetsSection', '대시보드 위젯 표시'], ['themeSection', '화면 테마'],
-      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['thresholdSection', '점검 기준 일수'], ['retentionSection', '기록 보관·파기'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
+      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['thresholdSection', '점검 기준 일수'], ['retentionSection', '기록 보관·파기'], ['errorReportSection', '문제 보고'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
     ];
     html += '<div class="panel" style="display:flex;gap:8px;flex-wrap:wrap;">' +
       SETTINGS_SECTIONS.map(([id, label]) => '<button class="btn btn-sm" data-scroll="' + id + '">' + label + '</button>').join('') +
@@ -9656,6 +9685,13 @@ const Views = {
           : '<div class="empty-msg">보관기간이 지난 종결 대상자가 없습니다.</div>') + '</div>';
     }
 
+    html += '<div class="panel" id="errorReportSection"><div class="panel-title">' + icon('alertTriangle') + ' 문제 보고</div>' +
+      '<p class="help-text" style="margin-bottom:8px;">앱이 화면을 그리지 못했거나 예기치 않은 오류가 있었을 때 이 창을 연 이후의 기록이 여기에 남습니다. 대상자 이름이나 기록 내용은 들어 있지 않습니다.</p>' +
+      (UI.errorLog.length
+        ? '<ul style="margin:0 0 8px 18px;font-size:0.85rem;">' + UI.errorLog.slice(-5).reverse().map(x => '<li>' + Utils.escapeHtml(Utils.formatDateTime(x.time)) + ' · ' + Utils.escapeHtml(x.view) + ' · ' + Utils.escapeHtml(x.message) + '</li>').join('') + '</ul>'
+        : '<p style="font-size:0.88rem;margin-bottom:8px;">기록된 오류가 없습니다.</p>') +
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="errCopyBtn">오류 내용 복사</button><button class="btn btn-sm" id="errClearBtn">기록 지우기</button></div></div>';
+
     html += '<div class="panel" id="recoverySection"><div class="panel-title">' + icon('shield') + ' 비밀번호 복구 코드</div>' +
       '<p class="help-text" style="margin-bottom:10px;">비밀번호를 잊으면 기록을 열 수 없습니다. 복구 코드를 만들어 종이에 적거나 인쇄해 안전한 곳에 보관해 두면, 비밀번호를 잊어도 이 코드로 기록을 열고 새 비밀번호를 정할 수 있습니다. 코드는 만들 때 한 번만 보여 드리며, 코드를 아는 사람은 누구나 기록을 열 수 있으니 잘 보관해 주세요.</p>' +
       '<p style="font-size:0.88rem;margin-bottom:10px;">상태: <strong id="recoveryStatusText">확인 중…</strong></p>' +
@@ -9681,7 +9717,8 @@ const Views = {
     Views.bindBackupControls();
     (async () => {
       const lastBackupAt = await Storage.getSetting('lastBackupAt');
-      document.getElementById('lastBackupAtText').textContent = lastBackupAt ? Utils.formatDateTime(lastBackupAt) : '백업한 적 없음';
+      const lastEl = document.getElementById('lastBackupAtText');
+      if (lastEl) lastEl.textContent = lastBackupAt ? Utils.formatDateTime(lastBackupAt) : '백업한 적 없음';
       const lastFull = await Storage.getSetting('lastFullBackupAt');
       const fullEl = document.getElementById('lastFullBackupText');
       if (fullEl) fullEl.textContent = lastFull ? Utils.formatDateTime(lastFull) : '없음';
@@ -9740,6 +9777,8 @@ const Views = {
       const off = document.getElementById('abOffBtn');
       if (off) off.onclick = () => UI.confirm('자동 백업을 끌까요? 이미 저장된 백업 파일은 폴더에 그대로 남습니다.', async () => { await AutoBackup.disable(); toast('자동 백업을 껐습니다.'); UI.renderCurrentView(); });
     }
+    document.getElementById('errCopyBtn').onclick = () => copyToClipboard(UI.errorReportText());
+    document.getElementById('errClearBtn').onclick = () => { UI.errorLog = []; toast('오류 기록을 지웠습니다.'); UI.renderCurrentView(); };
     document.getElementById('saveRetentionBtn').onclick = async () => {
       try{
         await Retention.setYears(document.getElementById('retYears').value);
@@ -9778,8 +9817,10 @@ const Views = {
     (async () => {
       const rw = await Storage.getSetting('recoveryWrap');
       const ready = await Auth.hasRecovery();
-      document.getElementById('recoveryStatusText').textContent = ready && rw ? '만들어 둠 (' + Utils.formatDateTime(rw.createdAt) + ')' : '아직 만들지 않음 — 비밀번호를 잊으면 복구할 수 없습니다';
-      document.getElementById('makeRecoveryBtn').textContent = ready ? '복구 코드 다시 만들기 (이전 코드는 쓸 수 없게 됨)' : '복구 코드 만들기';
+      const statusEl = document.getElementById('recoveryStatusText'), makeEl = document.getElementById('makeRecoveryBtn');
+      if (!statusEl || !makeEl) return;
+      statusEl.textContent = ready && rw ? '만들어 둠 (' + Utils.formatDateTime(rw.createdAt) + ')' : '아직 만들지 않음 — 비밀번호를 잊으면 복구할 수 없습니다';
+      makeEl.textContent = ready ? '복구 코드 다시 만들기 (이전 코드는 쓸 수 없게 됨)' : '복구 코드 만들기';
     })();
     document.getElementById('makeRecoveryBtn').onclick = () => Views.openRecoveryPasswordModal();
     document.getElementById('changePwBtn').onclick = async () => {
@@ -9802,10 +9843,12 @@ const Views = {
       }
     };
     (async () => {
-      document.getElementById('themeModeSelect').value = Theme.currentMode;
-      document.getElementById('fontSizeSelect').value = FontSize.currentMode;
+      const themeEl = document.getElementById('themeModeSelect'), fontEl = document.getElementById('fontSizeSelect');
+      if (themeEl) themeEl.value = Theme.currentMode;
+      if (fontEl) fontEl.value = FontSize.currentMode;
       const mins = await Auth.getAutoLockMinutes();
-      document.getElementById('autoLockSelect').value = String(mins);
+      const lockEl = document.getElementById('autoLockSelect');
+      if (lockEl) lockEl.value = String(mins);
     })();
   },
 
@@ -10706,6 +10749,15 @@ async function bootstrapApp(){
   await AutoBackup.init();
   AutoBackup.start();
   window.addEventListener('beforeunload', (e) => { if (Views._dirty){ e.preventDefault(); e.returnValue = ''; } });
+  const reportUnexpected = (err) => {
+    UI.logError(err, '예기치 않은 오류');
+    if (Date.now() - UI._lastErrorToastAt > 30000){
+      UI._lastErrorToastAt = Date.now();
+      toast('예기치 않은 오류가 있었습니다. 설정의 "문제 보고"에서 내용을 복사할 수 있습니다.', 'error');
+    }
+  };
+  window.addEventListener('error', (ev) => reportUnexpected(ev.error || new Error(ev.message)));
+  window.addEventListener('unhandledrejection', (ev) => reportUnexpected(ev.reason));
   Backup.startWatcher();
   UI.renderRecentClients();
 
