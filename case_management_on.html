@@ -33,6 +33,7 @@
     --draft:#6b6a64;
     --draft-soft:#eeede9;
     --on-accent:#ffffff;
+    --chart-1:#2a78d6;
     --warn-text:#8a5712;
     --good-text:#2f6a47;
     --notice-text:#5b4520;
@@ -55,7 +56,7 @@
       --good:#7ec39a; --good-soft:#1f3327;
       --draft:#a8a7a3; --draft-soft:#333333;
       --notice-text:#e6c98f;
-      --on-accent:#0f1f1c; --warn-text:#e0ac6b; --good-text:#7ec39a;
+      --on-accent:#0f1f1c; --warn-text:#e0ac6b; --good-text:#7ec39a; --chart-1:#3987e5;
       color-scheme:dark;
     }
   }
@@ -69,7 +70,7 @@
     --good:#7ec39a; --good-soft:#1f3327;
     --draft:#a8a7a3; --draft-soft:#333333;
     --notice-text:#e6c98f;
-    --on-accent:#0f1f1c; --warn-text:#e0ac6b; --good-text:#7ec39a;
+    --on-accent:#0f1f1c; --warn-text:#e0ac6b; --good-text:#7ec39a; --chart-1:#3987e5;
     color-scheme:dark;
   }
   /* 글자 크기 설정(설정 > 글자 크기) — 라이트/다크 테마와 독립적으로 적용된다 */
@@ -304,6 +305,29 @@
   }
 
   /* stats bar chart (CSS-only — no chart library / CDN) */
+  /* 사정도구 점수 변화 그래프(꺾은선 1개) + 문항별 입력 */
+  .score-chart{margin:0 0 16px;}
+  .score-chart figcaption{font-size:0.85rem;font-weight:600;margin-bottom:4px;}
+  .score-chart figcaption span{font-weight:400;color:var(--text-muted);}
+  .score-chart-wrap{position:relative;}
+  .score-chart svg{display:block;width:100%;height:auto;overflow:visible;}
+  .sc-grid{stroke:var(--border);stroke-width:1;}
+  .sc-line{fill:none;stroke:var(--chart-1);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;}
+  .sc-dot{fill:var(--chart-1);stroke:var(--surface);stroke-width:2;}
+  .sc-cross{stroke:var(--border-strong);stroke-width:1;}
+  .sc-axis-text{fill:var(--text-muted);font-size:11px;}
+  .sc-end-text{fill:var(--text);font-size:12px;font-weight:600;}
+  .sc-hit{fill:transparent;cursor:pointer;}
+  .sc-hit:focus-visible{outline:none;stroke:var(--text);stroke-width:2;}
+  .chart-tip{position:absolute;z-index:5;pointer-events:none;background:var(--surface);color:var(--text);border:1px solid var(--border-strong);border-radius:6px;padding:6px 10px;font-size:0.8rem;box-shadow:var(--shadow);white-space:nowrap;transform:translate(-50%,-110%);}
+  .chart-tip strong{font-size:0.95rem;}
+  .chart-tip .key{display:inline-block;width:12px;height:0;border-top:2px solid var(--chart-1);vertical-align:middle;margin-right:6px;}
+  .chart-tip .sub{color:var(--text-muted);}
+  .assess-item{display:grid;grid-template-columns:1fr auto;gap:6px 12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:0.88rem;}
+  .assess-opts{display:flex;gap:6px;flex-wrap:wrap;}
+  .assess-opt{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-strong);border-radius:20px;padding:4px 10px;font-size:0.82rem;cursor:pointer;background:var(--surface);}
+  .assess-opt:has(input:checked){background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600;}
+  @media (max-width:560px){ .assess-item{grid-template-columns:1fr;} }
   .barchart{display:flex;flex-direction:column;gap:10px;}
   .barchart-row{display:grid;grid-template-columns:70px 1fr 36px;align-items:center;gap:10px;font-size:0.85rem;}
   .barchart-label{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -1125,7 +1149,34 @@ const CONSTANTS = {
   SOAP_SUBJECTS: { client: '본인', family: '가족·보호자' },
   CRISIS_EVENT_TYPES: ['자살시도', '자해', '응급입원 동행', '112 신고', '119 신고', '타해 위험', '기타'],
   CONTACT_RELATIONS: ['배우자', '부모', '자녀', '형제자매', '기타 보호자', '기타'],
-  ASSESSMENT_SCALES: ['GAF (전반적 기능평가)', 'K-MMSE (간이정신상태검사)', 'K-BDI (벡 우울척도)', 'BPRS (간이정신병리평가척도)', '기타'],
+  ASSESSMENT_SCALES: ['GAF (전반적 기능평가)', 'K-MMSE (간이정신상태검사)', 'K-BDI (벡 우울척도)', 'BPRS (간이정신병리평가척도)', 'PHQ-9 (우울 선별)', 'GAD-7 (불안 선별)', 'C-SSRS (자살 위험 선별)', '기타'],
+  // 점수 변화 그래프의 세로축 범위(알려진 척도만 고정, 나머지는 자동).
+  SCALE_RANGES: { 'GAF (전반적 기능평가)': [0, 100], 'K-MMSE (간이정신상태검사)': [0, 30], 'K-BDI (벡 우울척도)': [0, 63], 'PHQ-9 (우울 선별)': [0, 27], 'GAD-7 (불안 선별)': [0, 21] },
+  // 문항별로 입력하는 척도. 앱은 합계만 계산하고 해석·판정은 하지 않는다 — 아래
+  // reference는 화면에 안내 문구로만 보여주는 일반적인 구분이다. 문항 문구는 요약본이므로
+  // 공식 문항지를 대체하지 않는다(기록 입력용).
+  LIKERT_OPTIONS: ['전혀 아니다', '며칠 동안', '일주일 이상', '거의 매일'],
+  STRUCTURED_SCALES: {
+    'PHQ-9 (우울 선별)': {
+      kind: 'likert', flagIndex: 8, flagLabel: '9번 문항(죽음·자해 생각) 응답 있음',
+      intro: '지난 2주 동안 다음 문제로 얼마나 자주 괴로웠는지 선택합니다.',
+      reference: '참고(일반적인 구분): 0–4 최소 · 5–9 경미 · 10–14 중등도 · 15–19 중등도 이상 · 20–27 고도',
+      items: ['일을 하는 데 흥미나 즐거움이 거의 없음', '기분이 가라앉거나 우울하거나 희망이 없다고 느낌', '잠들기 어렵거나 자주 깨거나 너무 많이 잠', '피곤하고 기운이 거의 없음', '식욕이 줄었거나 너무 많이 먹음', '내가 실패자라고 느끼거나 나 자신·가족을 실망시켰다고 느낌', '신문을 읽거나 TV를 보는 것 등에 집중하기 어려움', '다른 사람이 알아챌 만큼 느리게 움직이거나 말함, 또는 반대로 안절부절못해 평소보다 많이 돌아다님', '차라리 죽는 것이 낫겠다고 생각하거나 어떤 식으로든 자해할 생각을 함']
+    },
+    'GAD-7 (불안 선별)': {
+      kind: 'likert',
+      intro: '지난 2주 동안 다음 문제로 얼마나 자주 괴로웠는지 선택합니다.',
+      reference: '참고(일반적인 구분): 0–4 최소 · 5–9 경미 · 10–14 중등도 · 15–21 고도',
+      items: ['초조하거나 불안하거나 조마조마하게 느낌', '걱정하는 것을 멈추거나 조절할 수 없음', '여러 가지 것들에 대해 걱정을 너무 많이 함', '편하게 있기 어려움', '너무 안절부절못해서 가만히 있기 어려움', '쉽게 짜증이 나거나 쉽게 화를 냄', '마치 끔찍한 일이 생길 것처럼 두려움']
+    },
+    'C-SSRS (자살 위험 선별)': {
+      kind: 'cssrs',
+      intro: '조사 기간은 사용하는 문항지(지난 1개월, 마지막 접촉 이후 등)를 따릅니다. 이 화면은 결과를 기록하는 용도이며, 분류와 대응은 기관 지침과 전문적 판단에 따릅니다.',
+      items: ['죽고 싶다는 소망 (죽었으면, 잠들어 깨어나지 않았으면)', '자살하고 싶다는 생각 (실제로 자살을 생각해 봄)', '구체적인 방법에 대한 생각 (실행 계획이나 의도는 없음)', '실행하려는 의도가 있는 자살 생각', '구체적인 계획과 의도가 있음'],
+      behaviorItem: '자살 행동 (시도, 중단된 시도, 방해받은 시도, 준비 행동)',
+      behaviorOptions: ['없음', '3개월 이전에 있음', '지난 3개월 이내에 있음']
+    }
+  },
   COMMON_DOCUMENTS: ['개인정보 수집·이용 동의서', '사례관리 서비스 이용 동의서', '응급 시 연락 동의서', '정보공유 동의서'],
   // 목표 진행 상황 라벨 — 퍼센트 같은 임의의 숫자 대신 상태로만 구분한다
   // (정신건강 사례관리 목표는 수치화가 어렵고 자칫 오해를 부를 수 있음).
@@ -1732,15 +1783,47 @@ const Clients = {
 
   // 표준화 사정도구 점수 이력 — 척도 해석이나 위험 판정은 하지 않고, 실무자가
   // 측정한 점수와 날짜만 그대로 기록해 변화 추이를 나중에 눈으로 확인할 수 있게 한다.
-  async addAssessment(id, { scale, customScale, score, date, note }){
+  // 입력값에서 저장할 {scale, score, items}를 만든다. 문항별 척도는 합계를 계산하고,
+  // 나머지는 실무자가 적은 점수를 그대로 쓴다(추가·수정이 같은 규칙을 쓰도록 한 곳에 둔다).
+  computeAssessment(scale, customScale, manualScore, items){
+    const scaleName = scale === '기타' ? ((customScale || '').trim() || '기타') : scale;
+    const def = CONSTANTS.STRUCTURED_SCALES[scaleName];
+    if (!def) return { scale: scaleName, score: (manualScore || '').trim(), items: undefined };
+    if (def.kind === 'likert'){
+      const arr = def.items.map((_, i) => items && items[i]);
+      if (arr.some(v => !Number.isInteger(v) || v < 0 || v > 3)) throw new Error('모든 문항에 응답해 주세요.');
+      return { scale: scaleName, score: String(arr.reduce((a, b) => a + b, 0)), items: arr };
+    }
+    // C-SSRS: 1~5번은 아니오(0)/예(1), 행동 문항은 0/1/2. 합계 점수는 없다.
+    const arr = def.items.map((_, i) => (items && items[i] === 1 ? 1 : 0));
+    arr.push(items && [0, 1, 2].includes(items[def.items.length]) ? items[def.items.length] : 0);
+    return { scale: scaleName, score: '', items: arr };
+  },
+  // 화면·타임라인·검색에 쓰는 한 줄 요약: 점수 문구와, 실무자가 놓치지 않도록 짚어주는 항목 표시.
+  // 위험도를 판정하지 않고 해당 문항이 체크됐다는 사실만 알린다.
+  assessmentSummary(a){
+    const def = CONSTANTS.STRUCTURED_SCALES[a.scale];
+    if (def && def.kind === 'cssrs' && Array.isArray(a.items)){
+      const yes = [];
+      def.items.forEach((_, i) => { if (a.items[i] === 1) yes.push(i + 1); });
+      const behavior = a.items[def.items.length] || 0;
+      const parts = [];
+      if (yes.length) parts.push('예 ' + yes.length + '개(' + yes.join('·') + '번)');
+      if (behavior) parts.push('행동: ' + def.behaviorOptions[behavior]);
+      const flags = (a.items[3] === 1 || a.items[4] === 1 || behavior === 2) ? ['의도·계획·최근 행동 문항 해당'] : [];
+      return { text: parts.length ? parts.join(' · ') : '해당 문항 없음', flags };
+    }
+    const flags = (def && def.flagIndex != null && Array.isArray(a.items) && a.items[def.flagIndex] > 0) ? [def.flagLabel] : [];
+    return { text: a.score ? a.score + '점' : '', flags };
+  },
+  async addAssessment(id, { scale, customScale, score, items, date, note }){
     const client = State.clients.get(id);
     if (!client) return;
     client.assessments = client.assessments || [];
-    const scaleName = scale === '기타' ? ((customScale || '').trim() || '기타') : scale;
-    client.assessments.push({
-      id: Utils.uid('as'), scale: scaleName, score: (score || '').trim(),
-      date: date || Utils.todayStr(), note: (note || '').trim()
-    });
+    const computed = this.computeAssessment(scale, customScale, score, items);
+    const entry = { id: Utils.uid('as'), scale: computed.scale, score: computed.score, date: date || Utils.todayStr(), note: (note || '').trim() };
+    if (computed.items) entry.items = computed.items;
+    client.assessments.push(entry);
     await Storage.saveEncrypted('clients', client);
   },
   async removeAssessment(id, assessmentId){
@@ -2865,7 +2948,7 @@ const Search = {
       (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · ')));
       (c.documents || []).forEach(d => push(c, '필수 서류', d.name));
       (c.consents || []).forEach(cs => push(c, '정보공유 동의 이력', [cs.agency, cs.note].filter(Boolean).join(' · ')));
-      (c.assessments || []).forEach(a => push(c, '사정도구 점수', [a.scale, a.score, a.note].filter(Boolean).join(' · ')));
+      (c.assessments || []).forEach(a => push(c, '사정도구 점수', [a.scale, Clients.assessmentSummary(a).text, a.note].filter(Boolean).join(' · ')));
       (c.riskAssessments || []).forEach(r => push(c, '위험도 평가', [(CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note].filter(Boolean).join(' · ')));
       (c.reassessments || []).forEach(r => push(c, '정기 재사정', r.note));
       (c.admissions || []).forEach(a => push(c, '입퇴원 이력', [a.type, a.kind, a.hospital, a.note].filter(Boolean).join(' · ')));
@@ -3611,7 +3694,7 @@ const Views = {
     (c.crisisEvents || []).forEach(ev => push(ev.date, ev.time || '', '⚠', '위기개입: ' + ev.type, ev.description || ''));
     (c.medications || []).forEach(m => push(m.date, '', '💊', '복약 등록', [m.name, m.dose].filter(Boolean).join(' ')));
     (c.caseConferences || []).forEach(cf => push(cf.date, '', '🗂', '사례회의', cf.decision || cf.discussion || ''));
-    (c.assessments || []).forEach(a => push(a.date, '', '📊', '사정도구: ' + a.scale, a.score ? a.score + '점' : ''));
+    (c.assessments || []).forEach(a => { const sm = Clients.assessmentSummary(a); push(a.date, '', '📊', '사정도구: ' + a.scale, [sm.text].concat(sm.flags).filter(Boolean).join(' · ')); });
     (c.riskAssessments || []).forEach(r => push(r.date, '', '🎯', '위험도 평가: ' + (CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note || ''));
     (c.reassessments || []).forEach(r => push(r.date, '', '📋', '정기 재사정 완료', r.note || ''));
     (c.documents || []).forEach(d => { if (d.receivedDate) push(d.receivedDate, '', '📄', '서류 수령', d.name); });
@@ -4577,9 +4660,12 @@ const Views = {
       if (assessments.length === 0){
         historyHtml += '<div class="empty-msg">기록된 사정도구 점수가 없습니다.</div>';
       } else {
+        historyHtml += Views.scoreChartsHtml(assessments);
         assessments.forEach(a => {
+          const sm = Clients.assessmentSummary(a);
           historyHtml += '<div class="list-row"><div class="list-row-main">' +
-            '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.scale) + (a.score ? ' — ' + Utils.escapeHtml(a.score) + '점' : '') + '</div>' +
+            '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.scale) + (sm.text ? ' — ' + Utils.escapeHtml(sm.text) : '') +
+            sm.flags.map(fl => ' <span class="badge badge-crisis">⚠ ' + Utils.escapeHtml(fl) + '</span>').join('') + '</div>' +
             (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
             '</div><div class="row-actions"><button class="btn btn-sm" data-edit-assessment="' + a.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-assessment="' + a.id + '">삭제</button></div></div>';
         });
@@ -4588,8 +4674,10 @@ const Views = {
         '<div class="field"><label>척도</label><select id="assessScale">' +
         CONSTANTS.ASSESSMENT_SCALES.map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select></div>' +
         '<div class="field hidden" id="assessCustomWrap"><label>척도명 직접 입력</label><input type="text" id="assessCustomScale"></div>' +
-        '<div class="field"><label>점수</label><input type="text" id="assessScore" placeholder="예: 65"></div>' +
+        '<div class="field" id="assessScoreWrap"><label>점수</label><input type="text" id="assessScore" placeholder="예: 65"></div>' +
         '<div class="field"><label>날짜</label><input type="date" id="assessDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field full hidden" id="assessItemsWrap"><p class="help-text" id="assessIntro"></p><div id="assessItems"></div>' +
+        '<p style="margin:8px 0 0;font-weight:600;font-size:0.9rem;" id="assessTotalText" aria-live="polite"></p><p class="help-text" id="assessReference"></p></div>' +
         '<div class="field full"><label>메모(선택)</label><input type="text" id="assessNote"></div></div>' +
         '<button class="btn btn-sm" id="addAssessmentBtn">＋ 사정도구 점수 추가</button></details>';
     }
@@ -4737,6 +4825,151 @@ const Views = {
     html += Views.printSignatureHtml();
     return html;
   },
+  // 척도별 점수 변화 그래프 — 점수가 숫자인 기록이 2개 이상인 척도마다 꺾은선 하나.
+  // 세로축은 0부터 시작하고(알려진 척도는 만점까지), 마지막 값만 직접 표시하며,
+  // 모든 값은 아래 목록과 마우스 올림/초점 안내(툴팁)로도 볼 수 있다.
+  scoreChartsHtml(assessments){
+    const byScale = {};
+    assessments.forEach(a => {
+      const v = parseFloat(a.score);
+      if (!Number.isFinite(v) || CONSTANTS.STRUCTURED_SCALES[a.scale] && CONSTANTS.STRUCTURED_SCALES[a.scale].kind === 'cssrs') return;
+      (byScale[a.scale] = byScale[a.scale] || []).push({ date: a.date, v });
+    });
+    return Object.keys(byScale).map(scale => {
+      const pts = byScale[scale].sort((x, y) => x.date.localeCompare(y.date));
+      return pts.length >= 2 ? Views.scoreChartHtml(scale, pts) : '';
+    }).join('');
+  },
+  scoreChartHtml(scale, pts){
+    const W = 600, H = 170, L = 38, R = 52, T = 16, B = 28;
+    const known = CONSTANTS.SCALE_RANGES[scale];
+    const maxV = Math.max.apply(null, pts.map(p => p.v));
+    const lo = known ? known[0] : 0;
+    const niceMax = (n) => { const m = Math.pow(10, Math.floor(Math.log10(Math.max(n, 1)))); return Math.ceil(n / m) * m; };
+    const hi = known ? Math.max(known[1], maxV) : niceMax(maxV);
+    const t = (d) => new Date(d).getTime();
+    const t0 = t(pts[0].date), t1 = t(pts[pts.length - 1].date);
+    const X = (d) => t1 === t0 ? L + (W - L - R) / 2 : L + (t(d) - t0) / (t1 - t0) * (W - L - R);
+    const Y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+    const mid = Math.round((lo + hi) / 2);
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="group" aria-label="' + Utils.escapeHtml(scale) + ' 점수 변화: ' +
+      pts.map(p => p.date + ' ' + p.v + '점').join(', ') + '">';
+    [lo, mid, hi].forEach(v => {
+      svg += '<line class="sc-grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/>' +
+        '<text class="sc-axis-text" x="' + (L - 6) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + v + '</text>';
+    });
+    svg += '<text class="sc-axis-text" x="' + L + '" y="' + (H - 6) + '" text-anchor="start">' + pts[0].date + '</text>' +
+      (t1 !== t0 ? '<text class="sc-axis-text" x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + pts[pts.length - 1].date + '</text>' : '');
+    svg += '<line class="sc-cross" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" style="display:none"/>';
+    svg += '<polyline class="sc-line" points="' + pts.map(p => X(p.date).toFixed(1) + ',' + Y(p.v).toFixed(1)).join(' ') + '"/>';
+    pts.forEach(p => { svg += '<circle class="sc-dot" cx="' + X(p.date).toFixed(1) + '" cy="' + Y(p.v).toFixed(1) + '" r="4"/>'; });
+    const last = pts[pts.length - 1];
+    svg += '<text class="sc-end-text" x="' + (X(last.date) + 10).toFixed(1) + '" y="' + (Y(last.v) + 4).toFixed(1) + '">' + last.v + '</text>';
+    pts.forEach(p => {
+      svg += '<circle class="sc-hit" tabindex="0" role="img" aria-label="' + p.date + ' ' + p.v + '점" data-date="' + p.date + '" data-v="' + p.v +
+        '" cx="' + X(p.date).toFixed(1) + '" cy="' + Y(p.v).toFixed(1) + '" r="14"/>';
+    });
+    svg += '</svg>';
+    return '<figure class="score-chart" data-scale="' + Utils.escapeHtml(scale) + '"><figcaption>' + Utils.escapeHtml(scale) +
+      ' 점수 변화 <span>(' + lo + '–' + hi + '점 · 기록 ' + pts.length + '건)</span></figcaption><div class="score-chart-wrap">' + svg + '</div></figure>';
+  },
+  // 마우스 올림·초점 시 세로 안내선과 값 안내를 보여준다(툴팁은 textContent로만 채운다).
+  bindScoreCharts(){
+    document.querySelectorAll('.score-chart').forEach(fig => {
+      const wrap = fig.querySelector('.score-chart-wrap');
+      const svg = fig.querySelector('svg');
+      const cross = fig.querySelector('.sc-cross');
+      const hits = Array.from(fig.querySelectorAll('.sc-hit'));
+      const tip = document.createElement('div');
+      tip.className = 'chart-tip';
+      tip.style.display = 'none';
+      wrap.appendChild(tip);
+      const show = (hit) => {
+        const vb = svg.viewBox.baseVal;
+        const rect = svg.getBoundingClientRect();
+        const cx = +hit.getAttribute('cx'), cy = +hit.getAttribute('cy');
+        cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.style.display = '';
+        tip.textContent = '';
+        const strong = document.createElement('strong'); strong.textContent = hit.dataset.v + '점';
+        const key = document.createElement('span'); key.className = 'key';
+        const sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = ' · ' + hit.dataset.date;
+        tip.appendChild(key); tip.appendChild(strong); tip.appendChild(sub);
+        tip.style.left = (cx / vb.width * rect.width) + 'px';
+        tip.style.top = (cy / vb.height * rect.height) + 'px';
+        tip.style.display = '';
+      };
+      const hide = () => { cross.style.display = 'none'; tip.style.display = 'none'; };
+      svg.addEventListener('pointermove', (e) => {
+        const rect = svg.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width * svg.viewBox.baseVal.width;
+        let best = hits[0];
+        hits.forEach(h => { if (Math.abs(+h.getAttribute('cx') - x) < Math.abs(+best.getAttribute('cx') - x)) best = h; });
+        show(best);
+      });
+      svg.addEventListener('pointerleave', hide);
+      hits.forEach(h => { h.addEventListener('focus', () => show(h)); h.addEventListener('blur', hide); });
+    });
+  },
+
+  // 문항별 입력 폼 — PHQ-9/GAD-7은 0~3점 문항, C-SSRS는 예/아니오 문항 + 행동 문항.
+  _assessItemsHtml(scaleName){
+    const def = CONSTANTS.STRUCTURED_SCALES[scaleName];
+    if (!def) return '';
+    const radios = (i, opts) => '<div class="assess-opts">' + opts.map(o =>
+      '<label class="assess-opt" title="' + Utils.escapeHtml(o.label) + '"><input type="radio" name="ai' + i + '" value="' + o.value + '" aria-label="' + Utils.escapeHtml(o.label) + '"' + (o.checked ? ' checked' : '') + '> ' + Utils.escapeHtml(o.text) + '</label>').join('') + '</div>';
+    let html = '';
+    if (def.kind === 'likert'){
+      html += '<p class="help-text">' + CONSTANTS.LIKERT_OPTIONS.map((l, n) => n + ' ' + l).join(' · ') + '</p>';
+      def.items.forEach((text, i) => {
+        html += '<div class="assess-item" role="radiogroup" aria-label="' + (i + 1) + '번 ' + Utils.escapeHtml(text) + '"><div>' + (i + 1) + '. ' + Utils.escapeHtml(text) + '</div>' +
+          radios(i, CONSTANTS.LIKERT_OPTIONS.map((l, n) => ({ value: n, text: String(n), label: n + ' ' + l }))) + '</div>';
+      });
+    } else {
+      def.items.forEach((text, i) => {
+        html += '<div class="assess-item" role="radiogroup" aria-label="' + (i + 1) + '번 ' + Utils.escapeHtml(text) + '"><div>' + (i + 1) + '. ' + Utils.escapeHtml(text) + '</div>' +
+          radios(i, [{ value: 0, text: '아니오', label: '아니오', checked: true }, { value: 1, text: '예', label: '예' }]) + '</div>';
+      });
+      const bi = def.items.length;
+      html += '<div class="assess-item" role="radiogroup" aria-label="' + (bi + 1) + '번 ' + Utils.escapeHtml(def.behaviorItem) + '"><div>' + (bi + 1) + '. ' + Utils.escapeHtml(def.behaviorItem) + '</div>' +
+        radios(bi, def.behaviorOptions.map((l, n) => ({ value: n, text: l, label: l, checked: n === 0 }))) + '</div>';
+    }
+    return html;
+  },
+  _readAssessItems(scaleName){
+    const def = CONSTANTS.STRUCTURED_SCALES[scaleName];
+    if (!def) return undefined;
+    const n = def.items.length + (def.kind === 'cssrs' ? 1 : 0);
+    const out = [];
+    for (let i = 0; i < n; i++){
+      const el = document.querySelector('input[name="ai' + i + '"]:checked');
+      out.push(el ? parseInt(el.value, 10) : undefined);
+    }
+    return out;
+  },
+  // 척도 선택에 맞춰 입력칸을 바꾼다: 문항형이면 점수 칸 대신 문항 목록, 기타면 척도명 칸.
+  _syncAssessForm(){
+    const sel = document.getElementById('assessScale');
+    if (!sel) return;
+    const def = CONSTANTS.STRUCTURED_SCALES[sel.value];
+    document.getElementById('assessCustomWrap').classList.toggle('hidden', sel.value !== '기타');
+    document.getElementById('assessScoreWrap').classList.toggle('hidden', !!def);
+    document.getElementById('assessItemsWrap').classList.toggle('hidden', !def);
+    document.getElementById('assessItems').innerHTML = def ? Views._assessItemsHtml(sel.value) : '';
+    document.getElementById('assessIntro').textContent = def ? def.intro : '';
+    document.getElementById('assessReference').textContent = def && def.reference ? def.reference : '';
+    Views._updateAssessTotal();
+  },
+  _updateAssessTotal(){
+    const el = document.getElementById('assessTotalText');
+    const sel = document.getElementById('assessScale');
+    if (!el || !sel) return;
+    const def = CONSTANTS.STRUCTURED_SCALES[sel.value];
+    if (!def || def.kind !== 'likert'){ el.textContent = ''; return; }
+    const vals = Views._readAssessItems(sel.value);
+    const answered = vals.filter(v => v !== undefined);
+    el.textContent = '합계: ' + answered.reduce((a, b) => a + b, 0) + '점 (' + answered.length + '/' + def.items.length + '문항 응답)';
+  },
+
   // 대상자 상세의 "수정" 버튼 공통 처리 — 항목의 수정 버튼을 누르면 아래 입력
   // 폼에 기존 값이 채워지고 추가 버튼이 "저장"으로 바뀐다(취소 버튼 포함).
   // 저장하면 그 항목만 덮어쓰고, 폼이 없는 화면(간소화 모드 등)은 건너뛴다.
@@ -4781,12 +5014,19 @@ const Views = {
           const known = CONSTANTS.ASSESSMENT_SCALES.includes(a.scale) && a.scale !== '기타';
           set('assessScale', known ? a.scale : '기타');
           set('assessCustomScale', known ? '' : a.scale);
-          document.getElementById('assessCustomWrap').classList.toggle('hidden', known);
+          Views._syncAssessForm();
           set('assessScore', a.score); set('assessDate', a.date); set('assessNote', a.note);
+          (a.items || []).forEach((v, i) => {
+            const radio = document.querySelector('input[name="ai' + i + '"][value="' + v + '"]');
+            if (radio) radio.checked = true;
+          });
+          Views._updateAssessTotal();
         },
         read: () => {
-          const scale = val('assessScale') === '기타' ? (val('assessCustomScale').trim() || '기타') : val('assessScale');
-          return { scale, score: val('assessScore').trim(), date: val('assessDate') || Utils.todayStr(), note: val('assessNote').trim() };
+          const c = Clients.computeAssessment(val('assessScale'), val('assessCustomScale'), val('assessScore'), Views._readAssessItems(val('assessScale')));
+          const patch = { scale: c.scale, score: c.score, date: val('assessDate') || Utils.todayStr(), note: val('assessNote').trim() };
+          patch.items = c.items;
+          return patch;
         } },
       { attr: 'data-edit-risk', list: 'riskAssessments', btn: 'addRiskBtn', done: '위험도 평가를 수정했습니다.',
         fill: r => {
@@ -5137,19 +5377,26 @@ const Views = {
     });
 
     const assessScaleSelect = document.getElementById('assessScale');
-    const assessCustomWrap = document.getElementById('assessCustomWrap');
-    if (assessScaleSelect) assessScaleSelect.onchange = () => assessCustomWrap.classList.toggle('hidden', assessScaleSelect.value !== '기타');
+    if (assessScaleSelect){
+      assessScaleSelect.onchange = () => Views._syncAssessForm();
+      document.getElementById('assessItems').addEventListener('change', () => Views._updateAssessTotal());
+      Views._syncAssessForm();
+    }
+    Views.bindScoreCharts();
     const addAssessmentBtn = document.getElementById('addAssessmentBtn');
     if (addAssessmentBtn) addAssessmentBtn.onclick = async () => {
-      await Clients.addAssessment(id, {
-        scale: assessScaleSelect.value,
-        customScale: document.getElementById('assessCustomScale').value,
-        score: document.getElementById('assessScore').value,
-        date: document.getElementById('assessDate').value,
-        note: document.getElementById('assessNote').value
-      });
-      toast('사정도구 점수를 추가했습니다.');
-      UI.renderCurrentView();
+      try{
+        await Clients.addAssessment(id, {
+          scale: assessScaleSelect.value,
+          customScale: document.getElementById('assessCustomScale').value,
+          score: document.getElementById('assessScore').value,
+          items: Views._readAssessItems(assessScaleSelect.value),
+          date: document.getElementById('assessDate').value,
+          note: document.getElementById('assessNote').value
+        });
+        toast('사정도구 점수를 추가했습니다.');
+        UI.renderCurrentView();
+      }catch(e){ toast(e.message, 'error'); }
     };
     document.querySelectorAll('[data-del-assessment]').forEach(el => {
       el.onclick = () => UI.confirm('이 사정도구 점수 기록을 삭제할까요?', async () => {
