@@ -844,6 +844,20 @@ const Utils = {
   },
   // Whole calendar days elapsed between a YYYY-MM-DD date and today (used
   // for the 미접촉 대상자 gap check, whose threshold varies by 관리수준).
+  // 개인정보 모양 — 실명 등은 잡지 못하므로 숫자 형식만 다룬다. (g 플래그 없음: test()에 상태가 남지 않도록)
+  PII_PATTERNS: {
+    rrn: /\d{6}\s?-\s?[1-8]\d{6}/,
+    phone: /(?:0\d{1,2}[-.\s]\d{3,4}[-.\s]\d{4}|01[016789]\d{7,8})/
+  },
+  // 슈퍼비전 등 밖으로 가져갈 때 쓰는 가림 처리. ID·별칭·주민번호·전화번호를 바꾼다(자유 입력 속 실명 등은 직접 확인해야 한다).
+  deidentify(text, client){
+    let t = String(text || '');
+    const names = [client && client.id, client && client.alias, client && client.name].filter(x => x && String(x).trim().length >= 1);
+    names.sort((a, b) => b.length - a.length).forEach(n => { t = t.split(n).join('[대상자]'); });
+    t = t.replace(new RegExp(this.PII_PATTERNS.rrn.source, 'g'), '[주민번호 가림]');
+    t = t.replace(new RegExp(this.PII_PATTERNS.phone.source, 'g'), '[전화번호 가림]');
+    return t;
+  },
   daysSince(dateStr){
     const [y, m, d] = dateStr.split('-').map(Number);
     const then = new Date(y, m - 1, d);
@@ -1611,6 +1625,28 @@ const DashboardPrefs = {
     this.hidden[key] = isHidden;
     await Storage.setSetting('dashboardHiddenWidgets', this.hidden);
   }
+};
+
+/* 점검 기준 일수 — 미접촉 경고(관리수준별), 정기 재사정 주기, 서비스계획 점검 예고 일수.
+   기본값은 CONSTANTS에 있고, 설정에서 바꾼 값만 저장해 시작할 때 덮어쓴다. 개인정보가 아니므로 설정 저장소에 그대로 둔다. */
+const Thresholds = {
+  DEFAULTS: null,
+  init: async function(){
+    if (!this.DEFAULTS) this.DEFAULTS = JSON.parse(JSON.stringify({
+      contactGap: CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL, reassess: CONSTANTS.REASSESSMENT_INTERVAL_DAYS_BY_LEVEL, planSoon: CONSTANTS.PLAN_REVIEW_SOON_DAYS
+    }));
+    this.apply((await Storage.getSetting('thresholds')) || {});
+  },
+  apply(saved){
+    const d = this.DEFAULTS, num = (v, fb) => { const n = parseInt(v, 10); return n >= 1 && n <= 3650 ? n : fb; };
+    ['contactGap', 'reassess'].forEach(group => {
+      const target = group === 'contactGap' ? CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL : CONSTANTS.REASSESSMENT_INTERVAL_DAYS_BY_LEVEL;
+      Object.keys(d[group]).forEach(lv => { target[lv] = num((saved[group] || {})[lv], d[group][lv]); });
+    });
+    CONSTANTS.PLAN_REVIEW_SOON_DAYS = num(saved.planSoon, d.planSoon);
+  },
+  async save(values){ await Storage.setSetting('thresholds', values); this.apply(values); },
+  async reset(){ await Storage.setSetting('thresholds', {}); this.apply({}); }
 };
 
 /* =========================================================================
@@ -3959,7 +3995,7 @@ const Backup = {
     await Storage.setSetting('backupDirtySince', null);
   },
 
-  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'seedClientIds', 'textSnippetsEnc', 'authMode', 'masterWrap', 'recoveryWrap'],
+  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'thresholds', 'seedClientIds', 'textSnippetsEnc', 'authMode', 'masterWrap', 'recoveryWrap'],
   overdueCached: false,
 
   // 첨부 제외 백업 — 대상자 기록은 안에 첨부파일이 함께 암호화되어 있어서, 지금 메모리에 풀려 있는 기록에서
@@ -7110,6 +7146,7 @@ const Views = {
         '<div class="soap-copy-block">' + Utils.nl2br(SoapModule.formatForCopy(soap)) + '</div>' +
         '<div style="display:flex;gap:8px;margin-top:10px;">' +
         '<button class="btn btn-sm" id="copyAllBtn">' + icon('copy') + ' SOAP 전체 복사</button>' +
+        '<button class="btn btn-sm" id="copyDeidBtn">' + icon('shield') + ' 슈퍼비전용 비식별 복사</button>' +
         '<button class="btn btn-sm" id="printSoapBtn">' + icon('printer') + ' 인쇄</button>' +
         '</div></div>';
       html += Views.printSignatureHtml();
@@ -7162,8 +7199,15 @@ const Views = {
     }
     return w;
   },
+  // 주민등록번호·전화번호 모양이 자유 입력에 들어갔는지 — 실명은 기계적으로 가려낼 수 없어 숫자 형식만 본다.
+  soapPrivacyWarnings(soap){
+    const text = [soap.S, soap.O, soap.A, soap.PText].join('\n'), w = [];
+    if (Utils.PII_PATTERNS.rrn.test(text)) w.push('주민등록번호로 보이는 숫자가 들어 있습니다.');
+    if (Utils.PII_PATTERNS.phone.test(text)) w.push('전화번호로 보이는 숫자가 들어 있습니다. (연락처는 대상자 정보 칸에 두는 것이 안전합니다)');
+    return w;
+  },
   confirmSoapDates(soap, proceed){
-    const w = Views.soapDateWarnings(soap);
+    const w = Views.soapDateWarnings(soap).concat(Views.soapPrivacyWarnings(soap));
     if (!w.length) return proceed();
     UI.confirm(w.join('\n') + '\n그대로 저장할까요?', proceed);
   },
@@ -7272,6 +7316,12 @@ const Views = {
 
     const copyAllBtn = document.getElementById('copyAllBtn');
     if (copyAllBtn) copyAllBtn.onclick = () => copyToClipboard(SoapModule.formatForCopy(Views._readSoapForm()));
+    const copyDeidBtn = document.getElementById('copyDeidBtn');
+    if (copyDeidBtn) copyDeidBtn.onclick = () => {
+      const soap = Views._readSoapForm();
+      copyToClipboard(Utils.deidentify(SoapModule.formatForCopy(soap), Clients.get(soap.clientId)));
+      toast('이름·ID·전화번호·주민번호를 가려서 복사했습니다. 본문에 적힌 실명은 직접 확인해 주세요.');
+    };
     const printSoapBtn = document.getElementById('printSoapBtn');
     if (printSoapBtn) printSoapBtn.onclick = () => window.print();
 
@@ -8449,7 +8499,7 @@ const Views = {
       ['backupSection', '데이터 백업 및 복원'], ['printSettingsSection', '인쇄 문서 설정'],
       ['tourSection', '앱 둘러보기'], ['simpleModeSection', '간소화 모드'],
       ['dashboardWidgetsSection', '대시보드 위젯 표시'], ['themeSection', '화면 테마'],
-      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
+      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['thresholdSection', '점검 기준 일수'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
     ];
     html += '<div class="panel" style="display:flex;gap:8px;flex-wrap:wrap;">' +
       SETTINGS_SECTIONS.map(([id, label]) => '<button class="btn btn-sm" data-scroll="' + id + '">' + label + '</button>').join('') +
@@ -8527,6 +8577,18 @@ const Views = {
       '</select></div>' +
       '<p class="help-text">이 시간 동안 조작이 없으면 자동으로 화면이 잠깁니다. 기본값은 5분입니다.</p></div>';
 
+    {
+      const lvLabels = Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => [k, CONSTANTS.MANAGEMENT_LEVELS[k].label]);
+      const numIn = (id, v) => '<input type="number" min="1" max="3650" id="' + id + '" value="' + v + '" style="width:90px;" aria-label="' + id + '">';
+      html += '<div class="panel" id="thresholdSection"><div class="panel-title">' + icon('clock') + ' 점검 기준 일수</div>' +
+        '<p class="help-text" style="margin-bottom:10px;">대시보드의 "미접촉 대상자"와 "정기 재사정 필요", 서비스계획 점검 알림이 몇 일을 기준으로 뜰지 정합니다. 숫자를 비우거나 잘못 입력하면 기본값이 적용됩니다.</p>' +
+        '<table><thead><tr><th scope="col">관리수준</th><th scope="col">대면 접촉 공백(일)</th><th scope="col">정기 재사정 주기(일)</th></tr></thead><tbody>' +
+        lvLabels.map(([k, l]) => '<tr><th scope="row" style="text-align:left;">' + l + '</th><td>' + numIn('thGap_' + k, CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL[k]) + '</td><td>' + numIn('thRe_' + k, CONSTANTS.REASSESSMENT_INTERVAL_DAYS_BY_LEVEL[k]) + '</td></tr>').join('') +
+        '</tbody></table>' +
+        '<div class="field" style="margin-top:10px;"><label>서비스계획 점검 예고 (다음 점검일 며칠 전부터 알릴지)</label>' + numIn('thPlanSoon', CONSTANTS.PLAN_REVIEW_SOON_DAYS) + '</div>' +
+        '<div style="display:flex;gap:8px;"><button class="btn btn-primary btn-sm" id="saveThresholdBtn">저장</button><button class="btn btn-sm" id="resetThresholdBtn">기본값으로 되돌리기</button></div></div>';
+    }
+
     html += '<div class="panel" id="recoverySection"><div class="panel-title">' + icon('shield') + ' 비밀번호 복구 코드</div>' +
       '<p class="help-text" style="margin-bottom:10px;">비밀번호를 잊으면 기록을 열 수 없습니다. 복구 코드를 만들어 종이에 적거나 인쇄해 안전한 곳에 보관해 두면, 비밀번호를 잊어도 이 코드로 기록을 열고 새 비밀번호를 정할 수 있습니다. 코드는 만들 때 한 번만 보여 드리며, 코드를 아는 사람은 누구나 기록을 열 수 있으니 잘 보관해 주세요.</p>' +
       '<p style="font-size:0.88rem;margin-bottom:10px;">상태: <strong id="recoveryStatusText">확인 중…</strong></p>' +
@@ -8582,6 +8644,21 @@ const Views = {
     document.getElementById('autoLockSelect').onchange = async (e) => {
       await Storage.setSetting('autoLockMinutes', Number(e.target.value));
       toast('자동 잠금 시간이 변경되었습니다.');
+    };
+    document.getElementById('saveThresholdBtn').onclick = async () => {
+      const v = { contactGap: {}, reassess: {}, planSoon: document.getElementById('thPlanSoon').value };
+      Object.keys(CONSTANTS.MANAGEMENT_LEVELS).forEach(k => {
+        v.contactGap[k] = document.getElementById('thGap_' + k).value;
+        v.reassess[k] = document.getElementById('thRe_' + k).value;
+      });
+      await Thresholds.save(v);
+      toast('점검 기준 일수를 저장했습니다.');
+      UI.renderCurrentView();
+    };
+    document.getElementById('resetThresholdBtn').onclick = async () => {
+      await Thresholds.reset();
+      toast('기본값으로 되돌렸습니다.');
+      UI.renderCurrentView();
     };
     (async () => {
       const rw = await Storage.getSetting('recoveryWrap');
@@ -9514,6 +9591,7 @@ async function initApp(){
   await OrgInfo.init();
   await FontSize.init();
   await DashboardPrefs.init();
+  await Thresholds.init();
   await SimpleMode.init();
   UI.applySimpleModeNav();
 
