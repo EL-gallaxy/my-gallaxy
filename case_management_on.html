@@ -1154,6 +1154,18 @@ const CONSTANTS = {
   REFERRAL_SOURCES: ['본인', '가족', '정신의료기관', '타 기관 의뢰', '행정기관(경찰·소방·주민센터 등)', '기타'],
   CLOSURE_REASONS: ['자립/목표 달성', '타 기관 이관', '장기 입원', '관할지역 전출', '사망', '연락두절', '본인 거부', '기타'],
   RESOURCE_TYPES: ['정신재활시설(주간재활 등)', '직업재활시설', '정신의료기관', '사회복지관', '자활센터', '주거지원', '기타'],
+  // 자원연계 결과 추적 — 의뢰한 뒤 결과를 확인했는지까지 남긴다. 상태가 비어 있는 예전 기록은 추적 대상이 아니다.
+  REFERRAL_STATUSES: {
+    referred:  { label: '⏳ 의뢰함(결과 대기)', badgeClass: 'badge-pending' },
+    connected: { label: '✅ 연계 완료',         badgeClass: 'badge-temporary' },
+    declined:  { label: '🚫 대상자 거절',       badgeClass: 'badge-draft' },
+    rejected:  { label: '⛔ 기관 수용 불가',    badgeClass: 'badge-crisis' },
+    ended:     { label: '🔚 이용 종료',         badgeClass: 'badge-completed' },
+    unknown:   { label: '❔ 결과 확인 불가',    badgeClass: 'badge-draft' }
+  },
+  REFERRAL_CHECK_DAYS: 14,
+  // 결과 확인 예정일이 이 일수 안으로 다가오면 대시보드에서 미리 알려준다.
+  REFERRAL_CHECK_SOON_DAYS: 7,
   ADMISSION_TYPES: ['입원', '퇴원'],
   // 정신건강복지법상 입원 형태 — 입원 기록에만 붙는다.
   ADMISSION_KINDS: ['자의입원', '동의입원', '보호입원', '행정입원', '응급입원', '기타·미상'],
@@ -1448,7 +1460,7 @@ const FontSize = {
 const DashboardPrefs = {
   WIDGETS: {
     crisis: icon('siren') + ' 위기관리 대상자 현황', overdue: icon('alertTriangle') + ' 기한 초과 후속조치', gap: icon('clock') + ' 미접촉 대상자',
-    planReview: icon('clipboardList') + ' 서비스계획 점검', inpatient: icon('building') + ' 입원 중 대상자', medRenewal: icon('pill') + ' 복약 갱신 임박', reassessment: icon('clipboardList') + ' 정기 재사정 필요', safetyGap: icon('shield') + ' 안전 정보 공백 점검',
+    referral: icon('link') + ' 연계 결과 확인', planReview: icon('clipboardList') + ' 서비스계획 점검', inpatient: icon('building') + ' 입원 중 대상자', medRenewal: icon('pill') + ' 복약 갱신 임박', reassessment: icon('clipboardList') + ' 정기 재사정 필요', safetyGap: icon('shield') + ' 안전 정보 공백 점검',
     today: icon('clock') + ' 오늘 할 일', draft: icon('edit') + ' 미완성 SOAP', recent: '최근 기록', dataManage: '데이터 관리'
   },
   hidden: {},
@@ -1866,16 +1878,63 @@ const Clients = {
     await Storage.saveEncrypted('clients', client);
   },
 
-  async addResourceLink(id, { type, name, contact, note, date }){
+  // 상태가 "의뢰함"이면 결과 확인 예정일이 필요하다(비우면 의뢰일 + 14일). 그 외 상태에서는 비운다.
+  referralTracking(status, checkDate, date){
+    status = CONSTANTS.REFERRAL_STATUSES[status] ? status : '';
+    return { status, checkDate: status === 'referred' ? (checkDate || Utils.addDaysStr(date || Utils.todayStr(), CONSTANTS.REFERRAL_CHECK_DAYS)) : '' };
+  },
+  async addResourceLink(id, { type, name, contact, note, date, status, checkDate }){
     const client = State.clients.get(id);
     if (!client) return;
     client.resourceLinks = client.resourceLinks || [];
-    client.resourceLinks.push({
+    const when = date || Utils.todayStr();
+    client.resourceLinks.push(Object.assign({
       id: Utils.uid('res'), type: type || CONSTANTS.RESOURCE_TYPES[0],
       name: (name || '').trim(), contact: (contact || '').trim(),
-      note: (note || '').trim(), date: date || Utils.todayStr()
-    });
+      note: (note || '').trim(), date: when
+    }, this.referralTracking(status, checkDate, when)));
     await Storage.saveEncrypted('clients', client);
+  },
+  // 결과 기록 — 결과를 확인했으면 상태를 바꾸고, 아직 회신이 없으면(waiting) 다음 확인일만 미룬다.
+  // 대상자 거절·기관 수용 불가이면 대안 연계를 검토하는 후속조치를 함께 등록할 수 있다.
+  async recordReferralResult(id, linkId, { result, resultDate, note, nextCheckDate, altFollowUp }){
+    const client = State.clients.get(id);
+    const link = client && (client.resourceLinks || []).find(r => r.id === linkId);
+    if (!link) throw new Error('연계 기록을 찾을 수 없습니다.');
+    const when = resultDate || Utils.todayStr();
+    if (result === 'waiting'){
+      if (!nextCheckDate) throw new Error('다음 확인 예정일을 입력해 주세요.');
+      link.status = 'referred';
+      link.checkDate = nextCheckDate;
+      link.lastCheckDate = when;
+    } else if (CONSTANTS.REFERRAL_STATUSES[result] && result !== 'referred'){
+      link.status = result;
+      link.checkDate = '';
+      link.resultDate = when;
+      link.resultNote = (note || '').trim();
+      if (altFollowUp && (result === 'declined' || result === 'rejected')){
+        await FollowUps.add({ clientId: id, type: '기타', text: '대안 연계 검토: ' + (link.name || link.type), dueDate: Utils.addDaysStr(when, 7) });
+      }
+    } else {
+      throw new Error('결과를 선택해 주세요.');
+    }
+    await Storage.saveEncrypted('clients', client);
+  },
+  // 결과 확인이 필요한 연계 — 확인 예정일이 지났거나 며칠 안으로 다가온 "의뢰함" 건(종결 대상자 제외).
+  getPendingReferrals(){
+    const today = Utils.todayStr();
+    const limit = Utils.addDaysStr(today, CONSTANTS.REFERRAL_CHECK_SOON_DAYS);
+    const results = [];
+    this.list().forEach(c => {
+      if (c.status === 'closed') return;
+      (c.resourceLinks || []).forEach(r => {
+        if (r.status !== 'referred') return;
+        const due = r.checkDate || Utils.addDaysStr(r.date, CONSTANTS.REFERRAL_CHECK_DAYS);
+        if (due > limit) return;
+        results.push({ clientId: c.id, alias: c.alias, link: r, dueDate: due, overdue: due < today });
+      });
+    });
+    return results.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   },
   async removeResourceLink(id, linkId){
     const client = State.clients.get(id);
@@ -3160,7 +3219,7 @@ const Search = {
       push(c, '종결정보', c.closedNote);
       (c.managementHistory || []).forEach(h => push(c, '관리수준 이력', h.reason));
       (c.emergencyContacts || []).forEach(ec => push(c, '보호자·비상연락처', [ec.name, ec.relation, ec.phone, ec.note].filter(Boolean).join(' · ')));
-      (c.resourceLinks || []).forEach(r => push(c, '자원연계 현황', [r.type, r.name, r.contact, r.note].filter(Boolean).join(' · ')));
+      (c.resourceLinks || []).forEach(r => push(c, '자원연계 현황', [r.type, r.name, r.contact, r.note, (CONSTANTS.REFERRAL_STATUSES[r.status] || {}).label, r.resultNote].filter(Boolean).join(' · ')));
       (c.crisisEvents || []).forEach(e => push(c, '위기개입 기록', [e.type, e.description, e.action].filter(Boolean).join(' · ')));
       (c.medications || []).forEach(m => push(c, '복약 현황', [m.name, m.dose, m.hospital, m.note].filter(Boolean).join(' · ')));
       (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · ')));
@@ -3240,6 +3299,16 @@ const Stats = {
     let familySessionCount = 0;
     clients.forEach(c => (c.familySessions || []).forEach(fs => { if ((fs.date || '').startsWith(monthStr)) familySessionCount++; }));
 
+    // 자원연계 결과 — 해당 기간에 의뢰한 건의 현재 상태별 건수(상태를 기록하지 않은 예전 건은 따로 센다).
+    const referralStatusCounts = {};
+    let referralTotal = 0;
+    clients.forEach(c => (c.resourceLinks || []).forEach(r => {
+      if (!(r.date || '').startsWith(monthStr)) return;
+      referralTotal++;
+      const key = CONSTANTS.REFERRAL_STATUSES[r.status] ? r.status : 'none';
+      referralStatusCounts[key] = (referralStatusCounts[key] || 0) + 1;
+    }));
+
     const closureReasonCounts = {};
     closures.forEach(c => { closureReasonCounts[c.closedReason || '기타'] = (closureReasonCounts[c.closedReason || '기타'] || 0) + 1; });
 
@@ -3269,7 +3338,7 @@ const Stats = {
       levelImprovedCount, levelWorsenedCount,
       totalSoaps: soapsInMonth.length,
       contactTypeCounts,
-      subjectCounts, familySessionCount
+      subjectCounts, familySessionCount, referralStatusCounts, referralTotal
     };
   },
 
@@ -3354,8 +3423,10 @@ const CSV = {
       ['해당월 총 상담건수', report.totalSoaps],
       ['본인 상담', report.subjectCounts.client || 0],
       ['가족·보호자 상담', report.subjectCounts.family || 0],
-      ['가족 상담 기록(별도 양식)', report.familySessionCount || 0]
-    ];
+      ['가족 상담 기록(별도 양식)', report.familySessionCount || 0],
+      ['자원연계 의뢰 건수', report.referralTotal || 0]
+    ].concat(Object.keys(CONSTANTS.REFERRAL_STATUSES).map(k => ['자원연계 - ' + CONSTANTS.REFERRAL_STATUSES[k].label.replace(/^\S+\s/, ''), (report.referralStatusCounts || {})[k] || 0]))
+      .concat([['자원연계 - 상태 미기록', (report.referralStatusCounts || {}).none || 0]]);
     Object.keys(report.contactTypeCounts).forEach(k => rows.push([k + ' 상담', report.contactTypeCounts[k]]));
     Object.keys(report.closureReasonCounts).forEach(k => rows.push(['종결사유: ' + k, report.closureReasonCounts[k]]));
     this.download('monthly_report_' + report.month + '.csv', this.build(headers, rows));
@@ -3376,8 +3447,10 @@ const CSV = {
       ['연간 총 상담건수', report.totalSoaps],
       ['본인 상담', report.subjectCounts.client || 0],
       ['가족·보호자 상담', report.subjectCounts.family || 0],
-      ['가족 상담 기록(별도 양식)', report.familySessionCount || 0]
-    ];
+      ['가족 상담 기록(별도 양식)', report.familySessionCount || 0],
+      ['자원연계 의뢰 건수', report.referralTotal || 0]
+    ].concat(Object.keys(CONSTANTS.REFERRAL_STATUSES).map(k => ['자원연계 - ' + CONSTANTS.REFERRAL_STATUSES[k].label.replace(/^\S+\s/, ''), (report.referralStatusCounts || {})[k] || 0]))
+      .concat([['자원연계 - 상태 미기록', (report.referralStatusCounts || {}).none || 0]]);
     Object.keys(report.contactTypeCounts).forEach(k => rows.push([k + ' 상담', report.contactTypeCounts[k]]));
     Object.keys(report.closureReasonCounts).forEach(k => rows.push(['종결사유: ' + k, report.closureReasonCounts[k]]));
     report.monthlyBreakdown.forEach(m => rows.push([m.month + ' 상담건수', m.count]));
@@ -3970,7 +4043,10 @@ const Views = {
     };
     push(c.registrationDate, '', '📝', '등록', c.referralSource ? '의뢰경로: ' + c.referralSource : '');
     (c.admissions || []).forEach(a => push(a.date, '', a.type === '퇴원' ? '🚪' : '🏥', a.type + (a.kind ? '(' + a.kind + ')' : ''), a.hospital || ''));
-    (c.resourceLinks || []).forEach(r => push(r.date, '', '🔗', '자원연계', [r.type, r.name].filter(Boolean).join(' · ')));
+    (c.resourceLinks || []).forEach(r => {
+      push(r.date, '', '🔗', '자원연계', [r.type, r.name].filter(Boolean).join(' · '));
+      if (r.resultDate) push(r.resultDate, '', '🔗', '연계 결과', [r.name, (CONSTANTS.REFERRAL_STATUSES[r.status] || {}).label, r.resultNote].filter(Boolean).join(' · '));
+    });
     (c.crisisEvents || []).forEach(ev => push(ev.date, ev.time || '', '⚠', '위기개입: ' + ev.type, ev.description || ''));
     (c.medications || []).forEach(m => push(m.date, '', '💊', '복약 등록', [m.name, m.dose].filter(Boolean).join(' ')));
     (c.caseConferences || []).forEach(cf => push(cf.date, '', '🗂', '사례회의', cf.decision || cf.discussion || ''));
@@ -4118,6 +4194,7 @@ const Views = {
     const medRenewals = Clients.getUpcomingMedicationRenewals(CONSTANTS.MEDICATION_RENEWAL_ALERT_DAYS);
     const inpatients = Clients.getInpatients();
     const planReviews = Clients.getPlanReviews();
+    const pendingReferrals = Clients.getPendingReferrals();
     const crisisClients = Clients.list().filter(c => c.managementLevel === 'crisis' && c.status !== 'closed');
     const reassessGaps = Clients.reassessmentGapList();
     const safetyGaps = Clients.safetyGapList();
@@ -4154,6 +4231,7 @@ const Views = {
       '<button class="summary-card upcoming" data-goto="schedule" data-filter="upcoming"><div class="num">' + upcomingCount + '</div><div class="label">' + icon('calendar', { size: 15 }) + ' 예정 일정</div></button>' +
       (hide('gap') ? '' : '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">' + icon('clock', { size: 15 }) + ' 미접촉 대상자</div></button>') +
       (hide('crisis') ? '' : '<button class="summary-card overdue" data-scroll="crisisSection"><div class="num">' + crisisClients.length + '</div><div class="label">' + icon('siren', { size: 15 }) + ' 위기관리 대상자</div></button>') +
+      (hide('referral') ? '' : '<button class="summary-card gap" data-scroll="referralSection"><div class="num">' + pendingReferrals.length + '</div><div class="label">' + icon('link', { size: 15 }) + ' 연계 결과 확인</div></button>') +
       (hide('planReview') ? '' : '<button class="summary-card gap" data-scroll="planReviewSection"><div class="num">' + planReviews.length + '</div><div class="label">' + icon('clipboardList', { size: 15 }) + ' 서비스계획 점검</div></button>') +
       (hide('inpatient') ? '' : '<button class="summary-card gap" data-scroll="inpatientSection"><div class="num">' + inpatients.length + '</div><div class="label">' + icon('building', { size: 15 }) + ' 입원 중 대상자</div></button>') +
       (hide('medRenewal') ? '' : '<button class="summary-card overdue" data-scroll="medRenewalSection"><div class="num">' + medRenewals.length + '</div><div class="label">' + icon('pill', { size: 15 }) + ' 복약 갱신 임박</div></button>') +
@@ -4249,6 +4327,17 @@ const Views = {
       if (p.count === 0){ clearLabels.push(p.clearLabel); return; }
       html += '<div class="panel" id="' + p.id + '"><div class="panel-title">' + p.title + '</div>' + p.body() + '</div>';
     });
+    if (!hide('referral') && pendingReferrals.length){
+      html += '<div class="panel" id="referralSection"><div class="panel-title">' + icon('link') + ' 연계 결과 확인 (예정일 ' + CONSTANTS.REFERRAL_CHECK_SOON_DAYS + '일 이내 또는 경과)</div>';
+      pendingReferrals.forEach(r => {
+        const waited = Math.max(0, Math.round((new Date(Utils.todayStr()) - new Date(r.link.date)) / 86400000));
+        html += '<div class="gap-row" data-goto-client="' + r.clientId + '" style="cursor:pointer;">' +
+          '<strong>' + Utils.escapeHtml(r.clientId) + '</strong>' + (r.alias ? ' (' + Utils.escapeHtml(r.alias) + ')' : '') + ' · ' + Utils.escapeHtml(r.link.name || r.link.type) +
+          (r.overdue ? ' <span class="badge badge-crisis">⏰ 확인 경과</span>' : ' <span class="badge badge-pending">⏳ 확인 임박</span>') +
+          '<br><span style="font-size:0.82rem;">의뢰일 ' + r.link.date + ' (' + waited + '일째 결과 대기) · 확인 예정일 ' + r.dueDate + '</span></div>';
+      });
+      html += '</div>';
+    }
     if (!hide('planReview') && planReviews.length){
       html += '<div class="panel" id="planReviewSection"><div class="panel-title">' + icon('clipboardList') + ' 서비스계획 점검 (다음 점검일 ' + CONSTANTS.PLAN_REVIEW_SOON_DAYS + '일 이내)</div>';
       planReviews.forEach(r => {
@@ -4869,11 +4958,17 @@ const Views = {
       if (resourceLinks.length === 0){
         historyHtml += '<div class="empty-msg">연계된 자원이 없습니다.</div>';
       } else {
+        const todayR = Utils.todayStr();
         resourceLinks.forEach(r => {
+          const rs = CONSTANTS.REFERRAL_STATUSES[r.status];
+          const dueR = r.status === 'referred' ? (r.checkDate || Utils.addDaysStr(r.date, CONSTANTS.REFERRAL_CHECK_DAYS)) : '';
           historyHtml += '<div class="list-row"><div class="list-row-main">' +
-            '<div class="row-title">' + r.date + ' · ' + Utils.escapeHtml(r.type) + (r.name ? ' · ' + Utils.escapeHtml(r.name) : '') + '</div>' +
+            '<div class="row-title">' + r.date + ' · ' + Utils.escapeHtml(r.type) + (r.name ? ' · ' + Utils.escapeHtml(r.name) : '') +
+            (rs ? ' <span class="badge ' + rs.badgeClass + '">' + rs.label + '</span>' : '') + '</div>' +
             '<div class="row-sub">' + [r.contact, r.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
-            '</div><div class="row-actions"><button class="btn btn-sm" data-edit-resource="' + r.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
+            (dueR ? '<div class="row-sub">결과 확인 예정일: ' + dueR + (dueR < todayR ? ' <span class="badge badge-crisis">⏰ 확인 경과</span>' : '') + (r.lastCheckDate ? ' · 마지막 확인 ' + r.lastCheckDate + '(회신 없음)' : '') + '</div>' : '') +
+            (r.resultDate ? '<div class="row-sub">결과 확인일 ' + r.resultDate + (r.resultNote ? ': ' + Utils.escapeHtml(r.resultNote) : '') + '</div>' : '') +
+            '</div><div class="row-actions"><button class="btn btn-sm btn-primary" data-res-result="' + r.id + '">결과 기록</button><button class="btn btn-sm" data-edit-resource="' + r.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
         });
       }
       historyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4882,7 +4977,10 @@ const Views = {
         '<div class="field"><label>기관/자원명</label><input type="text" id="resName" list="resDirNameList">' +
         '<datalist id="resDirNameList">' + ResourceDirectory.list().map(r => '<option value="' + Utils.escapeHtml(r.name) + '">').join('') + '</datalist></div>' +
         '<div class="field"><label>연락처(선택)</label><input type="text" id="resContact"></div>' +
-        '<div class="field"><label>날짜</label><input type="date" id="resDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field"><label>의뢰일(연계일)</label><input type="date" id="resDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div class="field"><label>연계 상태</label><select id="resStatus"><option value="">(기록 안 함)</option>' +
+        Object.keys(CONSTANTS.REFERRAL_STATUSES).map(k => '<option value="' + k + '"' + (k === 'referred' ? ' selected' : '') + '>' + CONSTANTS.REFERRAL_STATUSES[k].label + '</option>').join('') + '</select></div>' +
+        '<div class="field" id="resCheckWrap"><label>결과 확인 예정일</label><input type="date" id="resCheckDate" value="' + Utils.addDaysStr(Utils.todayStr(), CONSTANTS.REFERRAL_CHECK_DAYS) + '"></div>' +
         '<div class="field full"><label>메모(선택)</label><input type="text" id="resNote"></div></div>' +
         (ResourceDirectory.list().length ? '<p class="help-text" style="margin:-4px 0 10px;">기관명을 입력하면 기관주소록에 등록된 연락처가 자동으로 채워집니다.</p>' : '') +
         '<button class="btn btn-sm" id="addResourceBtn">＋ 자원연계 추가</button></details>';
@@ -5372,8 +5470,12 @@ const Views = {
           );
         } },
       { attr: 'data-edit-resource', list: 'resourceLinks', btn: 'addResourceBtn', done: '자원연계를 수정했습니다.',
-        fill: r => { set('resType', r.type); set('resName', r.name); set('resContact', r.contact); set('resDate', r.date); set('resNote', r.note); },
-        read: () => { need(val('resName').trim(), '기관/자원명을 입력해 주세요.'); return { type: val('resType'), name: val('resName').trim(), contact: val('resContact').trim(), date: val('resDate') || Utils.todayStr(), note: val('resNote').trim() }; } },
+        fill: r => {
+          set('resType', r.type); set('resName', r.name); set('resContact', r.contact); set('resDate', r.date); set('resNote', r.note);
+          set('resStatus', r.status || ''); set('resCheckDate', r.checkDate || Utils.addDaysStr(r.date || Utils.todayStr(), CONSTANTS.REFERRAL_CHECK_DAYS));
+          document.getElementById('resStatus').dispatchEvent(new Event('change'));
+        },
+        read: () => { need(val('resName').trim(), '기관/자원명을 입력해 주세요.'); return Object.assign(Clients.referralTracking(val('resStatus'), val('resCheckDate'), val('resDate')), { type: val('resType'), name: val('resName').trim(), contact: val('resContact').trim(), date: val('resDate') || Utils.todayStr(), note: val('resNote').trim() }); } },
       { attr: 'data-edit-medication', list: 'medications', btn: 'addMedicationBtn', done: '복약 정보를 수정했습니다.',
         fill: m => { set('medName', m.name); set('medDose', m.dose); set('medHospital', m.hospital); set('medDate', m.date); set('medNextRx', m.nextRxDate); set('medSideEffects', m.sideEffects); set('medNote', m.note); },
         read: () => { need(val('medName').trim(), '약물명을 입력해 주세요.'); return { name: val('medName').trim(), dose: val('medDose').trim(), hospital: val('medHospital').trim(), date: val('medDate') || Utils.todayStr(), nextRxDate: val('medNextRx'), sideEffects: val('medSideEffects').trim(), note: val('medNote').trim() }; } },
@@ -5634,6 +5736,16 @@ const Views = {
       if (entry.phone) document.getElementById('resContact').value = entry.phone;
     });
     const addResourceBtn = document.getElementById('addResourceBtn');
+    // 결과 확인 예정일은 "의뢰함" 상태일 때만 보인다.
+    const syncResStatus = () => {
+      const wrap = document.getElementById('resCheckWrap');
+      if (wrap) wrap.classList.toggle('hidden', document.getElementById('resStatus').value !== 'referred');
+    };
+    if (addResourceBtn){
+      document.getElementById('resStatus').onchange = syncResStatus;
+      syncResStatus();
+    }
+    document.querySelectorAll('[data-res-result]').forEach(el => { el.onclick = () => Views.openReferralResultModal(id, el.dataset.resResult); });
     if (addResourceBtn) addResourceBtn.onclick = async () => {
       const name = document.getElementById('resName').value;
       if (!name.trim()){ toast('기관/자원명을 입력해 주세요.', 'error'); return; }
@@ -5641,6 +5753,7 @@ const Views = {
         type: document.getElementById('resType').value,
         name, contact: document.getElementById('resContact').value,
         date: document.getElementById('resDate').value,
+        status: document.getElementById('resStatus').value, checkDate: document.getElementById('resCheckDate').value,
         note: document.getElementById('resNote').value
       });
       toast('자원연계를 추가했습니다.');
@@ -7329,6 +7442,10 @@ const Views = {
         { label: '가족 상담 기록', value: r.familySessionCount || 0 }
       ]);
 
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">자원연계 결과 (의뢰 ' + (r.referralTotal || 0) + '건, 현재 상태 기준)</p>' +
+      (r.referralTotal ? Views.renderBarChart(Object.keys(CONSTANTS.REFERRAL_STATUSES).map(k => ({ label: CONSTANTS.REFERRAL_STATUSES[k].label.replace(/^\S+\s/, ''), value: (r.referralStatusCounts || {})[k] || 0 }))
+        .concat([{ label: '상태 미기록', value: (r.referralStatusCounts || {}).none || 0 }])) : '<div class="empty-msg">해당 기간에 의뢰한 자원연계가 없습니다.</div>');
+
     const reasonKeys = Object.keys(r.closureReasonCounts);
     if (reasonKeys.length){
       html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">종결 사유</p>' +
@@ -7388,6 +7505,10 @@ const Views = {
         { label: '가족·보호자', value: r.subjectCounts.family || 0 },
         { label: '가족 상담 기록', value: r.familySessionCount || 0 }
       ]);
+
+    html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">자원연계 결과 (의뢰 ' + (r.referralTotal || 0) + '건, 현재 상태 기준)</p>' +
+      (r.referralTotal ? Views.renderBarChart(Object.keys(CONSTANTS.REFERRAL_STATUSES).map(k => ({ label: CONSTANTS.REFERRAL_STATUSES[k].label.replace(/^\S+\s/, ''), value: (r.referralStatusCounts || {})[k] || 0 }))
+        .concat([{ label: '상태 미기록', value: (r.referralStatusCounts || {}).none || 0 }])) : '<div class="empty-msg">해당 기간에 의뢰한 자원연계가 없습니다.</div>');
 
     const reasonKeys = Object.keys(r.closureReasonCounts);
     if (reasonKeys.length){
@@ -8214,6 +8335,56 @@ const Views = {
         toast(Utils.formatSoapDate(src) + ' 기록을 불러왔습니다. 오늘 상황에 맞게 고쳐 쓰세요.');
       };
     });
+  },
+
+  // 연계 결과 기록 — 결과를 확인했으면 상태를 바꾸고, 아직 회신이 없으면 다음 확인일만 미룬다.
+  openReferralResultModal(clientId, linkId){
+    const c = Clients.get(clientId);
+    const link = c && (c.resourceLinks || []).find(r => r.id === linkId);
+    if (!link) return;
+    const e = Utils.escapeHtml;
+    const today = Utils.todayStr();
+    const results = Object.keys(CONSTANTS.REFERRAL_STATUSES).filter(k => k !== 'referred');
+    UI.openModal(
+      '<h3>연계 결과 기록 — ' + e(link.name || link.type) + '</h3>' +
+      '<p class="help-text" style="margin-bottom:10px;">의뢰일 ' + e(link.date) + (link.status ? ' · 현재 상태: ' + e(CONSTANTS.REFERRAL_STATUSES[link.status].label) : '') + '</p>' +
+      '<div class="field"><label>결과</label><select id="rrResult"><option value="">(선택)</option>' +
+      '<option value="waiting">아직 회신 없음 — 다음 확인일 다시 잡기</option>' +
+      results.map(k => '<option value="' + k + '">' + CONSTANTS.REFERRAL_STATUSES[k].label + '</option>').join('') + '</select></div>' +
+      '<div class="form-grid"><div class="field"><label>확인일</label><input type="date" id="rrDate" value="' + today + '"></div>' +
+      '<div class="field hidden" id="rrNextWrap"><label>다음 확인 예정일</label><input type="date" id="rrNext" value="' + Utils.addDaysStr(today, CONSTANTS.REFERRAL_CHECK_SOON_DAYS) + '"></div></div>' +
+      '<div class="field" id="rrNoteWrap"><label>결과·사유 메모(선택)</label><textarea id="rrNote" style="min-height:60px;" placeholder="예: 대기자 명단 등록, 대상자가 이용을 원하지 않음"></textarea></div>' +
+      '<label class="field-inline hidden" id="rrAltWrap" style="margin-bottom:10px;"><input type="checkbox" id="rrAlt" checked> 대안 연계를 검토하는 후속조치를 등록(7일 뒤)</label>' +
+      '<div class="error-msg hidden" id="rrError" role="alert"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="rrCancel">취소</button><button class="btn btn-primary" id="rrSave">저장</button></div>'
+    );
+    const sync = () => {
+      const v = document.getElementById('rrResult').value;
+      document.getElementById('rrNextWrap').classList.toggle('hidden', v !== 'waiting');
+      document.getElementById('rrNoteWrap').classList.toggle('hidden', v === 'waiting');
+      document.getElementById('rrAltWrap').classList.toggle('hidden', !(v === 'declined' || v === 'rejected'));
+    };
+    document.getElementById('rrResult').onchange = sync;
+    sync();
+    document.getElementById('rrCancel').onclick = () => UI.closeModal();
+    document.getElementById('rrSave').onclick = async () => {
+      try{
+        await Clients.recordReferralResult(clientId, linkId, {
+          result: document.getElementById('rrResult').value,
+          resultDate: document.getElementById('rrDate').value,
+          note: document.getElementById('rrNote').value,
+          nextCheckDate: document.getElementById('rrNext').value,
+          altFollowUp: document.getElementById('rrAlt').checked
+        });
+        UI.closeModal();
+        toast('연계 결과를 기록했습니다.');
+        UI.renderCurrentView();
+      }catch(err){
+        const box = document.getElementById('rrError');
+        box.textContent = err.message || '저장하지 못했습니다.';
+        box.classList.remove('hidden');
+      }
+    };
   },
 
   // 사례 종결 / 종결 정보 수정 — 종결 요약(결과·경과·사후관리 계획)과 사후 확인 일정을 함께 정한다.
