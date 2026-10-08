@@ -4336,6 +4336,33 @@ const Backup = {
     setInterval(() => Backup.refresh(), 60 * 60 * 1000);
   },
 
+  // 백업 파일 검증 — 실제로 복원하지 않고 파일이 온전한지, 안에 무엇이 몇 건 있는지, 이 기기의 키로 열리는지 확인한다.
+  async inspectFile(file){
+    const out = { ok: false, errors: [], counts: {}, exportedAt: '', light: false, rows: 0, opened: 0, failed: 0, sameKey: null };
+    let data;
+    try{ data = JSON.parse(await file.text()); }catch(e){ out.errors.push('JSON 형식이 아니거나 파일이 중간에 잘렸습니다.'); return out; }
+    if (!data || data.app !== 'case_management_on'){ out.errors.push('이 앱의 백업 파일이 아닙니다.'); return out; }
+    if (!data.settings || !data.settings.authSalt){ out.errors.push('비밀번호 정보(authSalt)가 없어 복원할 수 없습니다.'); return out; }
+    out.exportedAt = data.exportedAt || '';
+    out.light = !!data.attachmentsExcluded;
+    out.hasRecovery = !!data.settings.recoveryWrap;
+    for (const store of this.DATA_STORES){
+      const rows = data[store];
+      if (rows === undefined){ out.counts[store] = 0; continue; }
+      if (!Array.isArray(rows)){ out.errors.push(store + ' 항목 형식이 올바르지 않습니다.'); continue; }
+      out.counts[store] = rows.length;
+      for (const r of rows){
+        out.rows++;
+        if (!r || !r.id || !r.iv || !r.cipher){ out.failed++; continue; }
+        try{ await CryptoModule.decryptJSON(Auth.cryptoKey, r.iv, r.cipher); out.opened++; }
+        catch(e){ out.failed++; }
+      }
+    }
+    out.sameKey = out.rows === 0 ? null : out.failed === 0;
+    out.ok = out.errors.length === 0 && out.rows > 0 && out.failed === 0;
+    return out;
+  },
+
   async importFromFile(file){
     const text = await file.text();
     let data;
@@ -4361,6 +4388,114 @@ const Backup = {
     for (const row of (data.debriefings || [])) await Storage.idbPut('debriefings', row);
     // 복원한 직후의 상태는 그 백업 파일과 같으므로 "변경 없음"으로 돌려놓는다.
     await this.clearDirty();
+  }
+};
+
+/* =========================================================================
+   AUTO BACKUP  (지정한 폴더에 백업 파일을 알아서 저장) — 크롬의 폴더 접근 기능(File System Access API)을 쓴다.
+   폴더 핸들은 이 기기의 브라우저에만 저장되며 백업 파일에는 들어가지 않는다. 브라우저 보안상 앱을 다시 열면
+   폴더 접근을 한 번 다시 허용해야 할 수 있다. 파일은 암호화된 그대로 저장된다.
+   ========================================================================= */
+const AutoBackup = {
+  PREFIX: 'case_management_on_auto_',
+  handle: null, on: false, minutes: 30, keep: 7, lastAt: '', lastError: '', perm: 'none', busy: false, _timer: null,
+  isSupported(){ return typeof window.showDirectoryPicker === 'function'; },
+  async init(){
+    try{ this.handle = (await Storage.getSetting('autoBackupDir')) || null; }catch(e){ this.handle = null; }
+    this.on = !!this.handle && (await Storage.getSetting('autoBackupOn')) !== false;
+    const m = parseInt(await Storage.getSetting('autoBackupMinutes'), 10), k = parseInt(await Storage.getSetting('autoBackupKeep'), 10);
+    this.minutes = m >= 5 && m <= 1440 ? m : 30;
+    this.keep = k >= 1 && k <= 60 ? k : 7;
+    this.lastAt = (await Storage.getSetting('autoBackupLastAt')) || '';
+    await this.refreshPermission();
+  },
+  async refreshPermission(){
+    if (!this.handle || !this.on){ this.perm = 'none'; return this.perm; }
+    try{ this.perm = await this.handle.queryPermission({ mode: 'readwrite' }); }catch(e){ this.perm = 'denied'; }
+    UI.renderBackupChip();
+    return this.perm;
+  },
+  needsPermission(){ return this.on && !!this.handle && this.perm !== 'granted'; },
+  async chooseFolder(){
+    const h = await window.showDirectoryPicker({ mode: 'readwrite', id: 'case-backup' });
+    this.handle = h; this.on = true; this.lastError = '';
+    await Storage.setSetting('autoBackupDir', h);
+    await Storage.setSetting('autoBackupOn', true);
+    await this.refreshPermission();
+    return h;
+  },
+  async requestAccess(){
+    if (!this.handle) return false;
+    try{ this.perm = await this.handle.requestPermission({ mode: 'readwrite' }); }catch(e){ this.perm = 'denied'; }
+    UI.renderBackupChip();
+    return this.perm === 'granted';
+  },
+  async disable(){
+    this.on = false; this.handle = null; this.perm = 'none';
+    await Storage.idbDelete('settings', 'autoBackupDir');
+    await Storage.setSetting('autoBackupOn', false);
+    UI.renderBackupChip();
+  },
+  async saveOptions(minutes, keep){
+    const m = parseInt(minutes, 10), k = parseInt(keep, 10);
+    if (!(m >= 5 && m <= 1440)) throw new Error('간격은 5~1440분 사이로 입력해 주세요.');
+    if (!(k >= 1 && k <= 60)) throw new Error('보관 개수는 1~60개 사이로 입력해 주세요.');
+    this.minutes = m; this.keep = k;
+    await Storage.setSetting('autoBackupMinutes', m);
+    await Storage.setSetting('autoBackupKeep', k);
+  },
+  fileName(d){
+    d = d || new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return this.PREFIX + d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.json';
+  },
+  // 백업 파일을 폴더에 쓰고, 쓴 크기를 다시 확인한 뒤, 오래된 자동 백업 파일을 정리한다.
+  async runNow(){
+    if (this.busy) return null;
+    if (!this.handle) throw new Error('백업 폴더가 지정되지 않았습니다.');
+    this.busy = true;
+    try{
+      if ((await this.refreshPermission()) !== 'granted') throw new Error('백업 폴더 접근 허용이 필요합니다.');
+      const text = JSON.stringify(await Backup.exportAll());
+      const bytes = new TextEncoder().encode(text).length;
+      const name = this.fileName();
+      const fh = await this.handle.getFileHandle(name, { create: true });
+      const w = await fh.createWritable();
+      await w.write(text);
+      await w.close();
+      const written = await fh.getFile();
+      if (written.size !== bytes) throw new Error('저장한 파일 크기가 다릅니다. 폴더의 여유 공간을 확인해 주세요.');
+      const names = [];
+      for await (const [n, entry] of this.handle.entries()){ if (entry.kind === 'file' && n.startsWith(this.PREFIX) && n.endsWith('.json')) names.push(n); }
+      names.sort();
+      for (const old of names.slice(0, Math.max(0, names.length - this.keep))){ try{ await this.handle.removeEntry(old); }catch(e){ /* 지우지 못해도 백업 자체는 성공 */ } }
+      const now = new Date().toISOString();
+      this.lastAt = now; this.lastError = '';
+      await Storage.setSetting('autoBackupLastAt', now);
+      await Storage.setSetting('lastBackupAt', now);
+      await Storage.setSetting('lastFullBackupAt', now);
+      Backup.lastExportBytes = bytes;
+      await Backup.clearDirty();
+      await Backup.refresh();
+      return { name, bytes, kept: Math.min(names.length, this.keep) };
+    }catch(e){
+      this.lastError = e && e.message ? e.message : String(e);
+      throw e;
+    }finally{ this.busy = false; }
+  },
+  // 1분마다 확인한다: 바뀐 기록이 있고, 마지막 자동 백업 후 설정한 간격이 지났을 때만 저장한다.
+  async tick(force){
+    if (!this.on || !this.handle || !State.unlocked || this.busy) return;
+    if (Backup.dirtySince === null) return;
+    if (!force && this.lastAt && Date.now() - new Date(this.lastAt).getTime() < this.minutes * 60000) return;
+    if ((await this.refreshPermission()) !== 'granted') return;
+    try{ await this.runNow(); }catch(e){ console.error(e); }
+  },
+  start(){
+    if (this._timer) return;
+    this._timer = setInterval(() => this.tick(false), 60000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') this.tick(true); else this.refreshPermission(); });
+    this.tick(false);
   }
 };
 
@@ -4622,7 +4757,12 @@ const UI = {
     document.getElementById('confirmYesBtn').onclick = () => { UI.closeModal(); onYes(); };
   },
 
+  // 저장하지 않은 입력이 있는 편집 화면(Views._dirty)에서 다른 화면으로 가려 하면 한 번 확인한다.
   navigate(view, params){
+    if (Views._dirty){
+      UI.confirm('저장하지 않은 내용이 있습니다. 저장하지 않고 나갈까요?', () => { Views._dirty = false; UI.navigate(view, params); });
+      return;
+    }
     Views._rowLimits = {};
     State.currentView = view;
     State.currentParams = params || {};
@@ -4639,6 +4779,13 @@ const UI = {
     const btn = document.getElementById('backupChipBtn');
     if (!btn) return;
     const st = Backup.statusCached;
+    if (AutoBackup.needsPermission()){
+      btn.classList.remove('hidden');
+      btn.innerHTML = icon('database') + ' <span class="nav-label">자동 백업 허용</span>';
+      btn.title = '자동 백업 폴더(' + (AutoBackup.handle && AutoBackup.handle.name || '') + ') 접근을 허용해야 자동 백업이 계속됩니다. 누르면 허용을 요청합니다.';
+      btn.setAttribute('aria-label', '자동 백업 폴더 접근 허용');
+      return;
+    }
     btn.classList.toggle('hidden', !st.overdue);
     if (!st.overdue) return;
     const label = st.never ? '백업 필요' : '백업 ' + st.days + '일 경과';
@@ -5189,6 +5336,28 @@ const Views = {
     };
     const backupBannerBtn = document.getElementById('backupNowBannerBtn');
     if (backupBannerBtn) backupBannerBtn.onclick = doBackupNow;
+    const verifyBtn = document.getElementById('verifyBackupBtn');
+    const verifyInput = document.getElementById('verifyBackupInput');
+    if (verifyBtn && verifyInput){
+      verifyBtn.onclick = () => verifyInput.click();
+      verifyInput.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        UI.openModal('<h3>백업 파일 검증</h3><p class="help-text">파일을 검사하는 중입니다…</p>');
+        const r = await Backup.inspectFile(file);
+        const names = { clients: '대상자', soaps: 'SOAP 기록', followUps: '후속조치', schedules: '일정', resourceDirectory: '기관주소록', selfCareNotes: '자기돌봄·교육·슈퍼비전', debriefings: '디브리핑' };
+        UI.openModal('<h3>백업 파일 검증 결과</h3>' +
+          '<p style="font-size:0.95rem;margin-bottom:10px;">' + (r.ok ? '✅ <strong>온전한 백업 파일입니다.</strong> 모든 기록을 열어 확인했습니다.' : '⚠ <strong>문제가 있습니다.</strong>') + '</p>' +
+          (r.errors.length ? '<ul style="margin:0 0 10px 18px;">' + r.errors.map(x => '<li>' + Utils.escapeHtml(x) + '</li>').join('') + '</ul>' : '') +
+          (r.exportedAt ? '<p class="help-text">만든 시각: ' + Utils.escapeHtml(Utils.formatDateTime(r.exportedAt)) + (r.light ? ' · 가벼운 백업(첨부 제외)' : ' · 전체 백업') + '</p>' : '') +
+          (r.rows ? '<table><tbody>' + Object.keys(r.counts).map(k => '<tr><th scope="row" style="text-align:left;">' + names[k] + '</th><td>' + r.counts[k] + '건</td></tr>').join('') + '</tbody></table>' +
+            '<p style="font-size:0.88rem;margin-top:8px;">이 기기의 키로 열린 기록 ' + r.opened + '건 / 전체 ' + r.rows + '건' + (r.failed ? ' — <span style="color:var(--danger);">' + r.failed + '건은 열리지 않습니다. 다른 비밀번호로 만든 백업이거나 파일이 손상되었을 수 있습니다.</span>' : '') + '</p>' +
+            (r.hasRecovery ? '<p class="help-text">이 백업에는 복구 코드 정보가 들어 있습니다.</p>' : '<p class="help-text">이 백업에는 복구 코드 정보가 없습니다.</p>') : '') +
+          '<div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn" id="verifyCloseBtn">닫기</button></div>');
+        document.getElementById('verifyCloseBtn').onclick = () => UI.closeModal();
+        verifyInput.value = '';
+      };
+    }
     const importBtn = document.getElementById('importBackupBtn');
     const importInput = document.getElementById('importBackupInput');
     if (importBtn && importInput){
@@ -7180,19 +7349,20 @@ const Views = {
     const id = params.clientId;
     if (!Clients.get(id)) return;
     let dirty = false;
+    Views._dirty = false;
     // 화면이 다시 그려질 때 함께 사라지도록 #appMain이 아니라 편집 화면 안쪽 요소에 이벤트를 단다.
     const main = document.getElementById('planEditorRoot');
-    main.addEventListener('input', () => { dirty = true; });
-    main.addEventListener('change', () => { dirty = true; });
+    main.addEventListener('input', () => { dirty = true; Views._dirty = true; });
+    main.addEventListener('change', () => { dirty = true; Views._dirty = true; });
     const back = () => { Views._clientDetailTab = 'plan'; Views._clientDetailTabClientId = id; UI.navigate('clientDetail', { id }); };
     document.getElementById('cancelPlanBtn').onclick = () => {
-      if (dirty) UI.confirm('저장하지 않은 내용이 있습니다. 나갈까요?', back); else back();
+      if (dirty) UI.confirm('저장하지 않은 내용이 있습니다. 나갈까요?', () => { Views._dirty = false; back(); }); else back();
     };
     const addRow = (containerId, html) => {
       const box = document.getElementById(containerId);
       box.insertAdjacentHTML('beforeend', html);
       A11y.enhance(box);
-      dirty = true;
+      dirty = true; Views._dirty = true;
       const last = box.lastElementChild;
       const first = last.querySelector('input:not([type=date]), textarea, select');
       if (first) first.focus();
@@ -7232,7 +7402,7 @@ const Views = {
           if (src && src.status === 'active') await Clients.updateServicePlan(id, src.id, Object.assign({}, src, { status: 'ended', consent: src.consent }));
           toast(src ? '재수립한 서비스계획서를 저장했습니다. 이전 계획은 종료로 바꿨습니다.' : '서비스계획서를 저장했습니다.');
         }
-        dirty = false;
+        dirty = false; Views._dirty = false;
         back();
       }catch(e){ toast(e.message || '저장하지 못했습니다.', 'error'); }
     };
@@ -7374,6 +7544,13 @@ const Views = {
   // 긴 목록은 처음 100건만 그리고 "더 보기"로 늘린다 — 기록이 수천 건 쌓여도 화면 전환이 느려지지 않게 한다.
   ROW_PAGE: 100,
   _rowLimits: {},
+  _dirty: false,
+  // 편집 화면에서 입력이 생기면 표시한다(저장·삭제·나가기 확인 뒤에는 _dirty를 false로 되돌린다).
+  trackDirty(root){
+    Views._dirty = false;
+    const mark = () => { Views._dirty = true; };
+    root.querySelectorAll('input, textarea, select').forEach(el => { el.addEventListener('input', mark); el.addEventListener('change', mark); });
+  },
   rowLimit(key){ return Views._rowLimits[key] || Views.ROW_PAGE; },
   moreRowsHtml(key, total, shown){
     return total > shown ? '<p style="margin-top:10px;"><button class="btn btn-sm" data-more-rows="' + key + '">더 보기 (' + shown + ' / ' + total + '건 표시 중)</button></p>' : '';
@@ -7619,11 +7796,16 @@ const Views = {
     let autosaveTimer = null;
     const cancelAutosave = () => { if (autosaveTimer) clearTimeout(autosaveTimer); autosaveTimer = null; };
 
-    document.getElementById('soapBackBtn').onclick = () => {
+    Views.trackDirty(document.getElementById('appMain'));
+    const leaveSoap = () => {
+      Views._dirty = false;
       cancelAutosave();
       Views._draftCache = null;
       if (params.prefillClientId) UI.navigate('clientDetail', { id: params.prefillClientId });
       else UI.navigate('soapList', {});
+    };
+    document.getElementById('soapBackBtn').onclick = () => {
+      if (Views._dirty) UI.confirm('저장하지 않은 내용이 있습니다. 저장하지 않고 나갈까요?', leaveSoap); else leaveSoap();
     };
 
     document.querySelectorAll('.chip-check input').forEach(chk => {
@@ -7659,6 +7841,7 @@ const Views = {
         if (!current.clientId || !hasContent) return;
         try{
           await SoapModule.autosave(current);
+          Views._dirty = false;
           const el = document.getElementById('autosaveIndicator');
           if (el) el.textContent = '자동 저장됨 · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
         }catch(e){ console.error(e); }
@@ -7713,6 +7896,7 @@ const Views = {
         Views.confirmSoapDates(soap, async () => {
           try{
             await SoapModule.save(soap, false);
+            Views._dirty = false;
             cancelAutosave();
             Views._draftCache = null;
             toast('임시저장했습니다.');
@@ -7727,6 +7911,7 @@ const Views = {
         const doSave = async () => {
           try{
             await SoapModule.save(soap, true);
+            Views._dirty = false;
             cancelAutosave();
             Views._draftCache = null;
             toast('SOAP 기록을 저장했습니다.');
@@ -7742,6 +7927,7 @@ const Views = {
     };
     const delBtn = document.getElementById('deleteSoapBtn');
     if (delBtn) delBtn.onclick = () => UI.confirm('이 SOAP 기록을 삭제할까요?', async () => {
+      Views._dirty = false;
       cancelAutosave();
       const snap = SoapModule.snapshot(params.soapId);
       await SoapModule.remove(params.soapId);
@@ -9073,11 +9259,14 @@ const Views = {
     return d;
   },
   bindDebriefEditor(params){
-    const back = () => {
+    Views.trackDirty(document.getElementById('appMain'));
+    const leave = () => {
+      Views._dirty = false;
       Views._debriefDraft = null;
       if (params.eventId && params.clientId && !params.debriefId){ Views._clientDetailTab = 'safety'; Views._clientDetailTabClientId = params.clientId; UI.navigate('clientDetail', { id: params.clientId }); }
       else UI.navigate('debriefings', {});
     };
+    const back = () => { if (Views._dirty) UI.confirm('저장하지 않은 내용이 있습니다. 저장하지 않고 나갈까요?', leave); else leave(); };
     document.getElementById('dbBackBtn').onclick = back;
     document.querySelectorAll('.chip-check input').forEach(chk => chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked)));
     const syncKind = () => {
@@ -9096,8 +9285,7 @@ const Views = {
           try{
             const made = await Debriefings.save(d, document.getElementById('dbRegister').checked);
             toast(made ? '디브리핑을 저장하고 후속조치 ' + made + '건을 등록했습니다.' : '디브리핑을 저장했습니다.');
-            Views._debriefDraft = null;
-            if (params.eventId && !params.debriefId) back(); else UI.navigate('debriefings', {});
+            leave();
           }catch(err){ errBox.textContent = err.message || '저장하지 못했습니다.'; errBox.classList.remove('hidden'); }
         };
         const dw = Utils.dateWarning('디브리핑 날짜', d.date, { maxPastDays: 90 });
@@ -9113,6 +9301,7 @@ const Views = {
         const d = Views._readDebriefForm();
         await Debriefings.save(d, false);
         const note = await Debriefings.setSupervisionDone(cur.id, !cur.supervisionDone, d.supervisionAdvice);
+        Views._dirty = false;
         toast(!cur.supervisionDone ? (note ? '슈퍼비전에서 다룬 것으로 표시하고 교육·슈퍼비전 기록에 남겼습니다.' : '슈퍼비전에서 다룬 것으로 표시했습니다.') : '다시 안건으로 돌렸습니다.');
         UI.navigate('debriefEditor', { debriefId: cur.id });
       }catch(err){ errBox.textContent = err.message || '저장하지 못했습니다.'; errBox.classList.remove('hidden'); }
@@ -9135,6 +9324,7 @@ const Views = {
           const c = await Debriefings.convertToClient(d.id, { clientId: document.getElementById('cvId').value, alias: document.getElementById('cvAlias').value, managementLevel: document.getElementById('cvLevel').value });
           UI.closeModal();
           toast('대상자 ' + c.id + '(으)로 등록하고 위기개입 기록으로 옮겼습니다.');
+          Views._dirty = false;
           Views._debriefDraft = null;
           UI.navigate('clientDetail', { id: c.id });
         }catch(err){ const b = document.getElementById('cvError'); b.textContent = err.message || '전환하지 못했습니다.'; b.classList.remove('hidden'); }
@@ -9143,6 +9333,7 @@ const Views = {
     const delBtn = document.getElementById('dbDeleteBtn');
     if (delBtn) delBtn.onclick = () => UI.confirm('이 디브리핑을 삭제할까요?', async () => {
       await Debriefings.remove(Views._debriefDraft.id);
+      Views._dirty = false;
       Views._debriefDraft = null;
       toast('삭제했습니다.');
       UI.navigate('debriefings', {});
@@ -9181,7 +9372,7 @@ const Views = {
     // 패널이 많아 스크롤이 길어지므로, 페이지 상단에 각 패널로 바로 이동하는
     // 앵커 링크를 둔다(대시보드 요약카드의 data-scroll과 동일한 방식).
     const SETTINGS_SECTIONS = [
-      ['backupSection', '데이터 백업 및 복원'], ['printSettingsSection', '인쇄 문서 설정'],
+      ['backupSection', '데이터 백업 및 복원'], ['autoBackupSection', '자동 백업'], ['printSettingsSection', '인쇄 문서 설정'],
       ['tourSection', '앱 둘러보기'], ['simpleModeSection', '간소화 모드'],
       ['dashboardWidgetsSection', '대시보드 위젯 표시'], ['themeSection', '화면 테마'],
       ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['thresholdSection', '점검 기준 일수'], ['retentionSection', '기록 보관·파기'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
@@ -9214,7 +9405,24 @@ const Views = {
       '<button class="btn btn-sm" id="exportLightBackupBtn" title="첨부파일을 빼고 기록만 담은 가벼운 백업">⬇ 가벼운 백업 (첨부 제외)</button>' +
       '<button class="btn btn-sm" id="importBackupBtn">⬆ 백업 파일 불러오기</button>' +
       '<input type="file" id="importBackupInput" accept="application/json" class="hidden">' +
+      '<button class="btn btn-sm" id="verifyBackupBtn" title="복원하지 않고 파일이 온전한지만 확인">✔ 백업 파일 검증</button>' +
+      '<input type="file" id="verifyBackupInput" accept="application/json" class="hidden">' +
       '</div></div>';
+
+    html += '<div class="panel" id="autoBackupSection"><div class="panel-title">' + icon('database') + ' 자동 백업 (폴더 지정)</div>' +
+      (AutoBackup.isSupported()
+        ? '<p class="help-text" style="margin-bottom:10px;">백업 폴더를 한 번 지정해 두면, 기록이 바뀐 뒤 설정한 간격마다 그리고 창을 닫거나 다른 창으로 옮길 때 백업 파일이 그 폴더에 자동 저장됩니다. 클라우드 동기화 폴더(예: 구글 드라이브, 네이버 MYBOX)를 지정하면 PC가 고장 나도 안전합니다. 앱을 다시 열면 폴더 접근을 한 번 허용해야 할 수 있으며, 그때는 화면 위쪽에 "자동 백업 허용" 버튼이 나타납니다. 첨부파일까지 모두 담기 때문에 파일이 클 수 있습니다.</p>' +
+          '<p style="font-size:0.88rem;margin-bottom:6px;">폴더: <strong id="autoBackupFolderText">' + (AutoBackup.handle ? Utils.escapeHtml(AutoBackup.handle.name) : '지정 안 함') + '</strong>' + (AutoBackup.on ? '' : ' (꺼짐)') + '</p>' +
+          '<p style="font-size:0.88rem;margin-bottom:6px;">마지막 자동 백업: <strong id="autoBackupLastText">' + (AutoBackup.lastAt ? Utils.formatDateTime(AutoBackup.lastAt) : '아직 없음') + '</strong>' + (AutoBackup.needsPermission() ? ' · <span style="color:var(--danger);">폴더 접근 허용이 필요합니다</span>' : '') + '</p>' +
+          (AutoBackup.lastError ? '<p class="error-msg" role="alert">마지막 오류: ' + Utils.escapeHtml(AutoBackup.lastError) + '</p>' : '') +
+          '<div class="form-grid" style="max-width:520px;"><div class="field"><label for="abMinutes">저장 간격(분)</label><input type="number" min="5" max="1440" id="abMinutes" value="' + AutoBackup.minutes + '"></div>' +
+          '<div class="field"><label for="abKeep">보관할 파일 수</label><input type="number" min="1" max="60" id="abKeep" value="' + AutoBackup.keep + '"></div></div>' +
+          '<div class="error-msg hidden" id="abError" role="alert"></div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button class="btn btn-sm btn-primary" id="abChooseBtn">' + (AutoBackup.handle ? '폴더 바꾸기' : '백업 폴더 지정') + '</button>' +
+          '<button class="btn btn-sm" id="abSaveBtn">간격·개수 저장</button>' +
+          (AutoBackup.handle ? '<button class="btn btn-sm" id="abNowBtn">지금 자동 백업 실행</button><button class="btn btn-sm btn-danger" id="abOffBtn">끄기</button>' : '') + '</div>'
+        : '<p class="help-text">이 브라우저는 폴더 지정 기능을 지원하지 않습니다. 크롬이나 엣지에서 열면 쓸 수 있습니다. 지금은 위의 "백업 파일 내보내기"를 직접 눌러 주세요.</p>') +
+      '</div>';
 
     html += '<div class="panel" id="printSettingsSection"><div class="panel-title">' + icon('printer') + ' 인쇄 문서 설정</div>' +
       '<p class="help-text" style="margin-bottom:10px;">여기에 입력하면 대상자 기록·SOAP·통계를 인쇄할 때 문서 상단에 헤더로 표시됩니다. 비워두면 헤더 없이 인쇄됩니다.</p>' +
@@ -9347,6 +9555,34 @@ const Views = {
       await Storage.setSetting('autoLockMinutes', Number(e.target.value));
       toast('자동 잠금 시간이 변경되었습니다.');
     };
+    {
+      const abErr = (msg) => { const b = document.getElementById('abError'); b.textContent = msg; b.classList.remove('hidden'); };
+      const choose = document.getElementById('abChooseBtn');
+      if (choose) choose.onclick = async () => {
+        try{
+          await AutoBackup.chooseFolder();
+          toast('백업 폴더를 지정했습니다. 첫 백업을 저장합니다.');
+          try{ await AutoBackup.runNow(); }catch(e){ abErr(e.message); }
+          UI.renderCurrentView();
+        }catch(e){ if (e && e.name !== 'AbortError') abErr(e.message || '폴더를 지정하지 못했습니다.'); }
+      };
+      const save = document.getElementById('abSaveBtn');
+      if (save) save.onclick = async () => {
+        try{ await AutoBackup.saveOptions(document.getElementById('abMinutes').value, document.getElementById('abKeep').value); toast('자동 백업 설정을 저장했습니다.'); UI.renderCurrentView(); }
+        catch(e){ abErr(e.message); }
+      };
+      const now = document.getElementById('abNowBtn');
+      if (now) now.onclick = async () => {
+        try{
+          if (AutoBackup.needsPermission() && !(await AutoBackup.requestAccess())) throw new Error('폴더 접근이 허용되지 않았습니다.');
+          const r = await AutoBackup.runNow();
+          toast('자동 백업을 저장했습니다 (' + r.name + ', ' + (r.bytes / 1048576).toFixed(1) + 'MB).');
+        }catch(e){ AutoBackup.lastError = e.message; }
+        UI.renderCurrentView();
+      };
+      const off = document.getElementById('abOffBtn');
+      if (off) off.onclick = () => UI.confirm('자동 백업을 끌까요? 이미 저장된 백업 파일은 폴더에 그대로 남습니다.', async () => { await AutoBackup.disable(); toast('자동 백업을 껐습니다.'); UI.renderCurrentView(); });
+    }
     document.getElementById('saveRetentionBtn').onclick = async () => {
       try{
         await Retention.setYears(document.getElementById('retYears').value);
@@ -10237,6 +10473,13 @@ async function bootstrapApp(){
   document.getElementById('navMoreBtn').addEventListener('click', () => UI.openMobileMoreMenu());
   document.getElementById('lockNowBtn').addEventListener('click', () => Auth.lock());
   document.getElementById('backupChipBtn').addEventListener('click', async () => {
+    if (AutoBackup.needsPermission()){
+      if (await AutoBackup.requestAccess()){
+        try{ const r = await AutoBackup.runNow(); toast('자동 백업을 저장했습니다 (' + r.name + ').'); }catch(e){ toast(e.message || '자동 백업에 실패했습니다.', 'error'); }
+      } else toast('폴더 접근이 허용되지 않았습니다.', 'error');
+      UI.renderCurrentView();
+      return;
+    }
     try{ await Backup.downloadBackup(); toast('백업 파일을 저장했습니다.'); UI.renderCurrentView(); }
     catch(e){ console.error(e); toast('백업 파일 생성에 실패했습니다.', 'error'); }
   });
@@ -10296,6 +10539,9 @@ async function bootstrapApp(){
   Notifications.start();
   await Backup.init();
   await Backup.refresh();
+  await AutoBackup.init();
+  AutoBackup.start();
+  window.addEventListener('beforeunload', (e) => { if (Views._dirty){ e.preventDefault(); e.returnValue = ''; } });
   Backup.startWatcher();
   UI.renderRecentClients();
 
