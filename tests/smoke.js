@@ -409,6 +409,57 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('보고서·브리핑·슈퍼비전 연결');
   });
 
+  await step('날짜 확인 확대, 긴 목록 나눠 보기, 기록 보관·파기가 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      const today = Utils.todayStr();
+      const w = {
+        crisisFuture: Utils.dateWarning('위기개입 날짜', Utils.addDaysStr(today, 2), { maxPastDays: 90 }),
+        crisisOld: Utils.dateWarning('위기개입 날짜', Utils.addDaysStr(today, -200), { maxPastDays: 90 }),
+        crisisOk: Utils.dateWarning('위기개입 날짜', Utils.addDaysStr(today, -3), { maxPastDays: 90 }),
+        schFarFuture: Utils.dateWarning('일정 날짜', Utils.addDaysStr(today, 500), { future: true, maxFutureDays: 366, maxPastDays: 60 }),
+        schOk: Utils.dateWarning('일정 날짜', Utils.addDaysStr(today, 10), { future: true, maxFutureDays: 366, maxPastDays: 60 }),
+        empty: Utils.dateWarning('x', '', {})
+      };
+      const st = {}, el = { textContent: '', classList: { remove(){} } };
+      const first = Views.guardDates(el, ['경고'], st), second = Views.guardDates(el, ['경고'], st), none = Views.guardDates(el, [], {});
+      // 긴 목록: 100건만 그린다
+      for (let i = 0; i < 130; i++){ const s = SoapModule.createBlank({ clientId: 'PL1' }); s.S = '목록' + i; s.date = Utils.addDaysStr(today, -10); await SoapModule.save(s, true); }
+      State.currentParams = {}; Views._rowLimits = {};
+      const rows1 = (Views.soapList().match(/data-open-soap=/g) || []).length;
+      const hasMore = Views.soapList().includes('data-more-rows');
+      Views._rowLimits['soap:all'] = 200;
+      const rows2 = (Views.soapList().match(/data-open-soap=/g) || []).length;
+      Views._rowLimits = {};
+      // 보관기간
+      await Clients.add({ id: 'OLD1', alias: '오래된', managementLevel: 'maintenance', registrationDate: '2010-01-01' });
+      await Clients.close('OLD1', { reason: '자립/목표 달성', date: '2015-03-01', outcome: '목표 달성', summary: '요약', aftercareMonths: [] });
+      await Clients.add({ id: 'NEW1', alias: '최근', managementLevel: 'maintenance' });
+      await Clients.close('NEW1', { reason: '자립/목표 달성', date: today, outcome: '목표 달성', summary: '요약', aftercareMonths: [] });
+      const exp = Retention.expiredList().map(x => x.id);
+      let badYears = '';
+      try{ await Retention.setYears('0'); }catch(e){ badYears = e.message; }
+      await Retention.setYears('3');
+      const years = Retention.years;
+      return { w, first, second, none, rows1, hasMore, rows2, exp, badYears, years };
+    });
+    assert(/오늘보다 뒤/.test(r.w.crisisFuture) && /90일보다/.test(r.w.crisisOld) && r.w.crisisOk === '' && /개월 넘게/.test(r.w.schFarFuture) && r.w.schOk === '' && r.w.empty === '', '날짜 경고가 다름: ' + JSON.stringify(r.w));
+    assert(r.first === false && r.second === true && r.none === true, '날짜 확인 흐름이 다름: ' + JSON.stringify(r));
+    assert(r.rows1 === 100 && r.hasMore && r.rows2 >= 130, '긴 목록 나눠 보기가 다름: ' + JSON.stringify(r));
+    assert(r.exp.includes('OLD1') && !r.exp.includes('NEW1') && /1~50/.test(r.badYears) && r.years === 3, '보관기간 계산이 다름: ' + JSON.stringify(r));
+    await page.evaluate(() => UI.navigate('settings', {}));
+    await page.waitForTimeout(250);
+    const txt = await page.evaluate(() => (document.getElementById('retentionSection') || {}).textContent || '');
+    assert(txt.includes('OLD1') && txt.includes('완전 삭제'), '설정에 보관기간 지난 대상자가 보이지 않음');
+    await page.evaluate(() => document.querySelector('[data-retention-del="OLD1"]').click());
+    await page.waitForTimeout(150);
+    assert((await page.evaluate(() => document.getElementById('modalBox').textContent)).includes('되돌릴 수 없습니다'), '삭제 확인 창이 뜨지 않음');
+    await page.evaluate(() => document.getElementById('confirmYesBtn').click());
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(() => !Clients.get('OLD1') && !!Clients.get('NEW1')), '보관기간 삭제가 다름');
+    await page.evaluate(async () => { await Retention.setYears('5'); });
+    noNewErrors('날짜 확인·긴 목록·보관기간');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
