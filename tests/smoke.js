@@ -460,6 +460,78 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('날짜 확인·긴 목록·보관기간');
   });
 
+  await step('자동 백업(폴더), 백업 파일 검증, 저장 안 한 입력 이탈 경고가 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      // 가짜 폴더: 파일 쓰기/읽기/삭제를 흉내 낸다(실제 폴더 선택 창은 자동화할 수 없다).
+      const files = new Map();
+      const fakeDir = {
+        name: '가짜백업폴더', kind: 'directory',
+        async queryPermission(){ return fakeDir._perm; }, async requestPermission(){ fakeDir._perm = 'granted'; return 'granted'; }, _perm: 'prompt',
+        async getFileHandle(n, o){
+          if (!files.has(n) && !(o && o.create)) throw new Error('없음');
+          if (!files.has(n)) files.set(n, '');
+          return { async createWritable(){ let buf = ''; return { async write(t){ buf += t; }, async close(){ files.set(n, buf); } }; }, async getFile(){ return { size: new TextEncoder().encode(files.get(n)).length, async text(){ return files.get(n); } }; } };
+        },
+        async removeEntry(n){ files.delete(n); },
+        async *entries(){ for (const n of Array.from(files.keys())) yield [n, { kind: 'file' }]; }
+      };
+      AutoBackup.handle = fakeDir; AutoBackup.on = true; AutoBackup.keep = 2; AutoBackup.minutes = 5;
+      const needs1 = (await AutoBackup.refreshPermission(), AutoBackup.needsPermission());
+      let denied = '';
+      try{ await AutoBackup.runNow(); }catch(e){ denied = e.message; }
+      await AutoBackup.requestAccess();
+      Backup.markDirty();
+      const res = await AutoBackup.runNow();
+      const dirtyAfter = Backup.dirtySince;
+      // 보관 개수 정리: 파일 이름이 서로 다르도록 가짜 파일을 더 넣고 다시 실행
+      files.set(AutoBackup.PREFIX + '2000-01-01_0000.json', '{}'); files.set(AutoBackup.PREFIX + '2000-01-02_0000.json', '{}');
+      await AutoBackup.runNow();
+      const names = Array.from(files.keys()).sort();
+      // tick: 변경이 없으면 저장하지 않는다
+      const before = files.size; await AutoBackup.tick(true); const afterNoChange = files.size;
+      const savedText = files.get(res.name);
+      const blob = new File([savedText], 'a.json', { type: 'application/json' });
+      const ok = await Backup.inspectFile(blob);
+      const bad = await Backup.inspectFile(new File(['{ 깨진 파일'], 'b.json'));
+      const wrongApp = await Backup.inspectFile(new File([JSON.stringify({ app: 'other' })], 'c.json'));
+      const tampered = JSON.parse(savedText); tampered.clients[0].cipher = tampered.clients[0].cipher.slice(0, -6) + 'AAAAAA';
+      const broken = await Backup.inspectFile(new File([JSON.stringify(tampered)], 'd.json'));
+      AutoBackup.handle = null; AutoBackup.on = false; AutoBackup.perm = 'none';
+      return { needs1, denied, res: !!res.name, dirtyAfter, names, noChange: before === afterNoChange, ok: ok.ok && ok.rows > 0 && ok.failed === 0, counts: ok.counts.clients, bad: bad.errors.length, wrongApp: wrongApp.errors.length, broken: broken.ok === false && broken.failed >= 1 };
+    });
+    assert(r.needs1 === true && /허용/.test(r.denied), '폴더 접근 허용 흐름이 다름: ' + JSON.stringify(r));
+    assert(r.res && r.dirtyAfter === null, '자동 백업 후 변경 표시가 지워지지 않음: ' + JSON.stringify(r));
+    assert(r.names.length === 2 && !r.names.some(n => n.includes('2000-01-01')), '오래된 자동 백업 정리가 다름: ' + JSON.stringify(r.names));
+    assert(r.noChange, '변경이 없는데 자동 백업이 또 저장됨');
+    assert(r.ok && r.counts >= 2 && r.bad === 1 && r.wrongApp === 1 && r.broken, '백업 파일 검증이 다름: ' + JSON.stringify(r));
+    // 이탈 경고: 디브리핑 작성 화면에서 입력 후 다른 화면으로 가려 하면 확인 창이 뜨고 취소하면 그대로 남는다
+    await page.evaluate(() => UI.navigate('debriefEditor', { kind: 'crisisUnreg' }));
+    await page.waitForTimeout(200);
+    await page.evaluate(() => { const el = document.getElementById('dbFacts'); el.value = '쓰던 내용'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.evaluate(() => UI.navigate('dashboard', {}));
+    await page.waitForTimeout(150);
+    const asked = await page.evaluate(() => ({ view: State.currentView, modal: (document.getElementById('modalBox') || {}).textContent || '' }));
+    assert(asked.view === 'debriefEditor' && asked.modal.includes('저장하지 않은 내용'), '이탈 경고가 뜨지 않음: ' + JSON.stringify(asked));
+    await page.evaluate(() => document.getElementById('confirmNoBtn').click());
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => State.currentView === 'debriefEditor' && document.getElementById('dbFacts').value === '쓰던 내용' && !!Views._debriefDraft), '취소했는데 입력이 사라지거나 화면 상태가 깨짐');
+    await page.evaluate(() => { document.getElementById('dbBackBtn').click(); });
+    await page.waitForTimeout(150);
+    await page.evaluate(() => document.getElementById('confirmYesBtn').click());
+    await page.waitForTimeout(200);
+    assert(await page.evaluate(() => State.currentView === 'debriefings' && !Views._dirty), '확인 후 목록으로 나가지 못함');
+    // 저장하면 경고 없이 이동
+    await page.evaluate(() => UI.navigate('debriefEditor', { kind: 'crisisUnreg' }));
+    await page.waitForTimeout(200);
+    await page.evaluate(() => { const el = document.getElementById('dbFacts'); el.value = '저장할 내용'; el.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('dbSubject').value = '이탈테스트'; document.getElementById('dbSaveBtn').click(); });
+    await page.waitForTimeout(300);
+    assert(await page.evaluate(() => State.currentView === 'debriefings' && !Views._dirty), '저장 뒤에도 이탈 경고 상태가 남음');
+    await page.evaluate(() => UI.navigate('settings', {}));
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(() => !!document.getElementById('autoBackupSection') && !!document.getElementById('verifyBackupBtn')), '설정에 자동 백업/검증이 없음');
+    noNewErrors('자동 백업·검증·이탈 경고');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
