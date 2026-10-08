@@ -1,0 +1,23 @@
+name: check
+
+# main으로 병합하기 전(PR)과 main에 올라간 뒤(push) 앱이 정상적으로 열리고 핵심 흐름이 동작하는지 점검한다.
+# main에 병합되면 곧바로 사이트에 배포되므로, 병합 전에 이 점검이 통과했는지 확인한다.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test

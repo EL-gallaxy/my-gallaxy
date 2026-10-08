@@ -1,0 +1,7 @@
+# GitHub Pages(Jekyll) 배포에서 점검용 파일은 사이트에 올리지 않는다.
+exclude:
+  - tests
+  - package.json
+  - package-lock.json
+  - node_modules
+  - .github
