@@ -466,7 +466,7 @@
     #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
     #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #exportLightBackupBtn, #crisisReportPrintBtn, #crisisReportBackBtn, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
+    #clNewSoap, #makeRecoveryBtn, #goRecoverySettingsBtn, #exportLightBackupBtn, #crisisReportPrintBtn, #crisisReportBackBtn, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
@@ -556,7 +556,16 @@
       </div>
       <div class="error-msg hidden" role="alert" id="loginError"></div>
       <button class="btn btn-primary btn-block" id="loginSubmitBtn">잠금 해제</button>
-      <p class="help-text" style="margin-top:14px;">비밀번호를 잊으면 암호화된 데이터를 복구할 수 없습니다.</p>
+      <p class="help-text" style="margin-top:14px;">복구 코드를 만들어 두지 않았다면, 비밀번호를 잊었을 때 암호화된 데이터를 복구할 수 없습니다.</p>
+      <div class="hidden" id="lrLinkWrap" style="margin-top:10px;text-align:center;"><button type="button" class="btn-link" id="lrLink">비밀번호를 잊으셨나요? 복구 코드로 열기</button></div>
+      <div class="hidden" id="lrPanel" style="margin-top:12px;text-align:left;">
+        <p class="help-text" style="margin-bottom:8px;">복구 코드를 입력하면 기록을 열고 새 비밀번호를 정할 수 있습니다. (코드는 하이픈·대소문자 상관없이 입력해도 됩니다.)</p>
+        <div class="field"><label for="lrCode">복구 코드</label><input type="text" id="lrCode" autocomplete="off" placeholder="XXXX-XXXX-XXXX-XXXX-…"></div>
+        <div class="field"><label for="lrPw1">새 비밀번호 (8자 이상)</label><input type="password" id="lrPw1" autocomplete="new-password"></div>
+        <div class="field"><label for="lrPw2">새 비밀번호 확인</label><input type="password" id="lrPw2" autocomplete="new-password"></div>
+        <div class="error-msg hidden" role="alert" id="lrError"></div>
+        <div style="display:flex;gap:8px;"><button class="btn btn-primary" type="button" id="lrSubmit">복구 코드로 열고 비밀번호 바꾸기</button><button class="btn" type="button" id="lrCancel">취소</button></div>
+      </div>
       <div class="hidden" id="loginResetPrompt" style="margin-top:8px;text-align:center;">
         <p class="help-text" style="margin-bottom:8px;">비밀번호가 계속 맞지 않는다면, 데이터를 초기화하고 새로 시작할 수 있습니다.</p>
         <button type="button" class="btn btn-sm btn-danger" id="resetAllLink">모든 데이터 초기화</button>
@@ -578,6 +587,15 @@
     </div>
     <div class="error-msg hidden" role="alert" id="unlockError"></div>
     <button class="btn btn-primary btn-block" id="unlockSubmitBtn">잠금 해제</button>
+      <div class="hidden" id="urLinkWrap" style="margin-top:10px;text-align:center;"><button type="button" class="btn-link" id="urLink">비밀번호를 잊으셨나요? 복구 코드로 열기</button></div>
+      <div class="hidden" id="urPanel" style="margin-top:12px;text-align:left;">
+        <p class="help-text" style="margin-bottom:8px;">복구 코드를 입력하면 기록을 열고 새 비밀번호를 정할 수 있습니다. (코드는 하이픈·대소문자 상관없이 입력해도 됩니다.)</p>
+        <div class="field"><label for="urCode">복구 코드</label><input type="text" id="urCode" autocomplete="off" placeholder="XXXX-XXXX-XXXX-XXXX-…"></div>
+        <div class="field"><label for="urPw1">새 비밀번호 (8자 이상)</label><input type="password" id="urPw1" autocomplete="new-password"></div>
+        <div class="field"><label for="urPw2">새 비밀번호 확인</label><input type="password" id="urPw2" autocomplete="new-password"></div>
+        <div class="error-msg hidden" role="alert" id="urError"></div>
+        <div style="display:flex;gap:8px;"><button class="btn btn-primary" type="button" id="urSubmit">복구 코드로 열고 비밀번호 바꾸기</button><button class="btn" type="button" id="urCancel">취소</button></div>
+      </div>
     <div class="hidden" id="unlockResetPrompt" style="margin-top:12px;text-align:center;">
       <p class="help-text" style="margin-bottom:8px;">비밀번호가 계속 맞지 않는다면, 데이터를 초기화하고 새로 시작할 수 있습니다.</p>
       <button type="button" class="btn btn-sm btn-danger" id="unlockResetLink">모든 데이터 초기화</button>
@@ -979,7 +997,7 @@ const CryptoModule = {
   ITERATIONS: 250000,
   VERIFIER_TEXT: 'CASE_MANAGEMENT_ON_VERIFIER_V1',
 
-  async deriveKey(password, saltB64, iterations){
+  async deriveKey(password, saltB64, iterations, extractable){
     const enc = new TextEncoder();
     const salt = Utils.base64ToBuf(saltB64);
     const keyMaterial = await crypto.subtle.importKey(
@@ -989,9 +1007,33 @@ const CryptoModule = {
       { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
       keyMaterial,
       { name: 'AES-GCM', length: 256 },
-      false,
+      !!extractable,
       ['encrypt', 'decrypt']
     );
+  },
+
+  // 비밀번호 복구용 — 기록을 암호화하는 "마스터 키"(32바이트)를 비밀번호와 복구 코드 각각으로 감싸 둔다.
+  async encryptBytes(key, bytes){
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes);
+    return { iv: Utils.bufToBase64(iv.buffer), cipher: Utils.bufToBase64(cipherBuf) };
+  },
+  async decryptBytes(key, ivB64, cipherB64){
+    return crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(Utils.base64ToBuf(ivB64)) }, key, Utils.base64ToBuf(cipherB64));
+  },
+  importMasterKey(rawBytes){
+    return crypto.subtle.importKey('raw', rawBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  },
+  // 헷갈리는 글자(I, O, 0, 1)를 뺀 32글자로 160비트짜리 복구 코드를 만든다(4글자씩 하이픈).
+  RECOVERY_ALPHABET: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789',
+  generateRecoveryCode(){
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    let out = '';
+    bytes.forEach(b => { out += this.RECOVERY_ALPHABET[b % 32]; });
+    return out.match(/.{4}/g).join('-');
+  },
+  normalizeRecoveryCode(input){
+    return (input || '').toUpperCase().split('').filter(ch => this.RECOVERY_ALPHABET.includes(ch)).join('');
   },
 
   generateSaltB64(){
@@ -1326,20 +1368,87 @@ const Auth = {
     return !salt;
   },
 
-  async setupPassword(password){
-    const saltB64 = CryptoModule.generateSaltB64();
+  // 키 구조 — 새로 설정하면 "마스터 키 방식"이다: 기록은 무작위 마스터 키로 암호화하고, 마스터 키를 비밀번호(masterWrap)와
+  // 복구 코드(recoveryWrap)로 각각 감싸 저장한다. 비밀번호를 바꿔도 마스터 키는 그대로라 기록을 다시 암호화할 필요가 없고,
+  // 복구 코드도 계속 유효하다. 예전 방식(비밀번호에서 바로 키를 만드는 방식)은 복구 코드를 만들 때 같은 키 그대로 옮겨 온다.
+  recoveryReady: false,
+  async isMasterMode(){ return (await Storage.getSetting('authMode')) === 'master'; },
+  async hasRecovery(){ return (await this.isMasterMode()) && !!(await Storage.getSetting('recoveryWrap')); },
+
+  async _storeMasterWrap(rawBytes, password){
+    const salt = CryptoModule.generateSaltB64();
     const iterations = CryptoModule.ITERATIONS;
-    const key = await CryptoModule.deriveKey(password, saltB64, iterations);
-    const { iv, cipher } = await CryptoModule.encryptJSON(key, { v: CryptoModule.VERIFIER_TEXT });
-    await Storage.setSetting('authSalt', saltB64);
-    await Storage.setSetting('authIterations', iterations);
-    await Storage.setSetting('authVerifierIV', iv);
-    await Storage.setSetting('authVerifierCipher', cipher);
+    const kek = await CryptoModule.deriveKey(password, salt, iterations);
+    const { iv, cipher } = await CryptoModule.encryptBytes(kek, rawBytes);
+    // 솔트와 감싼 키를 한 번에 저장해 도중에 끊겨도 어긋나지 않게 한다. authMode는 맨 마지막에 바꾼다.
+    await Storage.setSetting('masterWrap', { salt, iterations, iv, cipher });
+    await Storage.setSetting('authMode', 'master');
+  },
+  async _unwrapMaster(password){
+    const w = await Storage.getSetting('masterWrap');
+    if (!w) throw new Error('NOT_INITIALIZED');
+    const kek = await CryptoModule.deriveKey(password, w.salt, w.iterations);
+    try{ return new Uint8Array(await CryptoModule.decryptBytes(kek, w.iv, w.cipher)); }
+    catch(e){ throw new Error('WRONG_PASSWORD'); }
+  },
+  async _storeRecoveryWrap(rawBytes){
+    const code = CryptoModule.generateRecoveryCode();
+    const salt = CryptoModule.generateSaltB64();
+    const iterations = CryptoModule.ITERATIONS;
+    const key = await CryptoModule.deriveKey(CryptoModule.normalizeRecoveryCode(code), salt, iterations);
+    const { iv, cipher } = await CryptoModule.encryptBytes(key, rawBytes);
+    await Storage.setSetting('recoveryWrap', { salt, iterations, iv, cipher, createdAt: new Date().toISOString() });
+    this.recoveryReady = true;
+    return code;
+  },
+
+  // 처음 비밀번호를 설정한다. 복구 코드를 함께 만들어 돌려주며, 화면에서 한 번만 보여 준다.
+  async setupPassword(password){
+    const raw = crypto.getRandomValues(new Uint8Array(32));
+    await this._storeMasterWrap(raw, password);
+    // 처음 실행 여부·백업 유효성 검사가 authSalt를 보므로 자리를 채워 둔다(마스터 키 방식에서는 암호화에 쓰이지 않는다).
+    await Storage.setSetting('authSalt', (await Storage.getSetting('masterWrap')).salt);
+    await Storage.setSetting('authIterations', CryptoModule.ITERATIONS);
     await Storage.setSetting('autoLockMinutes', 5);
-    this.cryptoKey = key;
+    const code = await this._storeRecoveryWrap(raw);
+    this.cryptoKey = await CryptoModule.importMasterKey(raw);
+    return code;
+  },
+
+  // 복구 코드를 (다시) 만든다. 예전 방식이면 현재 키를 그대로 마스터 키로 옮겨 오므로 기록은 건드리지 않는다.
+  async enableRecovery(password){
+    let raw;
+    if (await this.isMasterMode()){
+      raw = await this._unwrapMaster(password);
+    } else {
+      await this.login(password); // 예전 방식 비밀번호 확인(틀리면 WRONG_PASSWORD)
+      const k0 = await CryptoModule.deriveKey(password, await Storage.getSetting('authSalt'), await Storage.getSetting('authIterations'), true);
+      raw = new Uint8Array(await crypto.subtle.exportKey('raw', k0));
+      await this._storeMasterWrap(raw, password);
+      for (const k of ['authVerifierIV', 'authVerifierCipher']) await Storage.idbDelete('settings', k);
+    }
+    const code = await this._storeRecoveryWrap(raw);
+    this.cryptoKey = await CryptoModule.importMasterKey(raw);
+    return code;
+  },
+
+  // 복구 코드로 열고 새 비밀번호를 정한다. 코드가 틀리면 WRONG_CODE.
+  async recoverWithCode(code, newPassword){
+    const rw = await Storage.getSetting('recoveryWrap');
+    if (!(await this.isMasterMode()) || !rw) throw new Error('NO_RECOVERY');
+    const key = await CryptoModule.deriveKey(CryptoModule.normalizeRecoveryCode(code), rw.salt, rw.iterations);
+    let raw;
+    try{ raw = new Uint8Array(await CryptoModule.decryptBytes(key, rw.iv, rw.cipher)); }
+    catch(e){ throw new Error('WRONG_CODE'); }
+    await this._storeMasterWrap(raw, newPassword);
+    this.cryptoKey = await CryptoModule.importMasterKey(raw);
   },
 
   async login(password){
+    if (await this.isMasterMode()){
+      this.cryptoKey = await CryptoModule.importMasterKey(await this._unwrapMaster(password));
+      return;
+    }
     const saltB64 = await Storage.getSetting('authSalt');
     const iterations = await Storage.getSetting('authIterations');
     const ivB64 = await Storage.getSetting('authVerifierIV');
@@ -1367,6 +1476,11 @@ const Auth = {
   // auth settings. Nothing here ever stores the password itself.
   async changePassword(currentPassword, newPassword){
     await this.login(currentPassword); // throws WRONG_PASSWORD if it doesn't match
+    if (await this.isMasterMode()){
+      // 마스터 키는 그대로 두고 새 비밀번호로 다시 감싸기만 한다(기록 재암호화 불필요, 복구 코드도 그대로 유효).
+      await this._storeMasterWrap(await this._unwrapMaster(currentPassword), newPassword);
+      return;
+    }
 
     const newSaltB64 = CryptoModule.generateSaltB64();
     const iterations = CryptoModule.ITERATIONS;
@@ -3791,7 +3905,7 @@ const Backup = {
     await Storage.setSetting('backupDirtySince', null);
   },
 
-  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'seedClientIds', 'textSnippetsEnc'],
+  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'seedClientIds', 'textSnippetsEnc', 'authMode', 'masterWrap', 'recoveryWrap'],
   overdueCached: false,
 
   // 첨부 제외 백업 — 대상자 기록은 안에 첨부파일이 함께 암호화되어 있어서, 지금 메모리에 풀려 있는 기록에서
@@ -3885,6 +3999,8 @@ const Backup = {
     }
     for (const k of this.SETTINGS_KEYS){
       if (k in data.settings) await Storage.setSetting(k, data.settings[k]);
+      // 예전 방식 백업을 마스터 키 방식 기기에 복원할 때 남은 마스터 키 정보가 섞이지 않도록 지운다.
+      else if (['authMode', 'masterWrap', 'recoveryWrap'].includes(k)) await Storage.idbDelete('settings', k);
     }
     for (const row of (data.clients || [])) await Storage.idbPut('clients', row);
     for (const row of (data.soaps || [])) await Storage.idbPut('soaps', row);
@@ -4059,6 +4175,8 @@ const UI = {
     document.getElementById('unlockPw').value = '';
     document.getElementById('unlockError').classList.add('hidden');
     document.getElementById('unlockResetPrompt').classList.add('hidden');
+    document.getElementById('urPanel').classList.add('hidden');
+    document.getElementById('urLinkWrap').classList.toggle('hidden', !Auth.recoveryReady);
     setTimeout(() => document.getElementById('unlockPw').focus(), 50);
   },
   hideLockScreen(){
@@ -4094,6 +4212,7 @@ const UI = {
     const box = document.getElementById('modalBox');
     box.innerHTML = '';
     box.style.maxWidth = '';
+    UI._modalLocked = false;
     box.removeAttribute('aria-labelledby');
     const back = UI._modalReturnFocus;
     UI._modalReturnFocus = null;
@@ -4431,6 +4550,12 @@ const Views = {
         '<button class="btn btn-sm" id="removeSeedBtn">예시 데이터 삭제</button></div>';
     }
 
+    if (!Auth.recoveryReady){
+      html += '<div class="example-banner" style="border-color:var(--warn);background:var(--warn-soft);">' +
+        '<span>🔑 비밀번호를 잊으면 기록을 복구할 수 없습니다. 복구 코드를 만들어 안전한 곳에 보관해 두세요.</span>' +
+        '<button class="btn btn-sm" id="goRecoverySettingsBtn">복구 코드 만들기</button></div>';
+    }
+
     if (Backup.overdueCached){
       const bst = Backup.statusCached;
       html += '<div class="example-banner" style="border-color:var(--warn);background:var(--warn-soft);">' +
@@ -4711,6 +4836,11 @@ const Views = {
   },
 
   bindDashboard(){
+    const goRecovery = document.getElementById('goRecoverySettingsBtn');
+    if (goRecovery) goRecovery.onclick = () => {
+      UI.navigate('settings', {});
+      setTimeout(() => { const t = document.getElementById('recoverySection'); if (t) t.scrollIntoView({ block: 'start' }); }, 80);
+    };
     document.querySelectorAll('[data-goto]').forEach(el => {
       el.onclick = () => UI.navigate(el.dataset.goto, { filter: el.dataset.filter });
     });
@@ -8174,7 +8304,7 @@ const Views = {
       ['backupSection', '데이터 백업 및 복원'], ['printSettingsSection', '인쇄 문서 설정'],
       ['tourSection', '앱 둘러보기'], ['simpleModeSection', '간소화 모드'],
       ['dashboardWidgetsSection', '대시보드 위젯 표시'], ['themeSection', '화면 테마'],
-      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['passwordSection', '비밀번호 변경']
+      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
     ];
     html += '<div class="panel" style="display:flex;gap:8px;flex-wrap:wrap;">' +
       SETTINGS_SECTIONS.map(([id, label]) => '<button class="btn btn-sm" data-scroll="' + id + '">' + label + '</button>').join('') +
@@ -8252,6 +8382,11 @@ const Views = {
       '</select></div>' +
       '<p class="help-text">이 시간 동안 조작이 없으면 자동으로 화면이 잠깁니다. 기본값은 5분입니다.</p></div>';
 
+    html += '<div class="panel" id="recoverySection"><div class="panel-title">' + icon('shield') + ' 비밀번호 복구 코드</div>' +
+      '<p class="help-text" style="margin-bottom:10px;">비밀번호를 잊으면 기록을 열 수 없습니다. 복구 코드를 만들어 종이에 적거나 인쇄해 안전한 곳에 보관해 두면, 비밀번호를 잊어도 이 코드로 기록을 열고 새 비밀번호를 정할 수 있습니다. 코드는 만들 때 한 번만 보여 드리며, 코드를 아는 사람은 누구나 기록을 열 수 있으니 잘 보관해 주세요.</p>' +
+      '<p style="font-size:0.88rem;margin-bottom:10px;">상태: <strong id="recoveryStatusText">확인 중…</strong></p>' +
+      '<button class="btn btn-primary btn-sm" id="makeRecoveryBtn">복구 코드 만들기</button></div>';
+
     html += '<div class="panel" id="passwordSection"><div class="panel-title">' + icon('key') + ' 비밀번호 변경</div>' +
       '<div class="field"><label>현재 비밀번호</label><input type="password" id="curPw" autocomplete="current-password"></div>' +
       '<div class="field"><label>새 비밀번호 (8자 이상)</label><input type="password" id="newPw" autocomplete="new-password"></div>' +
@@ -8303,6 +8438,13 @@ const Views = {
       await Storage.setSetting('autoLockMinutes', Number(e.target.value));
       toast('자동 잠금 시간이 변경되었습니다.');
     };
+    (async () => {
+      const rw = await Storage.getSetting('recoveryWrap');
+      const ready = await Auth.hasRecovery();
+      document.getElementById('recoveryStatusText').textContent = ready && rw ? '만들어 둠 (' + Utils.formatDateTime(rw.createdAt) + ')' : '아직 만들지 않음 — 비밀번호를 잊으면 복구할 수 없습니다';
+      document.getElementById('makeRecoveryBtn').textContent = ready ? '복구 코드 다시 만들기 (이전 코드는 쓸 수 없게 됨)' : '복구 코드 만들기';
+    })();
+    document.getElementById('makeRecoveryBtn').onclick = () => Views.openRecoveryPasswordModal();
     document.getElementById('changePwBtn').onclick = async () => {
       const cur = document.getElementById('curPw').value;
       const n1 = document.getElementById('newPw').value;
@@ -8316,7 +8458,7 @@ const Views = {
         document.getElementById('curPw').value = '';
         document.getElementById('newPw').value = '';
         document.getElementById('newPw2').value = '';
-        toast('비밀번호가 변경되었습니다.');
+        toast('비밀번호가 변경되었습니다.' + (Auth.recoveryReady ? ' 복구 코드는 그대로 사용할 수 있습니다.' : ''));
       }catch(e){
         err.textContent = (e.message === 'WRONG_PASSWORD') ? '현재 비밀번호가 올바르지 않습니다.' : '비밀번호 변경에 실패했습니다.';
         err.classList.remove('hidden');
@@ -8890,6 +9032,63 @@ const Views = {
     };
   },
 
+  // 복구 코드 만들기 — 현재 비밀번호를 한 번 더 확인한 뒤 코드를 만든다(예전 방식이면 이때 키 구조를 안전하게 옮긴다).
+  openRecoveryPasswordModal(){
+    UI.openModal(
+      '<h3>복구 코드 만들기</h3>' +
+      '<p class="help-text" style="margin-bottom:10px;">본인 확인을 위해 현재 비밀번호를 입력해 주세요. 이미 코드가 있다면 새로 만들며, 이전 코드는 쓸 수 없게 됩니다.</p>' +
+      '<div class="field"><label for="rcPw">현재 비밀번호</label><input type="password" id="rcPw" autocomplete="current-password"></div>' +
+      '<div class="error-msg hidden" role="alert" id="rcError"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="rcCancel">취소</button><button class="btn btn-primary" id="rcSubmit">복구 코드 만들기</button></div>'
+    );
+    const submit = async () => {
+      const err = document.getElementById('rcError');
+      err.classList.add('hidden');
+      try{
+        const code = await Auth.enableRecovery(document.getElementById('rcPw').value);
+        UI.closeModal();
+        Views.showRecoveryCodeModal(code);
+        UI.renderCurrentView();
+      }catch(e){
+        err.textContent = e.message === 'WRONG_PASSWORD' ? '현재 비밀번호가 올바르지 않습니다.' : '복구 코드를 만들지 못했습니다.';
+        err.classList.remove('hidden');
+      }
+    };
+    document.getElementById('rcCancel').onclick = () => UI.closeModal();
+    document.getElementById('rcSubmit').onclick = submit;
+    document.getElementById('rcPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  },
+  // 복구 코드는 이 화면에서만 볼 수 있다. 보관했다고 확인하기 전에는 닫히지 않게(Esc·바깥 클릭 무시) 잠가 둔다.
+  showRecoveryCodeModal(code){
+    UI.openModal(
+      '<h3>비밀번호 복구 코드</h3>' +
+      '<p style="font-size:0.9rem;line-height:1.7;margin-bottom:10px;">이 코드는 <strong>지금 한 번만</strong> 보여 드립니다. 비밀번호를 잊었을 때 이 코드로 기록을 열 수 있습니다. 종이에 적거나 인쇄해서 <strong>금고 같은 안전한 곳</strong>에 보관하세요. 이 코드를 아는 사람은 누구나 기록을 열 수 있으니 다른 사람이 보지 못하게 해 주세요.</p>' +
+      '<div id="recoveryCodeText" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.15rem;letter-spacing:0.05em;padding:14px;border:2px dashed var(--border-strong);border-radius:8px;text-align:center;word-break:break-all;user-select:all;margin-bottom:12px;">' + Utils.escapeHtml(code) + '</div>' +
+      '<div style="display:flex;gap:8px;margin-bottom:14px;"><button class="btn btn-sm" id="rcCopy">' + icon('copy') + ' 복사</button><button class="btn btn-sm" id="rcPrint">' + icon('printer') + ' 인쇄</button></div>' +
+      '<label class="field-inline" style="margin-bottom:12px;color:var(--text);"><input type="checkbox" id="recoveryAck"> 복구 코드를 안전한 곳에 보관했습니다.</label>' +
+      '<div style="display:flex;justify-content:flex-end;"><button class="btn btn-primary" id="recoveryDone" disabled>확인</button></div>'
+    );
+    UI._modalLocked = true;
+    document.getElementById('rcCopy').onclick = () => copyToClipboard(code);
+    document.getElementById('rcPrint').onclick = () => Views.printRecoveryCode(code);
+    document.getElementById('recoveryAck').onchange = (e) => { document.getElementById('recoveryDone').disabled = !e.target.checked; };
+    document.getElementById('recoveryDone').onclick = () => { UI.closeModal(); toast('복구 코드를 만들어 두었습니다.'); };
+  },
+  // 코드만 크게 적힌 한 장을 인쇄한다(보이지 않는 프레임에 그려서 화면 구성에 영향을 주지 않는다).
+  printRecoveryCode(code){
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    document.body.appendChild(frame);
+    const doc = frame.contentWindow.document;
+    doc.open();
+    doc.write('<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>사례관리 ON 복구 코드</title></head><body style="font-family:sans-serif;padding:40px;">' +
+      '<h2>사례관리 ON — 비밀번호 복구 코드</h2><p>비밀번호를 잊었을 때 이 코드로 기록을 열 수 있습니다. 금고 등 안전한 곳에 보관하고, 코드를 아는 사람은 누구나 기록을 열 수 있으니 다른 사람이 보지 못하게 하세요.</p>' +
+      '<p style="font-family:monospace;font-size:24px;letter-spacing:2px;border:2px dashed #555;padding:18px;text-align:center;word-break:break-all;">' + Utils.escapeHtml(code) + '</p>' +
+      '<p>만든 날: ' + Utils.todayStr() + '</p></body></html>');
+    doc.close();
+    setTimeout(() => { frame.contentWindow.focus(); frame.contentWindow.print(); setTimeout(() => frame.remove(), 1000); }, 200);
+  },
+
   // 사례 종결 / 종결 정보 수정 — 종결 요약(결과·경과·사후관리 계획)과 사후 확인 일정을 함께 정한다.
   openClosureModal(id, editing){
     const c = Clients.get(id);
@@ -9090,7 +9289,7 @@ async function bootstrapApp(){
     document.getElementById('appMain').focus();
   });
   document.getElementById('modalOverlay').addEventListener('click', (e) => {
-    if (e.target.id === 'modalOverlay') UI.closeModal();
+    if (e.target.id === 'modalOverlay' && !UI._modalLocked) UI.closeModal();
   });
 
   // Keyboard shortcuts: Esc closes an open modal from anywhere; Ctrl/Cmd+S
@@ -9099,7 +9298,7 @@ async function bootstrapApp(){
   // Bound once here rather than per-view so it survives every re-render.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape'){
-      if (!document.getElementById('modalOverlay').classList.contains('hidden')) UI.closeModal();
+      if (!document.getElementById('modalOverlay').classList.contains('hidden') && !UI._modalLocked) UI.closeModal();
       return;
     }
     // 모달이 열려 있으면 Tab이 모달 밖으로 나가지 않고 안에서 순환한다.
@@ -9174,6 +9373,7 @@ async function initApp(){
   UI.applySimpleModeNav();
 
   const firstRun = await Auth.isFirstRun();
+  Auth.recoveryReady = await Auth.hasRecovery();
 
   if (firstRun){
     UI.showFirstRunNotice();
@@ -9204,11 +9404,12 @@ async function initApp(){
         return;
       }
       try{
-        await Auth.setupPassword(pw1);
+        const recoveryCode = await Auth.setupPassword(pw1);
         await loadAllDataIntoState();
         await Clients.seedExampleData();
         await bootstrapApp();
         toast('비밀번호가 설정되었습니다. 예시 데이터가 포함되어 있습니다.');
+        Views.showRecoveryCodeModal(recoveryCode);
       }catch(e){
         console.error(e);
         errEl.textContent = '초기 설정 중 오류가 발생했습니다. 다시 시도해 주세요.';
@@ -9236,6 +9437,8 @@ async function initApp(){
     document.getElementById('loginPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryLogin(); });
 
     document.getElementById('resetAllLink').addEventListener('click', performFullReset);
+    document.getElementById('lrLinkWrap').classList.toggle('hidden', !Auth.recoveryReady);
+    bindRecoveryPanel('lr', async () => { await bootstrapApp(); });
   }
 
   // Unlock screen (after auto-lock or manual lock)
@@ -9259,6 +9462,36 @@ async function initApp(){
   document.getElementById('unlockSubmitBtn').addEventListener('click', tryUnlock);
   document.getElementById('unlockPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
   document.getElementById('unlockResetLink').addEventListener('click', performFullReset);
+  bindRecoveryPanel('ur', async () => {
+    await loadAllDataIntoState();
+    UI.hideLockScreen();
+    UI.showAppShell();
+    UI.navigate('dashboard', {});
+    Auth.markActivity();
+  });
+}
+
+// 로그인·잠금 화면의 "복구 코드로 열기" — 코드로 열고 새 비밀번호를 정한다. prefix는 화면별 요소 ID 접두사(lr/ur).
+function bindRecoveryPanel(prefix, onSuccess){
+  const el = (name) => document.getElementById(prefix + name);
+  el('Link').onclick = () => { el('Panel').classList.remove('hidden'); el('LinkWrap').classList.add('hidden'); el('Code').focus(); };
+  el('Cancel').onclick = () => { el('Panel').classList.add('hidden'); el('LinkWrap').classList.remove('hidden'); };
+  el('Submit').onclick = async () => {
+    const err = el('Error');
+    err.classList.add('hidden');
+    const fail = (msg) => { err.textContent = msg; err.classList.remove('hidden'); };
+    const pw1 = el('Pw1').value;
+    if (!CryptoModule.normalizeRecoveryCode(el('Code').value)) return fail('복구 코드를 입력해 주세요.');
+    if (pw1.length < 8) return fail('새 비밀번호는 8자 이상이어야 합니다.');
+    if (pw1 !== el('Pw2').value) return fail('새 비밀번호가 서로 일치하지 않습니다.');
+    try{
+      await Auth.recoverWithCode(el('Code').value, pw1);
+      await onSuccess();
+      toast('복구 코드로 열었습니다. 새 비밀번호로 바뀌었습니다.');
+    }catch(e){
+      fail(e.message === 'WRONG_CODE' ? '복구 코드가 올바르지 않습니다.' : '복구 중 오류가 발생했습니다.');
+    }
+  };
 }
 
 // Shared by the login screen's and lock screen's "잊었을 때" reset prompts —

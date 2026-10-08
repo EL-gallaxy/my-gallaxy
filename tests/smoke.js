@@ -7,6 +7,7 @@ const { chromium } = require('playwright');
 const { start, ROOT } = require('./serve');
 
 const PASSWORD = 'ci-test-pass-1';
+let recoveryCode = '';
 const axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 
 const failures = [];
@@ -58,8 +59,17 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     await page.fill('#setupPw2', PASSWORD);
     await page.click('#setupSubmitBtn');
     await page.waitForSelector('#appShell:not(.hidden)');
-    await page.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    // 처음 설정하면 복구 코드가 한 번 표시되고, 보관했다고 확인하기 전에는 닫히지 않는다.
+    await page.waitForSelector('#recoveryCodeText');
+    recoveryCode = (await page.textContent('#recoveryCodeText')).trim();
+    assert(/^([A-HJ-NP-Z2-9]{4}-){7}[A-HJ-NP-Z2-9]{4}$/.test(recoveryCode), '복구 코드 형식이 다름: ' + recoveryCode);
     await page.keyboard.press('Escape');
+    assert(await page.isVisible('#recoveryCodeText'), '복구 코드 창이 Esc로 닫힘(보관 확인 전에는 닫히면 안 됨)');
+    assert(await page.isDisabled('#recoveryDone'), '보관 확인 전에 확인 버튼이 눌릴 수 있음');
+    await page.check('#recoveryAck');
+    await page.click('#recoveryDone');
+    await page.waitForFunction(() => document.getElementById('modalOverlay').classList.contains('hidden'));
+    await page.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
     noNewErrors('첫 실행');
   });
 
@@ -226,6 +236,112 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     const ph = await page.evaluate(() => document.getElementById('appMain').textContent.includes('(파일 없음)'));
     assert(ph, '비어 있는 첨부가 "파일 없음"으로 표시되지 않음');
     noNewErrors('가벼운 백업 복원');
+  });
+
+  const loginWith = async (pw) => {
+    await page.reload();
+    await page.waitForSelector('#loginPw', { state: 'visible' });
+    await page.fill('#loginPw', pw);
+    await page.click('#loginSubmitBtn');
+  };
+  const counts = () => page.evaluate(() => ({ c: Clients.list().length, s: SoapModule.list().length, f: FollowUps.list().length }));
+
+  await step('비밀번호를 바꿔도 기록과 복구 코드가 그대로 유효하다', async () => {
+    const before = await counts();
+    await page.evaluate(async ([a, b]) => { await Auth.changePassword(a, b); }, [PASSWORD, 'ci-new-pass-2']);
+    await loginWith(PASSWORD);   // 이전 비밀번호는 이제 안 된다
+    await page.waitForSelector('#loginError:not(.hidden)');
+    await loginWith('ci-new-pass-2');
+    await page.waitForSelector('#appShell:not(.hidden)');
+    await page.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    const after = await counts();
+    assert(JSON.stringify(before) === JSON.stringify(after), '비밀번호 변경 후 기록 수가 달라짐: ' + JSON.stringify(before) + ' → ' + JSON.stringify(after));
+    noNewErrors('비밀번호 변경');
+  });
+
+  await step('비밀번호를 잊어도 복구 코드로 열고 새 비밀번호를 정할 수 있다', async () => {
+    const before = await counts();
+    await page.reload();
+    await page.waitForSelector('#loginPw', { state: 'visible' });
+    await page.click('#lrLink');
+    // 틀린 코드는 거부된다
+    await page.fill('#lrCode', 'AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA');
+    await page.fill('#lrPw1', 'ci-recovered-3');
+    await page.fill('#lrPw2', 'ci-recovered-3');
+    await page.click('#lrSubmit');
+    await page.waitForSelector('#lrError:not(.hidden)');
+    assert((await page.textContent('#lrError')).includes('올바르지'), '틀린 복구 코드 안내가 없음');
+    // 소문자·하이픈 없는 입력도 같은 코드로 인정된다
+    await page.fill('#lrCode', recoveryCode.toLowerCase().replace(/-/g, ' '));
+    await page.click('#lrSubmit');
+    await page.waitForSelector('#appShell:not(.hidden)');
+    await page.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    const after = await counts();
+    assert(JSON.stringify(before) === JSON.stringify(after), '복구 후 기록 수가 달라짐');
+    await loginWith('ci-recovered-3');
+    await page.waitForSelector('#appShell:not(.hidden)');
+    await page.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    noNewErrors('복구 코드로 열기');
+  });
+
+  await step('예전 방식 사용자가 복구 코드를 만들면 기록은 그대로 두고 안전하게 옮겨진다', async () => {
+    // 이 기능이 생기기 전 방식(비밀번호에서 바로 키를 만들어 기록을 암호화)의 데이터를 새 브라우저에 직접 만든다.
+    const ctx = await browser.newContext();
+    const old = await ctx.newPage();
+    const errs = [];
+    old.on('pageerror', (e) => errs.push(e.message));
+    await old.goto(app);
+    await old.waitForSelector('#ackNoticeCheckbox', { state: 'attached' });
+    await old.evaluate(async (pw) => {
+      const salt = CryptoModule.generateSaltB64();
+      const it = CryptoModule.ITERATIONS;
+      const k0 = await CryptoModule.deriveKey(pw, salt, it);
+      const v = await CryptoModule.encryptJSON(k0, { v: CryptoModule.VERIFIER_TEXT });
+      await Storage.setSetting('authSalt', salt); await Storage.setSetting('authIterations', it);
+      await Storage.setSetting('authVerifierIV', v.iv); await Storage.setSetting('authVerifierCipher', v.cipher);
+      await Storage.setSetting('autoLockMinutes', 5);
+      const client = { id: 'OLD1', alias: '예전방식', managementLevel: 'maintenance', status: 'active', registrationDate: '2024-01-01', admissions: [], resourceLinks: [] };
+      const enc = await CryptoModule.encryptJSON(k0, client);
+      await Storage.idbPut('clients', { id: 'OLD1', iv: enc.iv, cipher: enc.cipher });
+    }, 'legacy-pass-1');
+    await old.reload();
+    await old.waitForSelector('#loginPw', { state: 'visible' });
+    await old.fill('#loginPw', 'legacy-pass-1');
+    await old.click('#loginSubmitBtn');
+    await old.waitForSelector('#appShell:not(.hidden)');
+    await old.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    assert(await old.evaluate(() => Clients.list().some(c => c.id === 'OLD1')), '예전 방식 기록이 열리지 않음');
+    assert(await old.evaluate(() => !Auth.recoveryReady), '예전 방식 사용자에게 복구 코드가 이미 있다고 나옴');
+    // 예전 방식 상태의 백업을 먼저 받아 둔다(나중에 이 백업을 복원해도 열려야 한다)
+    const legacyBackup = await old.evaluate(async () => JSON.stringify(await Backup.exportAll()));
+    // 틀린 비밀번호로는 만들 수 없다
+    const wrong = await old.evaluate(async () => { try { await Auth.enableRecovery('틀린비밀번호'); return 'ok'; } catch (e) { return e.message; } });
+    assert(wrong === 'WRONG_PASSWORD', '틀린 비밀번호로 복구 코드가 만들어짐: ' + wrong);
+    const code = await old.evaluate(async () => await Auth.enableRecovery('legacy-pass-1'));
+    assert(/^([A-HJ-NP-Z2-9]{4}-){7}[A-HJ-NP-Z2-9]{4}$/.test(code), '복구 코드 형식이 다름');
+    // 다시 로그인 — 같은 비밀번호, 같은 기록(기록을 다시 암호화하지 않았다)
+    await old.reload();
+    await old.waitForSelector('#loginPw', { state: 'visible' });
+    await old.fill('#loginPw', 'legacy-pass-1');
+    await old.click('#loginSubmitBtn');
+    await old.waitForSelector('#appShell:not(.hidden)');
+    await old.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    assert(await old.evaluate(() => Clients.list().some(c => c.id === 'OLD1')), '옮긴 뒤 기록이 열리지 않음');
+    assert(await old.evaluate(() => Auth.recoveryReady), '복구 코드를 만든 뒤에도 준비 안 됨으로 표시됨');
+    // 복구 코드로도 열린다
+    const viaCode = await old.evaluate(async (c) => { await Auth.recoverWithCode(c, 'legacy-new-2'); return Clients.list().length; }, code);
+    assert(viaCode >= 0, '복구 코드 사용 실패');
+    // 옮기기 전(예전 방식) 백업을 복원해도 예전 비밀번호로 열린다(남은 새 방식 정보가 섞이지 않는다)
+    await old.evaluate(async (text) => { await Backup.importFromFile(new File([text], 'legacy.json', { type: 'application/json' })); }, legacyBackup);
+    await old.reload();
+    await old.waitForSelector('#loginPw', { state: 'visible' });
+    await old.fill('#loginPw', 'legacy-pass-1');
+    await old.click('#loginSubmitBtn');
+    await old.waitForSelector('#appShell:not(.hidden)');
+    await old.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    assert(await old.evaluate(() => Clients.list().some(c => c.id === 'OLD1')), '예전 방식 백업 복원 후 열리지 않음');
+    assert(errs.length === 0, '예전 방식 이전 중 화면 오류: ' + errs.join(' | '));
+    await ctx.close();
   });
 
   await step('핵심 화면에 접근성 심각 위반이 없다 (라이트·다크)', async () => {
