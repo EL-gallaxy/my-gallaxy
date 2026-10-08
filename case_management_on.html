@@ -360,8 +360,6 @@
   .chip-check.checked{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);}
   .divider{height:1px;background:var(--border);margin:18px 0;}
 
-  .checklist-box{background:var(--warn-soft);border:1px solid var(--warn);border-radius:8px;padding:10px 14px;font-size:0.85rem;margin-top:10px;color:var(--notice-text);}
-  .checklist-box ul{margin:6px 0 0 18px;padding:0;}
 
   .soap-copy-block{background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;padding:14px;white-space:pre-wrap;font-size:0.87rem;margin-top:10px;}
 
@@ -474,9 +472,9 @@
     .topbar, .quick-btns, .tabs, #toastContainer, .modal-overlay, .lock-btn,
     .page-header button, .page-header select, .row-actions, #calPrevBtn, #calNextBtn, #calTodayBtn,
     #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
-    #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
+    #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #makeRecoveryBtn, #goRecoverySettingsBtn, #exportLightBackupBtn, #crisisReportPrintBtn, #crisisReportBackBtn, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, #qbQuickDebrief, #dbQuickBtn, #dbAgendaBtn, #agendaPrintBtn, #agendaBackBtn, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
+    #clNewSoap, #makeRecoveryBtn, #goRecoverySettingsBtn, #exportLightBackupBtn, #crisisReportPrintBtn, #crisisReportBackBtn, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, #qbQuickDebrief, #dbQuickBtn, #dbAgendaBtn, #agendaPrintBtn, #agendaBackBtn, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
@@ -1840,7 +1838,6 @@ async function loadAllDataIntoState(){
   const debriefings = await Storage.loadAllDecrypted('debriefings');
   debriefings.forEach(d => State.debriefings.set(d.id, d));
 
-  await Snippets.load();
 
   State.seedClientIds = (await Storage.getSetting('seedClientIds')) || [];
   State.recentClientIds = (await Storage.getSetting('recentClientIds')) || [];
@@ -2880,10 +2877,7 @@ const Clients = {
 };
 
 /* =========================================================================
-   SOAP  — the core feature. Includes the rule-based (non-AI) "A" drafting
-   engine. The generator is isolated behind SoapModule.generateADraft() so an
-   external AI backend could be substituted later without touching the rest
-   of the app.
+   SOAP  — the core feature.
    ========================================================================= */
 /* =========================================================================
    DEBRIEFINGS  (디브리핑) — 위기개입·상담 뒤에 돌아보는 기록. 등록 대상자뿐 아니라 "미등록 대상자"
@@ -3064,7 +3058,6 @@ const SoapModule = {
   ],
   DECLINE_WORDS: ['감소', '줄어', '줄었', '줄임', '부족', '저하', '악화', '힘들어', '힘듦', '못하', '못 하', '안하', '안 하', '거부', '어려워', '어려움', '나빠짐', '불면', '못 자', '못자', '저조', '떨어'],
   IMPROVE_WORDS: ['증가', '늘어', '늘었', '호전', '좋아짐', '좋아졌', '양호', '안정', '충분', '개선', '잘 자', '잘 지'],
-  INTENSIFIER_WORDS: ['현저히', '현저하게', '많이', '심하게', '상당히', '크게', '매우'],
 
   // Looks only within the same sentence as each keyword occurrence — a simple
   // proxy for "was this topic described as getting worse or better", without
@@ -3085,83 +3078,6 @@ const SoapModule = {
     if (sawDecline) return 'decline';
     if (sawImprove) return 'improve';
     return 'neutral';
-  },
-
-  // 실제로 캐스워커가 쓴 문장에서 해당 주제어가 들어간 문장을 그대로 뽑아온다.
-  // A 초안이 늘 똑같은 정형 문구로만 채워지지 않도록, 고정된 clause 대신 이
-  // 인용문을 문장에 넣어 실제 입력 내용이 드러나게 한다.
-  extractQuote(topicWords, text, maxLen){
-    const sentences = this.splitSentences(text || '').filter(s => topicWords.some(w => s.includes(w)));
-    if (!sentences.length) return '';
-    let s = sentences[0];
-    // 한 문장에 쉼표로 여러 내용이 나열된 경우("A하고, B함"), 문장 전체가
-    // 아니라 해당 주제어가 들어간 절만 뽑는다 — 그래야 서로 다른 주제의
-    // 인용문이 같은 긴 문장을 통째로 반복해서 담지 않는다.
-    const clauses = s.split(/,\s*/).map(c => c.trim()).filter(Boolean);
-    if (clauses.length > 1){
-      const matchingClause = clauses.find(c => topicWords.some(w => c.includes(w)));
-      if (matchingClause) s = matchingClause.endsWith('하고') ? matchingClause.slice(0, -2).trim() : matchingClause;
-    }
-    if (s.length > maxLen) s = s.slice(0, maxLen) + '…';
-    return s;
-  },
-
-  // 주제 하나에 대한 문장 하나를 만든다. 같은 A 안에 여러 주제가 섞여 있을 때
-  // 문장 모양이 전부 똑같아 보이지 않도록, idx로 표현 방식을 살짝 바꾼다(무작위가
-  // 아니라 같은 입력이면 항상 같은 결과가 나오도록 idx 기반으로 고정 선택).
-  buildTopicSentence(t, S, O, subjectLabel, persistentDeclineKeys, hasIntensifier, idx){
-    const quoteS = this.extractQuote(t.words, S, 40);
-    const quoteO = !quoteS ? this.extractQuote(t.words, O, 40) : '';
-    const quote = quoteS || quoteO;
-    const variant = idx % 2;
-    const eunNeun = Utils.josa(subjectLabel, '은', '는');
-
-    if (t.direction === 'neutral'){
-      const coreNoun = t.label + ' 관련 내용';
-      if (!quote) return coreNoun + '이 확인됨.';
-      if (quoteS) return variant === 0
-        ? subjectLabel + eunNeun + ' "' + quote + '"고 언급함.'
-        : '"' + quote + '"는 내용이 확인됨.';
-      return '관찰 결과 "' + quote + '"는 내용이 확인됨.';
-    }
-
-    if (t.direction === 'mixed'){
-      const base = t.label + '와 관련하여 호전과 저하가 함께 나타나고 있어 세심한 관찰이 필요함';
-      if (!quote) return base + '.';
-      return quoteS
-        ? subjectLabel + eunNeun + ' "' + quote + '"고 밝히는 등, ' + base + '.'
-        : '"' + quote + '"는 내용이 확인되는 등, ' + base + '.';
-    }
-
-    const isDecline = t.direction === 'decline';
-    const coreNoun = isDecline
-      ? t.declineClause + (persistentDeclineKeys.includes(t.key) ? '(반복적으로 확인됨)' : '') + (hasIntensifier ? '(정도가 두드러짐)' : '')
-      : t.improveClause;
-    const coreIga = Utils.josa(coreNoun, '이', '가');
-    const coreEulReul = Utils.josa(coreNoun, '을', '를');
-
-    if (!quote){
-      return coreNoun + coreIga + ' 확인됨.';
-    }
-    if (quoteS){
-      if (isDecline){
-        return variant === 0
-          ? subjectLabel + eunNeun + ' "' + quote + '"고 밝혔으며, 이는 ' + coreNoun + coreEulReul + ' 시사하는 것으로 판단됨.'
-          : '상담 중 "' + quote + '"는 진술이 확인되어, ' + coreNoun + coreIga + ' 우려되는 것으로 판단됨.';
-      }
-      return variant === 0
-        ? subjectLabel + eunNeun + ' "' + quote + '"고 밝혀, ' + coreNoun + coreIga + ' 확인됨.'
-        : '"' + quote + '"는 진술을 통해 ' + coreNoun + coreIga + ' 파악되어 긍정적인 변화로 사료됨.';
-    }
-    // O(관찰) 기반 인용
-    if (isDecline){
-      return variant === 0
-        ? '관찰 결과 "' + quote + '"는 내용이 확인되었고, 이는 ' + coreNoun + coreEulReul + ' 시사하는 것으로 보임.'
-        : '상담 과정에서 "' + quote + '"가 관찰되어, ' + coreNoun + coreIga + ' 확인됨.';
-    }
-    return variant === 0
-      ? '관찰 결과 "' + quote + '"가 확인되어, ' + coreNoun + coreIga + ' 나타나는 것으로 보임.'
-      : '상담 과정에서 "' + quote + '"는 내용이 확인되어, ' + coreNoun + coreIga + ' 파악됨.';
   },
 
   list(){
@@ -3228,125 +3144,6 @@ const SoapModule = {
     if ((soap.S || soap.O) && !soap.A) return 'S·O 입력 완료 / A 작성 필요';
     if (soap.A && !soap.PText && (!soap.PActions || soap.PActions.length === 0)) return 'A 작성 완료 / P 입력 필요';
     return '검토 후 최종저장 필요';
-  },
-
-  // ---- Rule-based "A" draft generator (no external AI, no network calls) ----
-  // Everything here is keyword/window matching over the exact S/O text the
-  // worker typed — it never fabricates facts, and never touches risk,
-  // diagnosis, medication compliance, or family dynamics beyond noting that
-  // related words appeared.
-  generateADraft({ id, clientId, contactType, subject, S, O, areas }){
-    const combined = ((S || '') + '\n' + (O || ''));
-    const hasAnyText = (S && S.trim()) || (O && O.trim());
-
-    if (!hasAnyText){
-      return {
-        text: '',
-        checklist: ['S(주관적 정보)와 O(객관적 정보)를 먼저 입력한 후 다시 시도해 주세요.']
-      };
-    }
-
-    const found = this.TOPIC_KEYWORDS
-      .filter(t => t.words.some(w => combined.includes(w)))
-      .map(t => Object.assign({ direction: this.topicDirection(t.words, combined) }, t));
-    const hasIntensifier = this.INTENSIFIER_WORDS.some(w => combined.includes(w));
-
-    // Each topic goes into exactly ONE bucket — a 'mixed' topic (both decline
-    // and improve words in its sentences) used to land in BOTH the decline
-    // and improve lists, producing self-contradicting drafts (e.g. "수면
-    // 감소"와 "수면 개선"이 같은 문단에 동시에 등장). It now gets its own clause.
-    const declineTopics = found.filter(t => t.direction === 'decline');
-    const improveTopics = found.filter(t => t.direction === 'improve');
-    const mixedTopics = found.filter(t => t.direction === 'mixed');
-    const neutralTopics = found.filter(t => t.direction === 'neutral');
-    const strugglingTopics = declineTopics.concat(mixedTopics);
-
-    // Compare each struggling/improving topic against the client's most
-    // recent PRIOR finalized SOAP (excluding this same record, so editing an
-    // existing draft doesn't compare it against itself) to describe an
-    // actual trend instead of guessing one from generic "변화" wording.
-    // Still nothing invented — only directions re-derived from that older
-    // record's own S/O text.
-    const priorFinal = clientId
-      ? this.listByClient(clientId).find(s => s.id !== id && s.status === 'final')
-      : null;
-    const priorCombined = priorFinal ? ((priorFinal.S || '') + '\n' + (priorFinal.O || '')) : '';
-    const reversals = [];
-    const persistentDeclineKeys = [];
-    if (priorCombined){
-      found.forEach(t => {
-        const priorDir = this.topicDirection(t.words, priorCombined);
-        if (priorDir === 'neutral' || priorDir === t.direction) {
-          if (priorDir === 'decline' && t.direction === 'decline') persistentDeclineKeys.push(t.key);
-          return;
-        }
-        if ((t.direction === 'decline' || t.direction === 'mixed') && priorDir === 'improve'){
-          reversals.push(t.label + Utils.josa(t.label, '이', '가') + ' 호전 흐름에서 다시 저하되는 양상');
-        } else if (t.direction === 'improve' && (priorDir === 'decline' || priorDir === 'mixed')){
-          reversals.push(t.label + Utils.josa(t.label, '이', '가') + ' 저하 흐름에서 호전되는 양상');
-        }
-      });
-    }
-
-    const sentences = [];
-    const contactLabel = contactType || '상담';
-    const subjectLabel = CONSTANTS.SOAP_SUBJECTS[subject] || CONSTANTS.SOAP_SUBJECTS.client;
-
-    // ① 현재 상태 — 발견된 주제마다 실제 S/O 문장을 인용해 한 문장씩 만든다.
-    // 고정된 clause만 이어붙이던 이전 방식과 달리, 매번 실제로 적은 내용이
-    // 그대로 드러나므로 케이스마다 자연히 달라진다. 접촉유형은 첫 문장 앞에만
-    // 붙여 상담기록지 맥락을 살리되, 문장 전체를 고정 문구로 시작하지 않는다.
-    const relevantTopics = found.filter(t => t.direction !== 'neutral').concat(found.filter(t => t.direction === 'neutral'));
-    if (relevantTopics.length === 0){
-      sentences.push('금번 ' + contactLabel + ' 상담에서 확인된 S·O 내용을 바탕으로 특이 변화 사항은 뚜렷하게 나타나지 않는 것으로 보임.');
-    } else {
-      relevantTopics.forEach((t, idx) => {
-        let sentence = this.buildTopicSentence(t, S, O, subjectLabel, persistentDeclineKeys, hasIntensifier, idx);
-        if (idx === 0) sentence = '금번 ' + contactLabel + ' 상담에서 ' + sentence;
-        sentences.push(sentence);
-      });
-    }
-
-    // ② 이전 상담 기록과의 실제 비교 — 저장된 직전 최종 SOAP이 있을 때만 생성.
-    if (reversals.length){
-      sentences.push('이전 상담 기록과 비교하면 ' + reversals.join(', ') + '이 확인되어, 해당 부분에 대한 원인 파악과 대응이 필요한 것으로 사료됨.');
-    }
-
-    // 사회적 관계(가족·보호자 연락 등)가 중립적으로만 언급되었는데 다른 어려움이
-    // 함께 있는 경우, 자원 활용 상태를 계속 살펴볼 필요가 있다는 정도만 덧붙임 —
-    // 가족 역할을 단정하지 않음.
-    if (neutralTopics.some(t => t.key === 'social') && strugglingTopics.length > 0){
-      sentences.push('가족(보호자)과의 연락 여부도 함께 확인되어, 관련 자원 활용 상태를 지속적으로 파악할 필요가 있는 것으로 사료됨.');
-    }
-
-    // ③ 사례관리 의미 — 실제로 종합할 만한 내용(어려움 2개 이상, 선택된 상담영역,
-    // 또는 뚜렷한 호전)이 있을 때만 덧붙인다. 아무것도 없는데 억지로 채우는
-    // 문장은 만들지 않는다 — 그것이 "형식적으로 느껴진다"는 지적의 원인이었다.
-    const areaText = (areas && areas.length) ? areas.filter(a => a !== '기타').join(', ') : '';
-    if (strugglingTopics.length >= 2){
-      sentences.push(strugglingTopics.map(t => t.label).join(', ') + ' 등 여러 영역에서 어려움이 함께 나타나고 있어, 사례관리 차원의 지속적인 개입이 필요한 것으로 사료됨.');
-    } else if (areaText){
-      sentences.push(areaText + ' 영역과 관련하여 대상자의 일상생활 및 사회적 기능 유지를 위한 사례관리 지속이 필요한 것으로 사료됨.');
-    } else if (improveTopics.length){
-      sentences.push(improveTopics.map(t => t.label).join(', ') + ' 영역에서 긍정적인 흐름이 이어지고 있어, 현재의 지지체계와 개입 방향을 유지할 필요가 있는 것으로 사료됨.');
-    }
-
-    // ④ 필요한 개입 및 관찰 — 어려움이 있을 때만 "우선적 관찰"을 언급하고,
-    // 그마저 없으면(순수 관찰/중립 내용만 있을 때) 이 문장 자체를 생략한다.
-    if (strugglingTopics.length){
-      sentences.push('특히 ' + strugglingTopics.map(t => t.label).join(', ') + '에 대한 우선적인 관찰과 확인이 필요한 것으로 판단됨.');
-    }
-
-    // ⚠ 확인해 볼 항목 — helps the worker notice gaps; this is NOT a risk assessment.
-    const checklist = [];
-    const foundKeys = found.map(t => t.key);
-    if (!foundKeys.includes('sleep')) checklist.push('수면 상태가 확인되지 않음');
-    if (!foundKeys.includes('med')) checklist.push('복약 상태가 확인되지 않음');
-    if (!foundKeys.includes('hygiene')) checklist.push('일상생활 수행 정도가 확인되지 않음');
-    if (!foundKeys.includes('physical')) checklist.push('신체 건강 상태가 확인되지 않음');
-    checklist.push('위험 관련 내용은 자동으로 판단하지 않으므로, 필요 시 실무자가 직접 확인 후 기록하세요.');
-
-    return { text: sentences.join(' '), checklist };
   },
 
   formatForCopy(soap){
@@ -4350,58 +4147,6 @@ const CSV = {
    restoring. This never leaves the device except when the user saves or
    moves the file themselves.
    ========================================================================= */
-/* =========================================================================
-   SNIPPETS (상용구) — 자주 쓰는 문구를 SOAP·간단 기록 입력칸에 넣는다. 문구에
-   대상자 정보가 섞일 수 있으므로 기록과 같은 키로 암호화해 설정 저장소에 둔다
-   (저장소 구조를 바꾸지 않기 위해 별도 테이블 대신 암호문 한 덩어리로 보관).
-   ========================================================================= */
-const Snippets = {
-  FIELDS: { S: 'S (주관적 정보)', O: 'O (객관적 정보)', A: 'A (사정)', P: 'P (계획)', any: '모든 칸' },
-  // 처음 한 번만 넣어 주는 예시 — 사실을 지어내지 않는 빈칸 양식이며 자유롭게 고치고 지울 수 있다.
-  STARTERS: [
-    { label: '전화 안부 확인', field: 'S', text: '전화로 안부를 확인함. 최근 지내는 상황: ' },
-    { label: '복약 확인', field: 'S', text: '복약: (규칙적으로 복용 / 간혹 누락 / 중단)함. 부작용 호소: (없음 / 있음 - )' },
-    { label: '수면·식사', field: 'S', text: '수면: (시간, 질) / 식사: (횟수, 양)' },
-    { label: '전화 미연결', field: 'S', text: '전화 연결을 시도하였으나 받지 않음(시도 시각: ). 문자 남김.' },
-    { label: '방문 관찰', field: 'O', text: '외모·위생: / 표정·행동: / 언어(속도·양): / 집 안 환경: ' },
-    { label: '재연락 계획', field: 'P', text: '다음 연락 예정일에 재연락하여 상태를 확인할 예정.' }
-  ],
-  items: [],
-
-  async load(){
-    const row = await Storage.getSetting('textSnippetsEnc');
-    if (!row){
-      this.items = this.STARTERS.map(x => Object.assign({ id: Utils.uid('snip') }, x));
-      await this.persist(false);
-      return;
-    }
-    try{
-      const data = await CryptoModule.decryptJSON(Auth.cryptoKey, row.iv, row.cipher);
-      this.items = Array.isArray(data.items) ? data.items : [];
-    }catch(e){ console.error(e); this.items = []; }
-  },
-  async persist(markDirty){
-    const { iv, cipher } = await CryptoModule.encryptJSON(Auth.cryptoKey, { version: 1, items: this.items });
-    await Storage.setSetting('textSnippetsEnc', { iv, cipher });
-    if (markDirty !== false) Backup.markDirty();
-  },
-  forField(field){ return this.items.filter(x => x.field === field || x.field === 'any'); },
-  get(id){ return this.items.find(x => x.id === id); },
-  _clean({ label, field, text }){
-    label = (label || '').trim(); text = (text || '').trim();
-    if (!label) throw new Error('이름을 입력해 주세요.');
-    if (!text) throw new Error('내용을 입력해 주세요.');
-    return { label, text, field: this.FIELDS[field] ? field : 'any' };
-  },
-  async add(data){ this.items.push(Object.assign({ id: Utils.uid('snip') }, this._clean(data))); await this.persist(); },
-  async update(id, data){
-    const it = this.get(id);
-    if (!it) throw new Error('상용구를 찾을 수 없습니다.');
-    Object.assign(it, this._clean(data));
-    await this.persist();
-  },
-  async remove(id){ this.items = this.items.filter(x => x.id !== id); await this.persist(); }
-};
 
 const Backup = {
   DATA_STORES: ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes', 'debriefings'],
@@ -4423,7 +4168,7 @@ const Backup = {
     await Storage.setSetting('backupDirtySince', null);
   },
 
-  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'thresholds', 'retentionYears', 'seedClientIds', 'textSnippetsEnc', 'authMode', 'masterWrap', 'recoveryWrap'],
+  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'thresholds', 'retentionYears', 'seedClientIds', 'authMode', 'masterWrap', 'recoveryWrap'],
   overdueCached: false,
 
   // 첨부 제외 백업 — 대상자 기록은 안에 첨부파일이 함께 암호화되어 있어서, 지금 메모리에 풀려 있는 기록에서
@@ -7915,17 +7660,15 @@ const Views = {
       '</div></div>';
     html += '</div></div>';
 
-    html += '<div class="panel"><div class="field full"><label for="soapS">S (주관적 정보)</label>' + Views.snippetBarHtml('S', 'soapS') +
+    html += '<div class="panel"><div class="field full"><label for="soapS">S (주관적 정보)</label>' + 
       '<textarea id="soapS" placeholder="대상자가 표현한 주요 호소, 현재 상황, 변화, 욕구 등을 기록하세요.">' + Utils.escapeHtml(soap.S) + '</textarea></div>' +
-      '<div class="field full"><label for="soapO">O (객관적 정보)</label>' + Views.snippetBarHtml('O', 'soapO', { manage: false }) +
+      '<div class="field full"><label for="soapO">O (객관적 정보)</label>' + 
       '<textarea id="soapO" placeholder="상담 중 관찰된 모습, 행동, 말투, 활동상태, 확인된 사실 등을 기록하세요.">' + Utils.escapeHtml(soap.O) + '</textarea></div></div>';
 
     html += '<div class="panel">' +
-      '<div class="panel-title">A (사정)<span><button class="btn btn-sm btn-primary" id="genABtn">✨ A 자동작성</button></span></div>' +
-      '<div class="field full">' + Views.snippetBarHtml('A', 'soapA', { manage: false }) + '<textarea id="soapA" aria-label="A (사정)" placeholder="자동작성 버튼을 눌러 초안을 생성하거나 직접 작성하세요.">' + Utils.escapeHtml(soap.A) + '</textarea></div>' +
-      '<div id="checklistBox"></div>' +
+      '<div class="panel-title">A (사정)</div>' +
+      '<div class="field full"><textarea id="soapA" aria-label="A (사정)" placeholder="상담 내용을 바탕으로 사정을 직접 작성하세요.">' + Utils.escapeHtml(soap.A) + '</textarea></div>' +
       '<div style="display:flex;gap:8px;margin-top:10px;">' +
-      '<button class="btn btn-sm" id="regenABtn">✨ A 다시 작성</button>' +
       '<button class="btn btn-sm" id="copyABtn">' + icon('copy') + ' A 복사</button>' +
       '</div></div>';
 
@@ -7933,7 +7676,7 @@ const Views = {
       '<div class="checkbox-group" style="margin-bottom:12px;">' +
       CONSTANTS.QUICK_P_ACTIONS.map(a => '<label class="chip-check' + (soap.PActions.includes(a) ? ' checked' : '') + '"><input type="checkbox" class="pActionChk" value="' + a + '"' + (soap.PActions.includes(a) ? ' checked' : '') + '>' + a + '</label>').join('') +
       '</div>' +
-      '<div class="field full"><label for="soapPText">후속조치 내용 (자유 입력)</label>' + Views.snippetBarHtml('P', 'soapPText', { manage: false }) + '<textarea id="soapPText" style="min-height:70px;" placeholder="예: 다음 주 화요일 대상자에게 전화하여 수면 상태 확인 예정.">' + Utils.escapeHtml(soap.PText) + '</textarea></div>' +
+      '<div class="field full"><label for="soapPText">후속조치 내용 (자유 입력)</label>' + '<textarea id="soapPText" style="min-height:70px;" placeholder="예: 다음 주 화요일 대상자에게 전화하여 수면 상태 확인 예정.">' + Utils.escapeHtml(soap.PText) + '</textarea></div>' +
       '<div class="field" style="max-width:220px;"><label>예정일</label><input type="date" id="soapPDate" value="' + (soap.pDate || '') + '"></div>' +
       '<p class="help-text">예정일을 입력하고 최종저장하면 위 선택 항목이 자동으로 후속조치로 등록됩니다.</p>' +
       '</div>';
@@ -8166,7 +7909,6 @@ const Views = {
     document.querySelectorAll('.chip-check input').forEach(chk => {
       chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
     });
-    Views.bindSnippetBars(document.getElementById('appMain'));
     const copyPrevBtn = document.getElementById('copyPrevSoapBtn');
     if (copyPrevBtn) copyPrevBtn.onclick = () => {
       const cid = Views.resolveClientPickerValue(document.getElementById('soapClientPicker').value);
@@ -8207,31 +7949,6 @@ const Views = {
       el.addEventListener('change', scheduleAutosave);
     });
 
-    const renderChecklist = (checklist) => {
-      const box = document.getElementById('checklistBox');
-      if (!checklist || checklist.length === 0){ box.innerHTML = ''; return; }
-      box.innerHTML = '<div class="checklist-box">⚠ 확인해 볼 항목<ul>' + checklist.map(c => '<li>' + Utils.escapeHtml(c) + '</li>').join('') + '</ul></div>';
-    };
-
-    const doGenerate = (force) => {
-      const soap = Views._readSoapForm();
-      if (soap.A && soap.A.trim() && !force){
-        UI.confirm('이미 작성된 A 내용이 있습니다. 자동작성 초안으로 덮어쓸까요?', () => {
-          const result = SoapModule.generateADraft(soap);
-          document.getElementById('soapA').value = result.text;
-          renderChecklist(result.checklist);
-          scheduleAutosave();
-        });
-        return;
-      }
-      const result = SoapModule.generateADraft(soap);
-      document.getElementById('soapA').value = result.text;
-      renderChecklist(result.checklist);
-      scheduleAutosave();
-    };
-
-    document.getElementById('genABtn').onclick = () => doGenerate(false);
-    document.getElementById('regenABtn').onclick = () => doGenerate(true);
     document.getElementById('copyABtn').onclick = () => copyToClipboard(document.getElementById('soapA').value);
 
     const copyAllBtn = document.getElementById('copyAllBtn');
@@ -10182,7 +9899,7 @@ const Views = {
       items: [
         '🏠 대시보드 — 오늘 할 일, 기한 초과 후속조치, 위기관리 대상자, 미접촉 대상자, 정기 재사정, 안전 정보 공백 등을 한눈에 확인',
         '👤 대상자 — 전체 대상자 목록, 검색·필터, 신규 등록, 전체 현황 인쇄',
-        '📝 SOAP 기록 — 상담 기록 작성·조회, 규칙 기반 A(사정) 초안 생성',
+        '📝 SOAP 기록 — 상담 기록 작성·조회',
         '🔔 후속조치 — 등록한 후속조치 목록과 완료 처리',
         '📅 일정 — 월간/주간 일정, 반복 일정, iCal(.ics) 내보내기',
         '🏢 기관주소록 — 자주 연계하는 외부 자원(기관) 목록',
@@ -10420,86 +10137,7 @@ const Views = {
     };
   },
 
-  /* ---------------- 기록 효율화: 상용구 · 간단 기록 · 지난 기록 불러오기 ---------------- */
-  // 입력칸 옆에 붙는 "상용구 넣기" 선택칸. field는 S/O/A/P, targetId는 글을 넣을 textarea.
-  snippetBarHtml(field, targetId, opts){
-    opts = opts || {};
-    return '<div class="snippet-bar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">' +
-      '<select class="snippetSelect" data-field="' + field + '" data-target="' + targetId + '" aria-label="' + field + ' 상용구 넣기" style="max-width:240px;">' +
-      Views._snippetOptionsHtml(field) + '</select>' +
-      (opts.manage === false ? '' : '<button type="button" class="btn-link" data-manage-snippets>상용구 관리</button>') + '</div>';
-  },
-  _snippetOptionsHtml(field){
-    return '<option value="">상용구 넣기…</option>' +
-      Snippets.forField(field).map(x => '<option value="' + x.id + '">' + Utils.escapeHtml(x.label) + '</option>').join('');
-  },
-  refreshSnippetSelects(){
-    document.querySelectorAll('.snippetSelect').forEach(sel => { sel.innerHTML = Views._snippetOptionsHtml(sel.dataset.field); });
-  },
-  // 커서 위치에 문구를 넣는다(앞에 글이 있고 줄 처음이 아니면 줄을 바꿔서). 입력 이벤트를 보내 자동저장도 따라간다.
-  insertAtCursor(ta, text){
-    const start = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
-    const end = ta.selectionEnd != null ? ta.selectionEnd : start;
-    const before = ta.value.slice(0, start);
-    const lead = before && !before.endsWith('\n') ? '\n' : '';
-    ta.value = before + lead + text + ta.value.slice(end);
-    const pos = (before + lead + text).length;
-    ta.setSelectionRange(pos, pos);
-    ta.focus();
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-  },
-  bindSnippetBars(root){
-    (root || document).querySelectorAll('.snippetSelect').forEach(sel => {
-      sel.onchange = () => {
-        const it = Snippets.get(sel.value);
-        sel.value = '';
-        const ta = document.getElementById(sel.dataset.target);
-        if (it && ta) Views.insertAtCursor(ta, it.text);
-      };
-    });
-    (root || document).querySelectorAll('[data-manage-snippets]').forEach(btn => { btn.onclick = () => Views.openSnippetManager(); });
-  },
-  openSnippetManager(editId){
-    const editing = editId ? Snippets.get(editId) : null;
-    UI.openModal(
-      '<h3>상용구 관리</h3>' +
-      '<p class="help-text" style="margin-bottom:10px;">자주 쓰는 문구를 등록해 두면 SOAP과 간단 기록 입력칸에서 골라 넣을 수 있습니다. 문구는 기록과 같은 방식으로 암호화되어 저장됩니다.</p>' +
-      '<div style="max-height:34vh;overflow:auto;margin-bottom:12px;">' +
-      (Snippets.items.length === 0 ? '<div class="empty-msg">등록된 상용구가 없습니다.</div>' : Snippets.items.map(x =>
-        '<div class="list-row"><div class="list-row-main"><div class="row-title">' + Utils.escapeHtml(x.label) + ' <span class="badge badge-draft">' + Utils.escapeHtml(Snippets.FIELDS[x.field] || '모든 칸') + '</span></div>' +
-        '<div class="row-sub" style="white-space:pre-line;">' + Utils.escapeHtml(Utils.truncate ? Utils.truncate(x.text, 80) : x.text.slice(0, 80)) + '</div></div>' +
-        '<div class="row-actions"><button class="btn btn-sm" data-edit-snip="' + x.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-snip="' + x.id + '">삭제</button></div></div>').join('')) +
-      '</div><div class="divider"></div>' +
-      '<div class="panel-title" style="margin-bottom:8px;">' + (editing ? '상용구 수정' : '새 상용구') + '</div>' +
-      '<div class="form-grid"><div class="field"><label>이름</label><input type="text" id="snipLabel" maxlength="30" value="' + Utils.escapeHtml(editing ? editing.label : '') + '"></div>' +
-      '<div class="field"><label>넣을 칸</label><select id="snipField">' + Object.keys(Snippets.FIELDS).map(k => '<option value="' + k + '"' + ((editing ? editing.field : 'any') === k ? ' selected' : '') + '>' + Snippets.FIELDS[k] + '</option>').join('') + '</select></div>' +
-      '<div class="field full"><label>내용</label><textarea id="snipText" style="min-height:80px;">' + Utils.escapeHtml(editing ? editing.text : '') + '</textarea></div></div>' +
-      '<div class="error-msg hidden" id="snipError" role="alert"></div>' +
-      '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
-      (editing ? '<button class="btn" id="snipCancel">수정 취소</button>' : '') +
-      '<button class="btn" id="snipClose">닫기</button><button class="btn btn-primary" id="snipSave">' + (editing ? '저장' : '＋ 추가') + '</button></div>'
-    );
-    document.getElementById('snipClose').onclick = () => UI.closeModal();
-    const cancel = document.getElementById('snipCancel');
-    if (cancel) cancel.onclick = () => Views.openSnippetManager();
-    document.querySelectorAll('[data-edit-snip]').forEach(b => { b.onclick = () => Views.openSnippetManager(b.dataset.editSnip); });
-    document.querySelectorAll('[data-del-snip]').forEach(b => {
-      b.onclick = async () => { await Snippets.remove(b.dataset.delSnip); Views.refreshSnippetSelects(); Views.openSnippetManager(); };
-    });
-    document.getElementById('snipSave').onclick = async () => {
-      try{
-        const data = { label: document.getElementById('snipLabel').value, field: document.getElementById('snipField').value, text: document.getElementById('snipText').value };
-        if (editing) await Snippets.update(editing.id, data); else await Snippets.add(data);
-        Views.refreshSnippetSelects();
-        Views.openSnippetManager();
-      }catch(e){
-        const err = document.getElementById('snipError');
-        err.textContent = e.message;
-        err.classList.remove('hidden');
-      }
-    };
-  },
-
+  /* ---------------- 기록 효율화: 간단 기록 · 지난 기록 불러오기 ---------------- */
   // 간단 기록 — 전화 상담처럼 짧은 접촉을 SOAP 전체 화면 없이 한 번에 남긴다. 저장되는 것은
   // 일반 SOAP 기록(내용은 S칸)이라 목록·검색·타임라인에 그대로 나오고, 필요하면 나중에 열어 보충할 수 있다.
   openQuickRecordModal(prefillClientId){
@@ -10513,7 +10151,7 @@ const Views = {
       '<div class="field"><label>접촉 유형</label><select id="qrContactType">' + CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div></div>' +
       '<div class="field"><label>상담 영역 (선택)</label><div class="checkbox-group">' +
       CONSTANTS.AREAS.map(a => '<label class="chip-check"><input type="checkbox" class="qrAreaChk" value="' + a + '">' + a + '</label>').join('') + '</div></div>' +
-      '<div class="field"><label>내용</label>' + Views.snippetBarHtml('S', 'qrText', { manage: false }) +
+      '<div class="field"><label>내용</label>' + 
       '<textarea id="qrText" style="min-height:110px;" placeholder="통화·면담 내용을 간단히 적어 주세요. (Ctrl/Cmd+Enter로 저장)"></textarea></div>' +
       '<div class="field"><label>후속조치 (선택)</label><div class="checkbox-group">' +
       CONSTANTS.QUICK_P_ACTIONS.map(a => '<label class="chip-check"><input type="checkbox" class="qrPChk" value="' + a + '">' + a + '</label>').join('') + '</div>' +
@@ -10524,7 +10162,6 @@ const Views = {
     document.querySelectorAll('#modalBox .chip-check input').forEach(chk => {
       chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
     });
-    Views.bindSnippetBars(document.getElementById('modalBox'));
     const save = async () => {
       try{
         const soap = SoapModule.createBlank({ clientId: Views.resolveClientPickerValue(document.getElementById('qrClient').value) });
