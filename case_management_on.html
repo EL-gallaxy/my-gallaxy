@@ -423,7 +423,7 @@
     #clNewSoap, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
-    #addTagBtn, #newTagInput, [data-del-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
+    #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
     #addGoalBtn, #goalTerm, #goalText, .goalStatusSelect, #saveVisitSafetyBtn, #saveSafetyPlanBtn,
     #vsViolence, #vsCompanion, #vsPets, #reportMonthSelect, #exportReportCsvBtn, #reportModeMonthBtn,
     #reportModeYearBtn, #reportYearSelect, #exportAnnualReportCsvBtn,
@@ -1893,6 +1893,20 @@ const Clients = {
     if (!client.tags.includes(tag)) client.tags.push(tag);
     await Storage.saveEncrypted('clients', client);
   },
+  async renameTag(id, oldTag, newTag){
+    const client = State.clients.get(id);
+    if (!client) return;
+    newTag = (newTag || '').trim();
+    if (!newTag) throw new Error('태그를 입력해 주세요.');
+    const tags = client.tags || [];
+    const idx = tags.indexOf(oldTag);
+    if (idx < 0) return;
+    // 바꾼 이름이 이미 있는 태그면 중복 없이 하나로 합친다.
+    if (newTag !== oldTag && tags.includes(newTag)) tags.splice(idx, 1);
+    else tags[idx] = newTag;
+    client.tags = tags;
+    await Storage.saveEncrypted('clients', client);
+  },
   async removeTag(id, tag){
     const client = State.clients.get(id);
     if (!client) return;
@@ -2459,6 +2473,16 @@ const FollowUps = {
     return fu;
   },
 
+  async update(id, { clientId, type, text, dueDate, memo }){
+    const fu = State.followUps.get(id);
+    if (!fu) throw new Error('후속조치를 찾을 수 없습니다.');
+    if (!clientId) throw new Error('대상자를 선택해 주세요.');
+    if (!dueDate) throw new Error('예정일을 입력해 주세요.');
+    Object.assign(fu, { clientId, type: type || '기타', text: text || '', dueDate, memo: memo || '' });
+    await Storage.saveEncrypted('followUps', fu);
+    return fu;
+  },
+
   async complete(id){
     const fu = State.followUps.get(id);
     if (!fu) return;
@@ -2507,6 +2531,15 @@ const Schedules = {
     if (!date) throw new Error('날짜를 입력해 주세요.');
     const sc = { id: Utils.uid('sch'), clientId, date, time: time || '', contactType: contactType || '전화', memo: memo || '', status: 'planned' };
     State.schedules.set(sc.id, sc);
+    await Storage.saveEncrypted('schedules', sc);
+    return sc;
+  },
+  async update(id, { clientId, date, time, contactType, memo }){
+    const sc = State.schedules.get(id);
+    if (!sc) throw new Error('일정을 찾을 수 없습니다.');
+    if (!clientId) throw new Error('대상자를 선택해 주세요.');
+    if (!date) throw new Error('날짜를 입력해 주세요.');
+    Object.assign(sc, { clientId, date, time: time || '', contactType: contactType || '전화', memo: memo || '' });
     await Storage.saveEncrypted('schedules', sc);
     return sc;
   },
@@ -2599,6 +2632,18 @@ const ResourceDirectory = {
       name, phone: (phone || '').trim(), contactPerson: (contactPerson || '').trim(), note: (note || '').trim()
     };
     State.resourceDirectory.set(entry.id, entry);
+    await Storage.saveEncrypted('resourceDirectory', entry);
+    return entry;
+  },
+  async update(id, { type, name, phone, contactPerson, note }){
+    const entry = State.resourceDirectory.get(id);
+    if (!entry) throw new Error('기관을 찾을 수 없습니다.');
+    name = (name || '').trim();
+    if (!name) throw new Error('기관명을 입력해 주세요.');
+    Object.assign(entry, {
+      type: type || entry.type, name, phone: (phone || '').trim(),
+      contactPerson: (contactPerson || '').trim(), note: (note || '').trim()
+    });
     await Storage.saveEncrypted('resourceDirectory', entry);
     return entry;
   },
@@ -3955,7 +4000,7 @@ const Views = {
     const tags = c.tags || [];
     basicHtml += '<div class="panel"><div class="panel-title">특성 태그</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:' + (tags.length ? '12px' : '0') + ';">' +
-      tags.map(t => '<span class="tag">' + Utils.escapeHtml(t) + ' <button class="btn-link" style="color:inherit;text-decoration:none;" data-del-tag="' + Utils.escapeHtml(t) + '">✕</button></span>').join('') +
+      tags.map(t => '<span class="tag">' + Utils.escapeHtml(t) + ' <button class="btn-link" style="color:inherit;text-decoration:none;" data-edit-tag="' + Utils.escapeHtml(t) + '" title="태그 수정">✎</button> <button class="btn-link" style="color:inherit;text-decoration:none;" data-del-tag="' + Utils.escapeHtml(t) + '">✕</button></span>').join('') +
       '</div>' +
       '<div style="display:flex;gap:8px;max-width:360px;">' +
       '<input type="text" id="newTagInput" placeholder="예: 1인가구" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);">' +
@@ -4315,6 +4360,7 @@ const Views = {
             '</div><div class="row-actions">' +
             '<button class="btn btn-sm' + (d.receivedDate ? '' : ' btn-primary') + '" data-toggle-doc="' + d.id + '">' + (d.receivedDate ? '미수령으로 변경' : '수령 확인') + '</button>' +
             '<button class="btn btn-sm" data-attach-doc="' + d.id + '">' + icon('paperclip') + ' 첨부</button>' +
+            '<button class="btn btn-sm" data-edit-doc="' + d.id + '">이름 수정</button>' +
             '<button class="btn btn-sm btn-danger" data-del-doc="' + d.id + '">삭제</button></div></div>';
         });
       }
@@ -4493,6 +4539,9 @@ const Views = {
       { attr: 'data-edit-reassess', list: 'reassessments', btn: 'addReassessBtn', done: '재사정 기록을 수정했습니다.',
         fill: r => { set('reassessDate', r.date); set('reassessNote', r.note); },
         read: () => ({ date: val('reassessDate') || Utils.todayStr(), note: val('reassessNote').trim() }) },
+      { attr: 'data-edit-doc', list: 'documents', btn: 'addDocBtn', done: '서류 항목 이름을 수정했습니다.',
+        fill: d => { set('docNameInput', d.name); },
+        read: () => { need(val('docNameInput').trim(), '서류 이름을 입력해 주세요.'); return { name: val('docNameInput').trim() }; } },
       { attr: 'data-edit-family', list: 'familyLinks', btn: 'addFamilyBtn', done: '가족 관계를 수정했습니다.',
         hint: '연결된 대상자는 바꿀 수 없고, 관계와 메모만 수정됩니다(상대방 쪽에도 함께 반영).',
         fill: fl => { set('famRelation', fl.relation); set('famNote', fl.note); },
@@ -4990,13 +5039,37 @@ const Views = {
 
     Views._bindItemEdits(id);
 
+    let editingTag = null;
     document.getElementById('addTagBtn').onclick = async () => {
       const input = document.getElementById('newTagInput');
       if (!input.value.trim()){ toast('태그를 입력해 주세요.', 'error'); return; }
-      await Clients.addTag(id, input.value);
-      toast('태그를 추가했습니다.');
+      if (editingTag !== null){
+        await Clients.renameTag(id, editingTag, input.value);
+        toast('태그를 수정했습니다.');
+      } else {
+        await Clients.addTag(id, input.value);
+        toast('태그를 추가했습니다.');
+      }
       UI.renderCurrentView();
     };
+    document.querySelectorAll('[data-edit-tag]').forEach(el => {
+      el.onclick = () => {
+        const addTagBtn = document.getElementById('addTagBtn');
+        const input = document.getElementById('newTagInput');
+        editingTag = el.dataset.editTag;
+        input.value = editingTag;
+        addTagBtn.textContent = '저장';
+        if (!document.getElementById('cancelTagEditBtn')){
+          const cancelBtn = document.createElement('button');
+          cancelBtn.id = 'cancelTagEditBtn';
+          cancelBtn.className = 'btn btn-sm';
+          cancelBtn.textContent = '취소';
+          cancelBtn.onclick = () => UI.renderCurrentView();
+          addTagBtn.after(cancelBtn);
+        }
+        input.focus();
+      };
+    });
     document.querySelectorAll('[data-del-tag]').forEach(el => {
       el.onclick = async () => {
         const snap = Clients.snapshot(id);
@@ -5472,7 +5545,7 @@ const Views = {
           '</div></div>' +
           '<div class="row-actions">' +
           (f.status === 'pending' ? '<button class="btn btn-sm" data-complete-fu="' + f.id + '">완료만</button><button class="btn btn-sm btn-primary" data-complete-fu-soap="' + f.id + '">완료+SOAP</button>' : '') +
-          '<button class="btn btn-sm btn-danger" data-del-fu="' + f.id + '">삭제</button>' +
+          '<button class="btn btn-sm" data-edit-fu="' + f.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-fu="' + f.id + '">삭제</button>' +
           '</div></div>';
       });
     }
@@ -5490,6 +5563,7 @@ const Views = {
         UI.navigate('soapEditor', { prefillClientId: fu.clientId, relatedFollowUp: { id: fu.id, text: fu.type } });
       };
     });
+    document.querySelectorAll('[data-edit-fu]').forEach(el => { el.onclick = () => Views.openFollowUpModal(null, el.dataset.editFu); });
     document.querySelectorAll('[data-del-fu]').forEach(el => {
       el.onclick = () => UI.confirm('이 후속조치를 삭제할까요?', async () => {
         const snap = FollowUps.snapshot(el.dataset.delFu);
@@ -5642,11 +5716,13 @@ const Views = {
         const kindBadge = it.kind === 'schedule' ? '<span class="tag">일정</span>' : '<span class="tag">후속조치</span>';
         const doneAttr = it.kind === 'schedule' ? 'data-done-sch' : 'data-done-fu';
         const delAttr = it.kind === 'schedule' ? 'data-del-sch' : 'data-del-fu2';
+        const editAttr = it.kind === 'schedule' ? 'data-edit-sch' : 'data-edit-fu2';
         html += '<tr><td>' + it.date + '</td><td>' + (it.time || '-') + '</td><td>' + kindBadge + '</td>' +
           '<td>' + Utils.escapeHtml(it.clientId) + (c && c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') + '</td>' +
           '<td>' + Utils.escapeHtml(it.typeLabel) + (it.note ? ' · ' + Utils.escapeHtml(it.note) : '') + '</td>' +
           '<td>' + (it.status === 'planned' ? '<span class="badge badge-pending">⏳ 예정</span>' : '<span class="badge badge-completed">✅ 완료</span>') + '</td>' +
           '<td>' + (it.status === 'planned' ? '<button class="btn btn-sm" ' + doneAttr + '="' + it.id + '">완료</button>' : '') +
+          ' <button class="btn btn-sm" ' + editAttr + '="' + it.id + '">수정</button>' +
           ' <button class="btn btn-sm btn-danger" ' + delAttr + '="' + it.id + '">삭제</button></td></tr>';
       });
       html += '</tbody></table>';
@@ -5700,6 +5776,8 @@ const Views = {
     document.getElementById('viewModeWeekBtn').onclick = () => { Views._scheduleViewMode = 'week'; UI.renderCurrentView(); };
     document.querySelectorAll('[data-done-sch]').forEach(el => { el.onclick = async () => { await Schedules.setStatus(el.dataset.doneSch, 'completed'); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
     document.querySelectorAll('[data-done-fu]').forEach(el => { el.onclick = async () => { await FollowUps.complete(el.dataset.doneFu); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
+    document.querySelectorAll('[data-edit-sch]').forEach(el => { el.onclick = () => Views.openScheduleModal(null, el.dataset.editSch); });
+    document.querySelectorAll('[data-edit-fu2]').forEach(el => { el.onclick = () => Views.openFollowUpModal(null, el.dataset.editFu2); });
     document.querySelectorAll('[data-del-sch]').forEach(el => {
       el.onclick = () => UI.confirm('이 일정을 삭제할까요?', async () => {
         const snap = Schedules.snapshot(el.dataset.delSch);
@@ -5798,7 +5876,7 @@ const Views = {
         html += '<tr><td>' + Utils.escapeHtml(r.type) + '</td><td>' + Utils.escapeHtml(r.name) + '</td>' +
           '<td>' + Utils.escapeHtml(r.phone || '-') + '</td><td>' + Utils.escapeHtml(r.contactPerson || '-') + '</td>' +
           '<td>' + Utils.escapeHtml(r.note || '-') + '</td>' +
-          '<td><button class="btn btn-sm btn-danger" data-del-resdir="' + r.id + '">삭제</button></td></tr>';
+          '<td><button class="btn btn-sm" data-edit-resdir="' + r.id + '">수정</button> <button class="btn btn-sm btn-danger" data-del-resdir="' + r.id + '">삭제</button></td></tr>';
       });
       html += '</tbody></table>';
     }
@@ -5806,16 +5884,20 @@ const Views = {
     return html;
   },
   bindResourceDirectory(){
-    document.getElementById('addResourceDirBtn').onclick = async () => {
+    const addBtn = document.getElementById('addResourceDirBtn');
+    let editingId = null;
+    addBtn.onclick = async () => {
       try{
-        await ResourceDirectory.add({
+        const fields = {
           type: document.getElementById('rdType').value,
           name: document.getElementById('rdName').value,
           phone: document.getElementById('rdPhone').value,
           contactPerson: document.getElementById('rdContactPerson').value,
           note: document.getElementById('rdNote').value
-        });
-        toast('기관을 등록했습니다.');
+        };
+        if (editingId) await ResourceDirectory.update(editingId, fields);
+        else await ResourceDirectory.add(fields);
+        toast(editingId ? '기관 정보를 수정했습니다.' : '기관을 등록했습니다.');
         UI.renderCurrentView();
       }catch(e){
         const err = document.getElementById('rdError');
@@ -5823,6 +5905,29 @@ const Views = {
         err.classList.remove('hidden');
       }
     };
+    document.querySelectorAll('[data-edit-resdir]').forEach(el => {
+      el.onclick = () => {
+        const r = ResourceDirectory.get(el.dataset.editResdir);
+        if (!r) return;
+        editingId = r.id;
+        document.getElementById('rdType').value = r.type;
+        document.getElementById('rdName').value = r.name;
+        document.getElementById('rdPhone').value = r.phone || '';
+        document.getElementById('rdContactPerson').value = r.contactPerson || '';
+        document.getElementById('rdNote').value = r.note || '';
+        addBtn.textContent = '저장';
+        if (!document.getElementById('cancelResourceDirEditBtn')){
+          const cancelBtn = document.createElement('button');
+          cancelBtn.id = 'cancelResourceDirEditBtn';
+          cancelBtn.className = 'btn btn-sm';
+          cancelBtn.style.marginLeft = '8px';
+          cancelBtn.textContent = '취소';
+          cancelBtn.onclick = () => UI.renderCurrentView();
+          addBtn.after(cancelBtn);
+        }
+        addBtn.scrollIntoView({ block: 'center' });
+      };
+    });
     document.querySelectorAll('[data-del-resdir]').forEach(el => {
       el.onclick = () => UI.confirm('이 기관을 주소록에서 삭제할까요? (기존에 등록된 대상자별 자원연계 기록에는 영향을 주지 않습니다.)', async () => {
         const snap = ResourceDirectory.snapshot(el.dataset.delResdir);
@@ -6792,19 +6897,23 @@ const Views = {
     };
   },
 
-  openFollowUpModal(prefillClientId){
+  // editId가 있으면 새로 등록하는 대신 기존 후속조치를 불러와 수정한다(반복 등록 없음).
+  openFollowUpModal(prefillClientId, editId){
+    const editing = editId ? FollowUps.get(editId) : null;
+    if (editId && !editing) return;
+    const curType = editing ? editing.type : CONSTANTS.FOLLOWUP_TYPES[0];
     UI.openModal(
-      '<h3>후속조치 등록</h3>' +
-      '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(prefillClientId || '', 'nfClient') + '</div>' +
+      '<h3>' + (editing ? '후속조치 수정' : '후속조치 등록') + '</h3>' +
+      '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(editing ? editing.clientId : (prefillClientId || ''), 'nfClient') + '</div>' +
       '<div class="field"><label>유형</label><div class="checkbox-group">' +
-      CONSTANTS.FOLLOWUP_TYPES.map((t, i) => '<label class="chip-check' + (i === 0 ? ' checked' : '') + '"><input type="radio" name="nfType" value="' + t + '"' + (i === 0 ? ' checked' : '') + '>' + t + '</label>').join('') +
+      CONSTANTS.FOLLOWUP_TYPES.map(t => '<label class="chip-check' + (t === curType ? ' checked' : '') + '"><input type="radio" name="nfType" value="' + t + '"' + (t === curType ? ' checked' : '') + '>' + t + '</label>').join('') +
       '</div></div>' +
-      '<div class="field"><label>세부 내용 (선택)</label><textarea id="nfText" style="min-height:60px;"></textarea></div>' +
-      '<div class="field"><label>예정일</label><input type="date" id="nfDue" value="' + Utils.todayStr() + '"></div>' +
-      '<div class="field"><label>메모 (선택)</label><input type="text" id="nfMemo"></div>' +
-      Views.repeatFieldsHtml('nf') +
+      '<div class="field"><label>세부 내용 (선택)</label><textarea id="nfText" style="min-height:60px;">' + Utils.escapeHtml(editing ? editing.text : '') + '</textarea></div>' +
+      '<div class="field"><label>예정일</label><input type="date" id="nfDue" value="' + (editing ? editing.dueDate : Utils.todayStr()) + '"></div>' +
+      '<div class="field"><label>메모 (선택)</label><input type="text" id="nfMemo" value="' + Utils.escapeHtml(editing ? editing.memo : '') + '"></div>' +
+      (editing ? '' : Views.repeatFieldsHtml('nf')) +
       '<div class="error-msg hidden" id="nfError"></div>' +
-      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="nfCancel">취소</button><button class="btn btn-primary" id="nfSubmit">등록</button></div>'
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="nfCancel">취소</button><button class="btn btn-primary" id="nfSubmit">' + (editing ? '저장' : '등록') + '</button></div>'
     );
     document.querySelectorAll('#modalBox .chip-check input[type=radio]').forEach(r => {
       r.addEventListener('change', () => {
@@ -6812,7 +6921,7 @@ const Views = {
         r.closest('.chip-check').classList.add('checked');
       });
     });
-    Views.bindRepeatFields('nf');
+    if (!editing) Views.bindRepeatFields('nf');
     document.getElementById('nfCancel').onclick = () => UI.closeModal();
     document.getElementById('nfSubmit').onclick = async () => {
       try{
@@ -6820,6 +6929,17 @@ const Views = {
         const clientId = Views.resolveClientPickerValue(document.getElementById('nfClient').value);
         const baseDate = document.getElementById('nfDue').value;
         if (!baseDate) throw new Error('예정일을 입력해 주세요.');
+        if (editing){
+          await FollowUps.update(editId, {
+            clientId, type: typeEl ? typeEl.value : '기타',
+            text: document.getElementById('nfText').value,
+            dueDate: baseDate, memo: document.getElementById('nfMemo').value
+          });
+          UI.closeModal();
+          toast('후속조치를 수정했습니다.');
+          UI.renderCurrentView();
+          return;
+        }
         const dates = Views.readRepeatDates('nf', baseDate);
         for (const dueDate of dates){
           await FollowUps.add({
@@ -6841,28 +6961,43 @@ const Views = {
     };
   },
 
-  openScheduleModal(prefillClientId){
+  // editId가 있으면 새로 등록하는 대신 기존 일정을 불러와 수정한다(반복 등록 없음).
+  openScheduleModal(prefillClientId, editId){
+    const editing = editId ? Schedules.get(editId) : null;
+    if (editId && !editing) return;
     UI.openModal(
-      '<h3>일정 등록</h3>' +
-      '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(prefillClientId || '', 'nsClient') + '</div>' +
+      '<h3>' + (editing ? '일정 수정' : '일정 등록') + '</h3>' +
+      '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(editing ? editing.clientId : (prefillClientId || ''), 'nsClient') + '</div>' +
       '<div class="form-grid">' +
-      '<div class="field"><label>날짜</label><input type="date" id="nsDate" value="' + Utils.todayStr() + '"></div>' +
-      '<div class="field"><label>시간 (선택)</label><input type="time" id="nsTime"></div>' +
+      '<div class="field"><label>날짜</label><input type="date" id="nsDate" value="' + (editing ? editing.date : Utils.todayStr()) + '"></div>' +
+      '<div class="field"><label>시간 (선택)</label><input type="time" id="nsTime" value="' + (editing ? (editing.time || '') : '') + '"></div>' +
       '</div>' +
       '<div class="field"><label>접촉 유형</label><select id="nsContactType">' +
-      CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
-      '<div class="field"><label>메모 (선택)</label><input type="text" id="nsMemo"></div>' +
-      Views.repeatFieldsHtml('ns') +
+      CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '"' + (editing && editing.contactType === t ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>메모 (선택)</label><input type="text" id="nsMemo" value="' + Utils.escapeHtml(editing ? editing.memo : '') + '"></div>' +
+      (editing ? '' : Views.repeatFieldsHtml('ns')) +
       '<div class="error-msg hidden" id="nsError"></div>' +
-      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="nsCancel">취소</button><button class="btn btn-primary" id="nsSubmit">등록</button></div>'
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="nsCancel">취소</button><button class="btn btn-primary" id="nsSubmit">' + (editing ? '저장' : '등록') + '</button></div>'
     );
-    Views.bindRepeatFields('ns');
+    if (!editing) Views.bindRepeatFields('ns');
     document.getElementById('nsCancel').onclick = () => UI.closeModal();
     document.getElementById('nsSubmit').onclick = async () => {
       try{
         const clientId = Views.resolveClientPickerValue(document.getElementById('nsClient').value);
         const baseDate = document.getElementById('nsDate').value;
         if (!baseDate) throw new Error('날짜를 입력해 주세요.');
+        if (editing){
+          await Schedules.update(editId, {
+            clientId, date: baseDate,
+            time: document.getElementById('nsTime').value,
+            contactType: document.getElementById('nsContactType').value,
+            memo: document.getElementById('nsMemo').value
+          });
+          UI.closeModal();
+          toast('일정을 수정했습니다.');
+          UI.renderCurrentView();
+          return;
+        }
         const dates = Views.readRepeatDates('ns', baseDate);
         for (const date of dates){
           await Schedules.add({
