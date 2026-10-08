@@ -616,6 +616,25 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('목록 회귀 점검');
   });
 
+  await step('SOAP 작성 화면에 상용구와 A 자동작성이 없다', async () => {
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('soapEditor', { prefillClientId: 'CI1' }); });
+    await page.waitForTimeout(250);
+    const r = await page.evaluate(() => ({
+      snippetUi: document.querySelectorAll('.snippetSelect, [data-manage-snippets], .snippet-bar').length,
+      gen: !!document.getElementById('genABtn') || !!document.getElementById('regenABtn') || !!document.getElementById('checklistBox'),
+      copyA: !!document.getElementById('copyABtn'), textareas: ['soapS', 'soapO', 'soapA', 'soapPText'].every(id => !!document.getElementById(id)),
+      apis: [typeof Snippets, typeof SoapModule.generateADraft, typeof Views.snippetBarHtml, typeof Views.openSnippetManager]
+    }));
+    assert(r.snippetUi === 0 && !r.gen, '상용구/자동작성 화면 요소가 남아 있음: ' + JSON.stringify(r));
+    assert(r.copyA && r.textareas, 'SOAP 입력칸이나 A 복사 버튼이 사라짐: ' + JSON.stringify(r));
+    assert(r.apis.every(x => x === 'undefined'), '상용구/자동작성 코드가 남아 있음: ' + JSON.stringify(r.apis));
+    await page.evaluate(() => { Views.openQuickRecordModal('CI1'); });
+    await page.waitForTimeout(150);
+    assert(await page.evaluate(() => document.querySelectorAll('#modalBox .snippetSelect').length === 0 && !!document.getElementById('qrText')), '간단 기록 창에 상용구가 남아 있음');
+    await page.evaluate(() => UI.closeModal());
+    noNewErrors('상용구·자동작성 제거');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
@@ -637,7 +656,7 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('화면 이동');
   });
 
-  await step('대화상자(간단 기록·종결·연계 결과·위기 대응·긴급 정보·상용구)가 열린다', async () => {
+  await step('대화상자(간단 기록·종결·연계 결과·위기 대응·긴급 정보)가 열린다', async () => {
     await page.evaluate(() => UI.navigate('clientDetail', { id: 'CI1' }));
     await page.waitForTimeout(200);
     await show();
@@ -653,7 +672,6 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     await open(() => Views.openReferralResultModal('CI1', Clients.get('CI1').resourceLinks[0].id), '연계 결과');
     await open(() => Views.openCrisisResponseModal('CI1', Clients.get('CI1').crisisEvents[0].id), '대응 경과');
     await open(() => Views.openEmergencyInfoModal('CI1'), '긴급 정보');
-    await open(() => Views.openSnippetManager(), '상용구');
     noNewErrors('대화상자');
   });
 
@@ -839,13 +857,11 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
 
   await step('백업 파일에 모든 기록이 들어 있고 평문이 새지 않는다', async () => {
     const r = await page.evaluate(async () => {
-      await Snippets.add({ label: '평문확인라벨', field: 'S', text: '평문확인내용XYZ' });
       const d = await Backup.exportAll();
       const raw = JSON.stringify(d);
-      return { clients: d.clients.length, soaps: d.soaps.length, debriefs: (d.debriefings || []).length, hasSnippets: !!d.settings.textSnippetsEnc, leaked: raw.includes('평문확인내용XYZ') || raw.includes('점검1') || raw.includes('원본 S') || raw.includes('비밀실무자영향') || raw.includes('화면 사실') };
+      return { clients: d.clients.length, soaps: d.soaps.length, debriefs: (d.debriefings || []).length, leaked: raw.includes('점검1') || raw.includes('원본 S') || raw.includes('비밀실무자영향') || raw.includes('화면 사실') };
     });
     assert(r.clients >= 2 && r.soaps >= 2 && r.debriefs >= 3, '백업에 기록이 빠짐: ' + JSON.stringify(r));
-    assert(r.hasSnippets, '백업에 상용구가 빠짐');
     assert(!r.leaked, '백업 파일에 암호화되지 않은 내용이 들어 있음');
   });
 
