@@ -454,7 +454,7 @@
   .print-signature{display:none;}
   .lt-out{display:none;white-space:pre-line;}
   @media print{ .lt-out{display:block;margin-top:2px;} .lt-in, #ltTo, #ltDate, #ltReply, #ltContact{display:none !important;} #printLetterBtn, #backFromLetterBtn{display:none !important;} }
-  @media print{ #monthEndCheck, #soapRefPanel, #briefingNotice{display:none !important;} }
+  @media print{ #monthEndCheck, #soapRefPanel, #briefingNotice, .detail-tab-group[data-tab-group="summary"], #quickSwitchBox{display:none !important;} }
   @media print{
     .print-signature{display:flex !important;gap:18px 40px;flex-wrap:wrap;margin-top:32px;padding-top:16px;border-top:1px solid #999;}
     .print-signature .sig-line{flex:1 1 250px;white-space:nowrap;font-size:0.85rem;color:#333;}
@@ -3642,15 +3642,43 @@ const Search = {
   // 자원연계, 위기개입, 복약, 사례회의, 서류, 사정도구, 태그, 입퇴원, MSE/목표,
   // 종결정보, 관리수준 변경사유) 전체에서 키워드를 찾는다. 종결 대상자도
   // 포함해 전체를 대상으로 한다.
-  runUniversal(keyword){
+  // 통합검색 종류 — 결과를 이 묶음으로 걸러 볼 수 있다.
+  UNI_GROUPS: { soap: 'SOAP 기록', crisis: '위기개입', debrief: '디브리핑', task: '후속조치·일정', info: '대상자 정보' },
+  _uniGroupOf(section){
+    if (section === 'SOAP 기록') return 'soap';
+    if (section === '위기개입 기록') return 'crisis';
+    if (section === '디브리핑') return 'debrief';
+    if (section === '후속조치' || section === '일정') return 'task';
+    return 'info';
+  },
+  // opts: { types: ['soap', ...], clientId, dateFrom, dateTo } — 날짜 조건을 쓰면 날짜가 없는 항목은 빠진다.
+  runUniversal(keyword, opts){
+    opts = opts || {};
     const kw = (keyword || '').trim().toLowerCase();
     if (!kw) return [];
+    const types = opts.types && opts.types.length ? new Set(opts.types) : null;
     const results = [];
-    const push = (client, section, text) => {
-      if ((text || '').toLowerCase().includes(kw)) results.push({ clientId: client.id, alias: client.alias, section, text });
+    const snippet = (text) => {
+      const t = String(text || '').replace(/\s+/g, ' ');
+      const i = t.toLowerCase().indexOf(kw), start = Math.max(0, i - 25);
+      return (start > 0 ? '…' : '') + t.slice(start, start + 90) + (start + 90 < t.length ? '…' : '');
+    };
+    const push = (client, section, text, date, target) => {
+      if (!(text || '').toLowerCase().includes(kw)) return;
+      const group = this._uniGroupOf(section);
+      if (types && !types.has(group)) return;
+      const cid = client ? client.id : '';
+      if (opts.clientId && cid !== opts.clientId) return;
+      if ((opts.dateFrom || opts.dateTo) && !date) return;
+      if (opts.dateFrom && date < opts.dateFrom) return;
+      if (opts.dateTo && date > opts.dateTo) return;
+      results.push({ clientId: cid, alias: client ? client.alias : '', section, group, text, snippet: snippet(text), date: date || '', target: target || { clientId: cid } });
     };
     const debriefsByClient = {};
-    Debriefings.list().forEach(d => { if (d.clientId) (debriefsByClient[d.clientId] = debriefsByClient[d.clientId] || []).push(d); });
+    Debriefings.list().forEach(d => { if (d.clientId) (debriefsByClient[d.clientId] = debriefsByClient[d.clientId] || []).push(d); else push(null, '디브리핑', [d.subjectNote, d.crisisType, d.facts, d.wentWell, d.toImprove, d.actions, d.supervisionQuestion, d.supervisionAdvice].filter(Boolean).join(' · '), d.date, { debriefId: d.id }); });
+    SoapModule.list().forEach(sp => { const cl = Clients.get(sp.clientId); if (cl) push(cl, 'SOAP 기록', [sp.S, sp.O, sp.A, (sp.PActions || []).join(' '), sp.PText].filter(Boolean).join(' · '), sp.date, { soapId: sp.id }); });
+    FollowUps.list().forEach(f => { const cl = Clients.get(f.clientId); if (cl) push(cl, '후속조치', [f.type, f.text, f.memo].filter(Boolean).join(' · '), f.dueDate); });
+    Schedules.list().forEach(x => { const cl = Clients.get(x.clientId); if (cl) push(cl, '일정', [x.contactType, x.memo].filter(Boolean).join(' · '), x.date); });
     Clients.list().forEach(c => {
       push(c, '기본정보', c.alias);
       push(c, '기본정보', c.referralSource);
@@ -3663,25 +3691,25 @@ const Search = {
       }
       push(c, '종결정보', [c.closedReason, c.closedOutcome, c.closedSummary, c.closedAftercare].filter(Boolean).join(' · '));
       push(c, '종결정보', c.closedNote);
-      (c.managementHistory || []).forEach(h => push(c, '관리수준 이력', h.reason));
+      (c.managementHistory || []).forEach(h => push(c, '관리수준 이력', h.reason, h.date));
       (c.emergencyContacts || []).forEach(ec => push(c, '보호자·비상연락처', [ec.name, ec.relation, ec.phone, ec.note].filter(Boolean).join(' · ')));
-      (c.resourceLinks || []).forEach(r => push(c, '자원연계 현황', [r.type, r.name, r.contact, r.note, (CONSTANTS.REFERRAL_STATUSES[r.status] || {}).label, r.resultNote].filter(Boolean).join(' · ')));
-      (debriefsByClient[c.id] || []).forEach(d => push(c, '디브리핑', [d.facts, d.wentWell, d.toImprove, d.actions].filter(Boolean).join(' · ')));
-      (c.crisisEvents || []).forEach(e => push(c, '위기개입 기록', [e.type, e.description, e.action, e.outcome, e.debrief].concat((e.steps || []).map(x => x.type + ' ' + x.note)).filter(Boolean).join(' · ')));
-      (c.medications || []).forEach(m => push(c, '복약 현황', [m.name, m.dose, m.hospital, m.note].filter(Boolean).join(' · ')));
-      (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · ')));
+      (c.resourceLinks || []).forEach(r => push(c, '자원연계 현황', [r.type, r.name, r.contact, r.note, (CONSTANTS.REFERRAL_STATUSES[r.status] || {}).label, r.resultNote].filter(Boolean).join(' · '), r.date));
+      (debriefsByClient[c.id] || []).forEach(d => push(c, '디브리핑', [d.crisisType, d.facts, d.wentWell, d.toImprove, d.actions, d.supervisionQuestion, d.supervisionAdvice].filter(Boolean).join(' · '), d.date, { debriefId: d.id }));
+      (c.crisisEvents || []).forEach(e => push(c, '위기개입 기록', [e.type, e.description, e.action, e.outcome, e.debrief].concat((e.steps || []).map(x => x.type + ' ' + x.note)).filter(Boolean).join(' · '), e.date));
+      (c.medications || []).forEach(m => push(c, '복약 현황', [m.name, m.dose, m.hospital, m.note].filter(Boolean).join(' · '), m.date));
+      (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · '), cf.date));
       (c.documents || []).forEach(d => push(c, '필수 서류', d.name));
-      (c.consents || []).forEach(cs => push(c, '정보공유 동의 이력', [cs.agency, cs.note].filter(Boolean).join(' · ')));
-      (c.assessments || []).forEach(a => push(c, '사정도구 점수', [a.scale, Clients.assessmentSummary(a).text, a.note].filter(Boolean).join(' · ')));
-      (c.riskAssessments || []).forEach(r => push(c, '위험도 평가', [(CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note].filter(Boolean).join(' · ')));
-      (c.reassessments || []).forEach(r => push(c, '정기 재사정', r.note));
-      (c.servicePlans || []).forEach(pl => (pl.items || []).forEach(i => push(c, '서비스계획', [i.area, i.goal, i.service, i.provider].filter(Boolean).join(' · '))));
-      (c.familySessions || []).forEach(fs => push(c, '가족 상담', [Clients.familySessionParticipants(fs), (fs.topics || []).join('·'), fs.concerns, fs.intervention, fs.agreement].filter(Boolean).join(' · ')));
+      (c.consents || []).forEach(cs => push(c, '정보공유 동의 이력', [cs.agency, cs.note].filter(Boolean).join(' · '), cs.date));
+      (c.assessments || []).forEach(a => push(c, '사정도구 점수', [a.scale, Clients.assessmentSummary(a).text, a.note].filter(Boolean).join(' · '), a.date));
+      (c.riskAssessments || []).forEach(r => push(c, '위험도 평가', [(CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note].filter(Boolean).join(' · '), r.date));
+      (c.reassessments || []).forEach(r => push(c, '정기 재사정', r.note, r.date));
+      (c.servicePlans || []).forEach(pl => (pl.items || []).forEach(i => push(c, '서비스계획', [i.area, i.goal, i.service, i.provider].filter(Boolean).join(' · '), pl.date)));
+      (c.familySessions || []).forEach(fs => push(c, '가족 상담', [Clients.familySessionParticipants(fs), (fs.topics || []).join('·'), fs.concerns, fs.intervention, fs.agreement].filter(Boolean).join(' · '), fs.date));
       if (c.recoveryProfile){ const rp = c.recoveryProfile, cp = rp.crisis || {}; push(c, '당사자 강점·선호', Clients.RECOVERY_FIELDS.map(k => rp[k]).concat((rp.contactPref || []), Clients.CRISIS_PREF_FIELDS.map(k => cp[k])).filter(Boolean).join(' · ')); }
-      (c.admissions || []).forEach(a => push(c, '입퇴원 이력', [a.type, a.kind, a.hospital, a.note].filter(Boolean).join(' · ')));
+      (c.admissions || []).forEach(a => push(c, '입퇴원 이력', [a.type, a.kind, a.hospital, a.note].filter(Boolean).join(' · '), a.date));
       (c.tags || []).forEach(t => push(c, '특성 태그', t));
     });
-    return results;
+    return results.sort((x, y) => (y.date || '').localeCompare(x.date || '') || x.clientId.localeCompare(y.clientId));
   }
 };
 
@@ -4704,10 +4732,63 @@ const UI = {
     UI._modalReturnFocus = null;
     if (back && back.isConnected && typeof back.focus === 'function') back.focus();
   },
+  // 빠른 이동(Ctrl/Cmd + K) — 대상자 ID·별칭이나 화면 이름을 입력해 바로 이동한다.
+  QUICK_VIEWS: [
+    { label: '대시보드', view: 'dashboard' }, { label: '대상자 목록', view: 'clients' }, { label: 'SOAP 기록 목록', view: 'soapList' },
+    { label: '후속조치', view: 'followUps' }, { label: '일정', view: 'schedule' }, { label: '기관주소록', view: 'resourceDirectory' },
+    { label: '검색', view: 'search' }, { label: '통계·월간 보고서', view: 'stats' }, { label: '성과 지표', view: 'outcomes' },
+    { label: '디브리핑', view: 'debriefings' }, { label: '슈퍼비전 안건 출력', view: 'supervisionAgenda' }, { label: '자기돌봄', view: 'selfCare' },
+    { label: '교육·슈퍼비전', view: 'training' }, { label: '설정', view: 'settings' }, { label: '오늘의 방문 준비 브리핑', view: 'dailyBriefing' },
+    { label: '전체 대상자 현황 요약', view: 'caseloadSummary' }
+  ],
+  quickSwitchItems(query){
+    const q = (query || '').trim().toLowerCase();
+    const has = (t) => !q || String(t || '').toLowerCase().includes(q);
+    const actions = [
+      { label: '새 SOAP 기록 쓰기', run: () => UI.navigate('soapEditor', {}) },
+      { label: '위기 빠른 기록', run: () => Views.openQuickDebriefModal() },
+      { label: '간단 기록', run: () => Views.openQuickRecordModal() }
+    ].filter(a => has(a.label)).map(a => Object.assign({ kind: '동작' }, a));
+    const clients = Clients.list().filter(c => has(c.id) || has(c.alias))
+      .sort((a, b) => (a.status === 'closed') - (b.status === 'closed') || a.id.localeCompare(b.id)).slice(0, 8)
+      .map(c => ({ kind: '대상자', label: c.id + (c.alias ? ' (' + c.alias + ')' : '') + (c.status === 'closed' ? ' · 종결' : ''), run: () => UI.navigate('clientDetail', { id: c.id }) }));
+    const views = UI.QUICK_VIEWS.filter(v => has(v.label)).map(v => ({ kind: '화면', label: v.label, run: () => UI.navigate(v.view, {}) }));
+    return (q ? clients.concat(views, actions) : views.slice(0, 6).concat(actions, clients)).slice(0, 12);
+  },
+  openQuickSwitcher(){
+    if (!State.unlocked) return;
+    const e = Utils.escapeHtml;
+    UI.openModal(
+      '<h3>빠른 이동</h3>' +
+      '<div class="field"><label for="qsInput">대상자 ID·별칭 또는 화면 이름</label>' +
+      '<input type="text" id="qsInput" role="combobox" aria-expanded="true" aria-controls="qsList" aria-autocomplete="list" autocomplete="off" placeholder="예: A001, 디브리핑, 설정"></div>' +
+      '<ul id="qsList" role="listbox" aria-label="이동할 곳" style="list-style:none;margin:8px 0 0;padding:0;max-height:320px;overflow:auto;"></ul>' +
+      '<p class="help-text" style="margin-top:8px;">↑↓로 고르고 Enter로 이동, Esc로 닫습니다.</p>'
+    );
+    const input = document.getElementById('qsInput'), list = document.getElementById('qsList');
+    let items = [], sel = 0;
+    const paint = () => {
+      items = UI.quickSwitchItems(input.value);
+      if (sel >= items.length) sel = Math.max(0, items.length - 1);
+      list.innerHTML = items.length ? items.map((it, i) => '<li role="option" id="qsOpt' + i + '" data-qs="' + i + '" aria-selected="' + (i === sel) + '" style="padding:8px 10px;border-radius:6px;cursor:pointer;' + (i === sel ? 'background:var(--accent-soft);' : '') + '"><span class="tag">' + it.kind + '</span> ' + e(it.label) + '</li>').join('') : '<li class="help-text" style="padding:8px 10px;">일치하는 곳이 없습니다.</li>';
+      input.setAttribute('aria-activedescendant', items.length ? 'qsOpt' + sel : '');
+    };
+    const go = (i) => { const it = items[i]; if (!it) return; UI.closeModal(); it.run(); };
+    input.addEventListener('input', () => { sel = 0; paint(); });
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowDown'){ ev.preventDefault(); sel = Math.min(items.length - 1, sel + 1); paint(); }
+      else if (ev.key === 'ArrowUp'){ ev.preventDefault(); sel = Math.max(0, sel - 1); paint(); }
+      else if (ev.key === 'Enter'){ ev.preventDefault(); go(sel); }
+    });
+    list.addEventListener('click', (ev) => { const li = ev.target.closest('[data-qs]'); if (li) go(parseInt(li.dataset.qs, 10)); });
+    paint();
+    input.focus();
+  },
   openShortcutsHelp(){
     const rows = [
       ['?', '단축키 도움말 열기/닫기'],
       ['Esc', '열린 창(모달) 닫기'],
+      ['Ctrl/Cmd + K', '빠른 이동 (대상자·화면 찾아 가기)'],
       ['Ctrl/Cmd + S', 'SOAP 작성 중 임시저장 (최종저장은 아님)']
     ];
     UI.openModal(
@@ -5585,8 +5666,8 @@ const Views = {
     // 되어 상위 탭으로 한 번 더 묶는다. 모든 그룹은 DOM에 그대로 남아있고
     // CSS로만 감췄다 보였다 하므로(인쇄 시 전부 표시), 기존 bindClientDetail의
     // getElementById 바인딩은 전혀 손댈 필요가 없다.
-    if (Views._clientDetailTabClientId !== id){ Views._clientDetailTab = 'basic'; Views._clientDetailTabClientId = id; }
-    let activeTab = Views._clientDetailTab || 'basic';
+    if (Views._clientDetailTabClientId !== id){ Views._clientDetailTab = 'summary'; Views._clientDetailTabClientId = id; }
+    let activeTab = Views._clientDetailTab || 'summary';
     if (SimpleMode.isSimple() && activeTab === 'timeline') activeTab = 'basic';
     let basicHtml = '', historyHtml = '', safetyHtml = '', soapHtml = '';
 
@@ -6223,6 +6304,7 @@ const Views = {
     }
 
     const tabDefs = [
+      { key: 'summary', label: '요약', count: 0 },
       { key: 'basic', label: '기본정보', count: 0 },
       { key: 'history', label: '이력관리', count: admissions.length + resourceLinks.length + medications.length + assessments.length + documents.length },
       { key: 'safety', label: '위기·안전', count: crisisEvents.length + emergencyContacts.length + familyLinks.length + caseConferences.length + familySessions.length },
@@ -6236,6 +6318,7 @@ const Views = {
       '<button class="tab-btn detail-tab-btn' + (activeTab === t.key ? ' active' : '') + '" data-tab="' + t.key + '">' + t.label + (t.count ? ' (' + t.count + ')' : '') + '</button>'
     ).join('') + '</div>';
 
+    html += '<div class="detail-tab-group' + (activeTab === 'summary' ? ' active' : '') + '" data-tab-group="summary">' + Views.clientSummaryHtml(c) + '</div>';
     html += '<div class="detail-tab-group' + (activeTab === 'basic' ? ' active' : '') + '" data-tab-group="basic">' + basicHtml + '</div>';
     html += '<div class="detail-tab-group' + (activeTab === 'history' ? ' active' : '') + '" data-tab-group="history">' + historyHtml + '</div>';
     html += '<div class="detail-tab-group' + (activeTab === 'safety' ? ' active' : '') + '" data-tab-group="safety">' + safetyHtml + '</div>';
@@ -6543,6 +6626,9 @@ const Views = {
       };
     });
 
+    document.querySelectorAll('[data-summary-tab]').forEach(el => {
+      el.onclick = () => { const b = document.querySelector('.detail-tab-btn[data-tab="' + el.dataset.summaryTab + '"]'); if (b) b.click(); };
+    });
     document.getElementById('handoverBtn').onclick = () => UI.navigate('handoverSummary', { id });
     document.getElementById('emergencyInfoBtn').onclick = () => Views.openEmergencyInfoModal(id);
     document.getElementById('backToClientsBtn').onclick = () => UI.navigate('clients');
@@ -7719,6 +7805,53 @@ const Views = {
     errEl.classList.remove('hidden');
     return false;
   },
+  // 대상자 요약 — 방문 전에 한 화면으로 훑어보는 핵심 정보. 새 판단은 만들지 않고 입력된 값만 모아 보여 준다.
+  clientSummaryHtml(c){
+    const e = Utils.escapeHtml, today = Utils.todayStr();
+    const row = (label, v) => v ? '<tr><th scope="row" style="text-align:left;white-space:nowrap;vertical-align:top;">' + label + '</th><td style="white-space:pre-line;">' + v + '</td></tr>' : '';
+    const sp = c.safetyPlan || {}, cp = (c.recoveryProfile && c.recoveryProfile.crisis) || {};
+    const lv = CONSTANTS.MANAGEMENT_LEVELS[c.managementLevel] || {};
+    const soaps = SoapModule.listByClient(c.id).filter(x => x.status === 'final');
+    const lastSoap = soaps[0];
+    const lastFace = Clients.lastFaceToFaceContactDate(c.id);
+    const lastCrisis = (c.crisisEvents || []).slice().sort((a, b) => b.date.localeCompare(a.date))[0];
+    const meds = (c.medications || []).slice().reverse().sort((a, b) => b.date.localeCompare(a.date));
+    const curMeds = meds.length ? meds.filter(m => m.date === meds[0].date) : [];
+    const nextRx = curMeds.map(m => m.nextRxDate).filter(Boolean).sort()[0] || '';
+    const pend = FollowUps.list().filter(f => f.clientId === c.id && f.status === 'pending').slice(0, 5);
+    const sch = Schedules.list().filter(x => x.clientId === c.id && x.status === 'planned' && x.date >= today).slice(0, 3);
+    const plan = Clients.currentPlan(c);
+    const gaps = Clients.getSafetyGaps(c.id);
+    const adm = Clients.currentAdmission(c);
+    const reGap = Clients.getReassessmentGapInfo(c.id), contactGap = Clients.getContactGapInfo(c.id);
+    const flags = [];
+    if (adm) flags.push('입원 중 (' + adm.date + '~)');
+    if (contactGap) flags.push('대면 접촉 공백 ' + Utils.formatElapsedDays(contactGap.days));
+    if (reGap) flags.push('정기 재사정 필요');
+    if (plan && plan.nextReviewDate && plan.nextReviewDate < today) flags.push('서비스계획 점검일 경과');
+    gaps.forEach(g => flags.push(g));
+    const more = (tab, label) => ' <button class="btn-link" data-summary-tab="' + tab + '">' + label + '</button>';
+    let html = '<div class="panel"><div class="panel-title">' + icon('clipboardList') + ' 한눈에 보기</div>';
+    if (flags.length) html += '<div class="gap-row" style="cursor:default;">' + flags.map(f => '<span class="badge badge-pending" style="margin:2px 4px 2px 0;">' + e(f) + '</span>').join('') + '</div>';
+    html += '<table><tbody>' +
+      row('관리 수준', (lv.emoji || '') + ' ' + e(lv.label || '') + (c.status === 'closed' ? ' · 종결' : '')) +
+      row('마지막 상담', lastSoap ? e(lastSoap.date + ' · ' + lastSoap.contactType) : '기록 없음') +
+      row('마지막 대면 접촉', lastFace ? e(lastFace) : '기록 없음') +
+      row('월 접촉 계획', Clients.contactPlanText(c) ? e(Clients.contactPlanText(c)) : '') +
+      row('최근 위기개입', lastCrisis ? e(lastCrisis.date + ' · ' + lastCrisis.type + (lastCrisis.outcome ? ' · ' + lastCrisis.outcome : '')) + (Debriefings.hasForEvent(c.id, lastCrisis) ? '' : ' <span class="badge badge-draft">디브리핑 없음</span>') + more('safety', '위기·안전 보기') : '') +
+      row('경고신호', e(sp.warningSigns || '')) +
+      row('위기 때 도움이 되는 것', e(cp.helpful || '')) +
+      row('원치 않는 개입', e(cp.unwanted || '')) +
+      row('연락 원하는 사람', e(cp.wantContact || '')) + row('연락 원치 않는 사람', e(cp.noContact || '')) +
+      row('복약', curMeds.length ? e(curMeds.map(m => [m.name, m.dose].filter(Boolean).join(' ')).join(', ')) + (nextRx ? ' · 다음 처방일 ' + e(nextRx) : '') + more('history', '이력관리 보기') : '') +
+      row('서비스계획', plan ? e((plan.periodStart || '?') + ' ~ ' + (plan.periodEnd || '?')) + (plan.nextReviewDate ? ' · 다음 점검일 ' + e(plan.nextReviewDate) : '') + more('plan', '서비스계획 보기') : '') +
+      row('미완료 후속조치', pend.length ? pend.map(f => e(f.dueDate + ' · ' + f.type + (f.text ? ' ' + f.text : ''))).join('\n') + more('soap', 'SOAP·후속조치 보기') : '') +
+      row('예정된 일정', sch.length ? sch.map(x => e(x.date + (x.time ? ' ' + x.time : '') + ' · ' + x.contactType)).join('\n') : '') +
+      '</tbody></table>';
+    if (!sp.warningSigns && !cp.helpful && !cp.unwanted) html += '<p class="help-text" style="margin-top:8px;">경고신호나 위기 시 선호가 아직 입력되지 않았습니다.' + more('safety', '위기·안전 탭에서 입력') + '</p>';
+    return html + '</div>';
+  },
+
   // 기록을 쓰는 동안 그 사람의 안전·복약 정보를 화면 전환 없이 볼 수 있게 하는 요약. 입력된 값을 그대로 보여 줄 뿐 판단하지 않는다.
   soapReferenceHtml(clientId, currentSoapId){
     const c = clientId && Clients.get(clientId);
@@ -8402,8 +8535,14 @@ const Views = {
 
     if (Views._searchMode === 'universal'){
       html += '<p class="help-text" style="margin-top:-8px;margin-bottom:14px;">보호자 연락처, 자원연계, 위기개입, 복약, 사례회의, 서류, 사정도구, 태그 등 대상자의 모든 하위 기록을 대상으로 검색합니다(SOAP 본문은 SOAP 검색을 이용하세요).</p>';
-      html += '<div class="panel"><div style="display:flex;gap:10px;"><input type="text" id="uniKeyword" placeholder="검색어 입력" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);">' +
-        '<button class="btn btn-primary" id="doUniSearchBtn">검색</button></div></div>';
+      html += '<div class="panel"><div class="form-grid">' +
+        '<div class="field full"><label for="uniKeyword">검색어</label><div style="display:flex;gap:10px;"><input type="text" id="uniKeyword" placeholder="검색어 입력" style="flex:1;padding:9px 11px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);"><button class="btn btn-primary" id="doUniSearchBtn">검색</button></div></div>' +
+        '<div class="field"><label for="uniClient">대상자</label><select id="uniClient"><option value="">전체</option>' + Clients.list().map(c => '<option value="' + Utils.escapeHtml(c.id) + '">' + Utils.escapeHtml(c.id) + (c.alias ? ' - ' + Utils.escapeHtml(c.alias) : '') + '</option>').join('') + '</select></div>' +
+        '<div class="field"><label for="uniFrom">기간(시작)</label><input type="date" id="uniFrom"></div>' +
+        '<div class="field"><label for="uniTo">기간(종료)</label><input type="date" id="uniTo"></div>' +
+        '<div class="field full"><label>기록 종류 (아무것도 고르지 않으면 전체)</label><div class="checkbox-group">' +
+        Object.keys(Search.UNI_GROUPS).map(k => '<label class="chip-check"><input type="checkbox" class="uniType" value="' + k + '">' + Search.UNI_GROUPS[k] + '</label>').join('') + '</div></div>' +
+        '</div><p class="help-text">기간을 정하면 날짜가 기록된 항목(SOAP, 위기개입, 디브리핑, 후속조치, 일정 등)만 찾습니다.</p></div>';
       html += '<div class="panel" id="searchResults"><div class="empty-msg">검색어를 입력하고 검색 버튼을 눌러 주세요.</div></div>';
       return html;
     }
@@ -8435,19 +8574,37 @@ const Views = {
     document.getElementById('searchModeUniversalBtn').onclick = () => { Views._searchMode = 'universal'; UI.renderCurrentView(); };
 
     if (Views._searchMode === 'universal'){
-      document.getElementById('doUniSearchBtn').onclick = () => {
-        const results = Search.runUniversal(document.getElementById('uniKeyword').value);
+      document.querySelectorAll('.uniType').forEach(chk => chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked)));
+      const runUni = () => {
+        const results = Search.runUniversal(document.getElementById('uniKeyword').value, {
+          clientId: document.getElementById('uniClient').value, dateFrom: document.getElementById('uniFrom').value, dateTo: document.getElementById('uniTo').value,
+          types: Array.from(document.querySelectorAll('.uniType:checked')).map(x => x.value)
+        });
         const box = document.getElementById('searchResults');
         if (results.length === 0){
           box.innerHTML = '<div class="empty-msg">검색 결과가 없습니다.</div>';
           return;
         }
-        box.innerHTML = '<table><thead><tr><th>대상자</th><th>항목</th><th>내용</th></tr></thead><tbody>' +
-          results.map(r => '<tr class="clickable-row" data-goto-client="' + r.clientId + '"><td>' + Utils.escapeHtml(r.clientId) + (r.alias ? ' (' + Utils.escapeHtml(r.alias) + ')' : '') + '</td>' +
-            '<td>' + Utils.escapeHtml(r.section) + '</td><td>' + Utils.truncate(Utils.escapeHtml(r.text), 80) + '</td></tr>').join('') +
+        const shown = results.slice(0, 200);
+        box.innerHTML = '<p class="help-text" style="margin-bottom:6px;">' + results.length + '건' + (results.length > shown.length ? ' 중 처음 ' + shown.length + '건을 보여 줍니다. 조건을 좁혀 보세요.' : '') + '</p>' +
+          '<table><thead><tr><th>날짜</th><th>종류</th><th>대상자</th><th>내용</th></tr></thead><tbody>' +
+          shown.map((r, i) => '<tr class="clickable-row" data-uni-i="' + i + '"><td>' + Utils.escapeHtml(r.date || '-') + '</td><td>' + Utils.escapeHtml(r.section) + '</td>' +
+            '<td>' + (r.clientId ? Utils.escapeHtml(r.clientId) + (r.alias ? ' (' + Utils.escapeHtml(r.alias) + ')' : '') : '미등록') + '</td><td>' + Utils.escapeHtml(r.snippet) + '</td></tr>').join('') +
           '</tbody></table>';
-        box.querySelectorAll('[data-goto-client]').forEach(el => { el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient }); });
+        box.querySelectorAll('[data-uni-i]').forEach(el => {
+          el.setAttribute('tabindex', '0'); el.setAttribute('role', 'button');
+          const open = () => {
+            const t = shown[parseInt(el.dataset.uniI, 10)].target;
+            if (t.soapId) UI.navigate('soapEditor', { soapId: t.soapId });
+            else if (t.debriefId) UI.navigate('debriefEditor', { debriefId: t.debriefId });
+            else if (t.clientId) UI.navigate('clientDetail', { id: t.clientId });
+          };
+          el.onclick = open;
+          el.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); open(); } };
+        });
       };
+      document.getElementById('doUniSearchBtn').onclick = runUni;
+      document.getElementById('uniKeyword').addEventListener('keydown', (ev) => { if (ev.key === 'Enter'){ ev.preventDefault(); runUni(); } });
       return;
     }
 
@@ -10514,6 +10671,13 @@ async function bootstrapApp(){
     if ((e.key === 'Enter' || e.key === ' ') && e.target.hasAttribute && e.target.hasAttribute('data-kbd-click')){
       e.preventDefault();
       e.target.click();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'){
+      e.preventDefault();
+      if (!State.unlocked || document.getElementById('appShell').classList.contains('hidden')) return;
+      if (!document.getElementById('modalOverlay').classList.contains('hidden')){ if (document.getElementById('qsInput')) UI.closeModal(); return; }
+      UI.openQuickSwitcher();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){

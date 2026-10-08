@@ -532,6 +532,61 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('자동 백업·검증·이탈 경고');
   });
 
+  await step('대상자 요약 탭, 빠른 이동(Ctrl+K), 통합검색 필터가 동작한다', async () => {
+    // 요약 탭: 대상자를 처음 열면 요약이 보이고 핵심 정보가 모여 있다
+    await page.evaluate(() => { Views._clientDetailTabClientId = null; });
+    await page.evaluate(() => Clients.update('PL1', { safetyPlan: { warningSigns: '요약경고신호' } }));
+    await page.evaluate(() => UI.navigate('clientDetail', { id: 'PL1' }));
+    await page.waitForTimeout(250);
+    const sum = await page.evaluate(() => {
+      const g = document.querySelector('.detail-tab-group[data-tab-group="summary"]');
+      return { active: g.classList.contains('active'), text: g.textContent, btn: !!document.querySelector('.detail-tab-btn[data-tab="summary"]') };
+    });
+    assert(sum.btn && sum.active && sum.text.includes('요약경고신호') && sum.text.includes('마지막 상담') && sum.text.includes('월 접촉 계획'), '요약 탭 내용이 다름: ' + sum.text.slice(0, 120));
+    await page.evaluate(() => { const el = document.querySelector('[data-summary-tab]'); if (el) el.click(); });
+    // 빠른 이동
+    await page.evaluate(() => UI.navigate('dashboard', {}));
+    await page.waitForTimeout(150);
+    await page.keyboard.press('Control+k');
+    await page.waitForSelector('#qsInput');
+    await page.keyboard.type('PL1');
+    await page.waitForTimeout(100);
+    const opts = await page.evaluate(() => Array.from(document.querySelectorAll('#qsList [role=option]')).map(x => x.textContent));
+    assert(opts.length >= 1 && opts[0].includes('PL1'), '빠른 이동 결과가 다름: ' + JSON.stringify(opts));
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(() => State.currentView === 'clientDetail' && State.currentParams.id === 'PL1'), '빠른 이동으로 대상자 화면에 가지 못함');
+    await page.keyboard.press('Control+k');
+    await page.waitForSelector('#qsInput');
+    await page.keyboard.type('디브리');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(() => State.currentView === 'debriefings'), '빠른 이동으로 화면 이름 이동이 안 됨');
+    // 통합검색 필터
+    const r = await page.evaluate(() => {
+      const all = Search.runUniversal('목록');
+      const soapOnly = Search.runUniversal('목록', { types: ['soap'] });
+      const task = Search.runUniversal('목록', { types: ['task'] });
+      const byClient = Search.runUniversal('목록', { clientId: 'PL1' });
+      const none = Search.runUniversal('목록', { clientId: 'ME1' });
+      const dated = Search.runUniversal('목록', { dateFrom: Utils.addDaysStr(Utils.todayStr(), -11), dateTo: Utils.addDaysStr(Utils.todayStr(), -9) });
+      const outside = Search.runUniversal('목록', { dateFrom: Utils.addDaysStr(Utils.todayStr(), 5) });
+      const unreg = Search.runUniversal('미등록 사실', { types: ['debrief'] });
+      return { all: all.length, soapOnly: soapOnly.length, task: task.length, byClient: byClient.length, none: none.length, dated: dated.length, outside: outside.length, unreg: unreg.map(x => [x.clientId, !!x.target.debriefId]), target: soapOnly[0] && !!soapOnly[0].target.soapId, snippet: soapOnly[0] && soapOnly[0].snippet.includes('목록'), sorted: all.every((x, i) => i === 0 || (all[i - 1].date || '') >= (x.date || '')) };
+    });
+    assert(r.soapOnly >= 130 && r.all >= r.soapOnly && r.task === 0 && r.byClient >= 130 && r.none === 0, '통합검색 종류/대상자 필터가 다름: ' + JSON.stringify(r));
+    assert(r.dated >= 130 && r.outside === 0 && r.target && r.snippet && r.sorted, '통합검색 기간/정렬/이동 대상이 다름: ' + JSON.stringify(r));
+    assert(r.unreg.length >= 1 && r.unreg[0][0] === '' && r.unreg[0][1], '미등록 디브리핑이 통합검색에 안 나옴: ' + JSON.stringify(r.unreg));
+    await page.evaluate(() => { Views._searchMode = 'universal'; UI.navigate('search', {}); });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => { document.getElementById('uniKeyword').value = '목록'; document.querySelector('.uniType[value="soap"]').click(); document.getElementById('doUniSearchBtn').click(); });
+    await page.waitForTimeout(250);
+    const rows = await page.evaluate(() => document.querySelectorAll('#searchResults [data-uni-i]').length);
+    assert(rows === 130 || rows === 200 || rows > 100, '통합검색 화면에 결과가 안 나옴: ' + rows);
+    await page.evaluate(() => { Views._searchMode = 'soap'; });
+    noNewErrors('요약·빠른 이동·통합검색');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
