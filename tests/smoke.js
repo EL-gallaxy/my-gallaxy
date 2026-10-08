@@ -256,6 +256,30 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('소요 시간·접촉 계획·의뢰서');
   });
 
+  await step('위기 디브리핑을 저장하고 후속조치로 등록하며 보고서에는 실무자 영향을 싣지 않는다', async () => {
+    const r = await page.evaluate(async () => {
+      const ev = Clients.get('CI1').crisisEvents[0];
+      const before = Clients.hasDebriefing(ev);
+      const fuBefore = FollowUps.list().length;
+      const made = await Clients.saveDebriefing('CI1', ev.id, { date: Utils.todayStr(), participants: '본인', facts: '사실정리본문', wentWell: '잘된점본문', toImprove: '바꿀점본문', staffImpact: '비밀실무자영향', review: ['안전계획 보완', '없는항목'], actions: '안전계획 수정\n\n보호자 연락', registerFollowUps: true });
+      const e2 = Clients.get('CI1').crisisEvents[0];
+      const fus = FollowUps.list().filter(f => f.text.startsWith('[디브리핑]'));
+      const html = Views.crisisReport({ clientId: 'CI1', eventId: ev.id });
+      return { before, made, after: Clients.hasDebriefing(e2), review: e2.debriefing.review.join(','), fuAdded: FollowUps.list().length - fuBefore, fuTexts: fus.map(f => f.text).join('|'), report: html.includes('사실정리본문') && html.includes('바꿀점본문'), leak: html.includes('비밀실무자영향') };
+    });
+    assert(r.before === false && r.after === true && r.made === 2 && r.fuAdded === 2, '디브리핑 저장/후속조치 등록이 다름: ' + JSON.stringify(r));
+    assert(r.review === '안전계획 보완', '반영 항목 정리가 다름: ' + r.review);
+    assert(r.report && !r.leak, '보고서에 디브리핑이 안 실리거나 실무자 영향이 새어 나옴');
+    await page.evaluate(() => UI.navigate('clientDetail', { id: 'CI1' }));
+    await page.waitForTimeout(200);
+    await page.evaluate(() => { const ev = Clients.get('CI1').crisisEvents[0]; Views.openDebriefingModal('CI1', ev.id); });
+    await page.waitForTimeout(150);
+    const filled = await page.evaluate(() => document.getElementById('dbStaff').value);
+    assert(filled === '비밀실무자영향', '디브리핑 창에 저장한 내용이 다시 나타나지 않음');
+    await page.evaluate(() => UI.closeModal());
+    noNewErrors('디브리핑');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
