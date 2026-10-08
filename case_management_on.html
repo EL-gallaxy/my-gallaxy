@@ -205,7 +205,9 @@
   .summary-card.gap .num{color:var(--warn);}
 
   .panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:20px;}
-  .panel-title{font-size:1rem;font-weight:600;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;}
+  /* 아이콘 + 제목 글자가 양 끝으로 갈라지지 않도록 왼쪽에 모으고, 오른쪽 버튼 묶음(span)만 끝으로 민다. */
+  .panel-title{font-size:1rem;font-weight:600;margin-bottom:12px;display:flex;align-items:center;justify-content:flex-start;gap:8px;}
+  .panel-title > span:last-child:has(> button){margin-left:auto;}
   .empty-msg{color:var(--text-faint);font-size:0.88rem;padding:10px 2px;}
 
   .list-row{
@@ -463,7 +465,7 @@
     #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
     #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
+    #clNewSoap, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
@@ -636,6 +638,7 @@ const ICON_PATHS = {
   building: '<rect x="4" y="3" width="10" height="18"/><rect x="14" y="9" width="6" height="12"/><path d="M7 7h1M11 7h1M7 11h1M11 11h1M7 15h1M11 15h1"/>',
   search: '<circle cx="10.3" cy="10.3" r="6.3"/><path d="M20 20l-4.8-4.8"/>',
   barChart: '<path d="M4 20V10M10 20V4M16 20v-7M2.5 20h19"/>',
+  trendingUp: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
   heart: '<path d="M12 20s-7.2-4.5-9.4-9C1.2 7.8 2.8 4.4 6.2 3.9c2-.3 3.9.6 5.8 3 1.9-2.4 3.8-3.3 5.8-3 3.4.5 5 3.9 3.6 7.1C19.2 15.5 12 20 12 20z"/>',
   bookOpen: '<path d="M12 6.3c-2-1.7-4.6-2.1-7.3-2.1v13c2.7 0 5.3.4 7.3 2.1 2-1.7 4.6-2.1 7.3-2.1v-13c-2.7 0-5.3.4-7.3 2.1Z"/><path d="M12 6.3v13"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 13.6a8 8 0 0 0 0-3.2l1.9-1.5-2-3.4-2.3.9a7.9 7.9 0 0 0-2.7-1.6L14 2.5h-4l-.4 2.3a7.9 7.9 0 0 0-2.7 1.6l-2.3-.9-2 3.4L4.5 10.4a8 8 0 0 0 0 3.2l-1.9 1.5 2 3.4 2.3-.9c.8.7 1.7 1.3 2.7 1.6l.4 2.3h4l.4-2.3a7.9 7.9 0 0 0 2.7-1.6l2.3.9 2-3.4-1.9-1.5Z"/>',
@@ -1183,6 +1186,11 @@ const CONSTANTS = {
   CRISIS_EVENT_TYPES: ['자살시도', '자해', '응급입원 동행', '112 신고', '119 신고', '타해 위험', '기타'],
   CONTACT_RELATIONS: ['배우자', '부모', '자녀', '형제자매', '기타 보호자', '기타'],
   ASSESSMENT_SCALES: ['GAF (전반적 기능평가)', 'K-MMSE (간이정신상태검사)', 'K-BDI (벡 우울척도)', 'BPRS (간이정신병리평가척도)', 'PHQ-9 (우울 선별)', 'GAD-7 (불안 선별)', 'C-SSRS (자살 위험 선별)', '기타'],
+  // 성과 지표에서 점수 변화를 "좋아짐/나빠짐"으로 나눌 때 쓰는 방향(점수가 높을수록 좋은 척도 / 낮을수록 좋은 척도).
+  // 점수 방향만 볼 뿐 임상적으로 유의한 변화인지는 판단하지 않는다. 목록에 없는 척도는 집계에서 제외한다.
+  SCALE_DIRECTION: { 'GAF (전반적 기능평가)': 'higher', 'K-MMSE (간이정신상태검사)': 'higher', 'K-BDI (벡 우울척도)': 'lower', 'BPRS (간이정신병리평가척도)': 'lower', 'PHQ-9 (우울 선별)': 'lower', 'GAD-7 (불안 선별)': 'lower' },
+  // 재입원: 퇴원 후 이 일수 안에 다시 입원한 경우.
+  READMISSION_DAYS: 90,
   // 점수 변화 그래프의 세로축 범위(알려진 척도만 고정, 나머지는 자동).
   SCALE_RANGES: { 'GAF (전반적 기능평가)': [0, 100], 'K-MMSE (간이정신상태검사)': [0, 30], 'K-BDI (벡 우울척도)': [0, 63], 'PHQ-9 (우울 선별)': [0, 27], 'GAD-7 (불안 선별)': [0, 21] },
   // 문항별로 입력하는 척도. 앱은 합계만 계산하고 해석·판정은 하지 않는다 — 아래
@@ -3342,6 +3350,112 @@ const Stats = {
     };
   },
 
+  // 성과 지표(연 단위) — 활동량이 아니라 "서비스 이후 어떻게 되었는가"를 보는 지표. 입원·위기 건수,
+  // 재입원, 평가 점수 변화, 서비스 목표 달성, 종결 결과, 연계 결과를 한 번에 계산한다.
+  // 모두 이미 기록된 값을 세기만 하며 임상적 의미를 판정하지 않는다.
+  outcomes(year){
+    const inYear = (d) => (d || '').startsWith(year);
+    const today = Utils.todayStr();
+    const dayDiff = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+    const clients = Clients.list();
+
+    // 위기개입 — 월별 건수, 사건이 있었던 대상자 수, 유형별
+    const crisisByMonth = new Array(12).fill(0);
+    const crisisTypes = {};
+    const crisisClients = new Set();
+    let crisisTotal = 0;
+    clients.forEach(c => (c.crisisEvents || []).forEach(ev => {
+      if (!inYear(ev.date)) return;
+      crisisTotal++;
+      crisisClients.add(c.id);
+      crisisByMonth[parseInt(ev.date.slice(5, 7), 10) - 1]++;
+      crisisTypes[ev.type] = (crisisTypes[ev.type] || 0) + 1;
+    }));
+
+    // 입원 — 입원/퇴원 기록을 대상자별 날짜순으로 짝지어 입원 기간을 구하고, 퇴원 후 N일 안의 재입원을 센다
+    let admissionCount = 0, dischargeCount = 0, stayDaysSum = 0, stayCount = 0, ongoing = 0;
+    let readmitEligible = 0, readmitted = 0;
+    const admittedClients = new Set();
+    const kindCounts = {};
+    clients.forEach(c => {
+      const evs = (c.admissions || []).map((a, i) => ({ a, i })).sort((x, y) => x.a.date.localeCompare(y.a.date) || x.i - y.i).map(x => x.a);
+      evs.forEach((a, idx) => {
+        if (a.type === '입원' && inYear(a.date)){
+          admissionCount++;
+          admittedClients.add(c.id);
+          const k = a.kind || '미기록';
+          kindCounts[k] = (kindCounts[k] || 0) + 1;
+          const out = evs.slice(idx + 1).find(x => x.type === '퇴원');
+          if (out){ stayDaysSum += Math.max(0, dayDiff(a.date, out.date)); stayCount++; } else { ongoing++; }
+        }
+        if (a.type === '퇴원' && inYear(a.date)){
+          dischargeCount++;
+          // 추적 기간(퇴원일 + N일)이 아직 다 지나지 않은 퇴원은 재입원 여부를 알 수 없으므로 비율에서 뺀다.
+          if (dayDiff(a.date, today) >= CONSTANTS.READMISSION_DAYS){
+            readmitEligible++;
+            const again = evs.slice(idx + 1).find(x => x.type === '입원' && dayDiff(a.date, x.date) > 0 && dayDiff(a.date, x.date) <= CONSTANTS.READMISSION_DAYS);
+            if (again) readmitted++;
+          }
+        }
+      });
+    });
+
+    // 평가 점수 변화 — 한 해 안에 같은 척도 점수가 2회 이상인 대상자의 첫 점수와 마지막 점수
+    const scoreChange = {};
+    clients.forEach(c => {
+      const byScale = {};
+      (c.assessments || []).forEach(a => {
+        const v = parseFloat(a.score);
+        if (!inYear(a.date) || !Number.isFinite(v) || !CONSTANTS.SCALE_DIRECTION[a.scale]) return;
+        (byScale[a.scale] = byScale[a.scale] || []).push({ date: a.date, v });
+      });
+      Object.keys(byScale).forEach(scale => {
+        const pts = byScale[scale].sort((x, y) => x.date.localeCompare(y.date));
+        if (pts.length < 2) return;
+        const first = pts[0].v, last = pts[pts.length - 1].v;
+        const r = scoreChange[scale] = scoreChange[scale] || { n: 0, firstSum: 0, lastSum: 0, better: 0, worse: 0, same: 0 };
+        r.n++; r.firstSum += first; r.lastSum += last;
+        const diff = last - first;
+        if (diff === 0) r.same++;
+        else if ((diff > 0) === (CONSTANTS.SCALE_DIRECTION[scale] === 'higher')) r.better++;
+        else r.worse++;
+      });
+    });
+
+    // 서비스계획 목표 — 그 해에 작성한 계획의 항목 상태
+    const planItemCounts = {};
+    let planItemTotal = 0;
+    clients.forEach(c => (c.servicePlans || []).forEach(pl => {
+      if (!inYear(pl.date)) return;
+      (pl.items || []).forEach(i => { planItemTotal++; planItemCounts[i.status] = (planItemCounts[i.status] || 0) + 1; });
+    }));
+
+    // 종결 서비스 결과
+    const closureOutcomes = {};
+    let closureTotal = 0;
+    clients.forEach(c => {
+      if (c.status !== 'closed' || !inYear(c.closedDate)) return;
+      closureTotal++;
+      const k = c.closedOutcome || '미기록';
+      closureOutcomes[k] = (closureOutcomes[k] || 0) + 1;
+    });
+
+    // 자원연계 — 결과가 정해진 건 중 연계가 이루어진 비율(연계 완료 + 이용 종료)
+    const ref = { connected: 0, declined: 0, rejected: 0, ended: 0, unknown: 0, referred: 0, none: 0 };
+    clients.forEach(c => (c.resourceLinks || []).forEach(r => { if (inYear(r.date)) ref[CONSTANTS.REFERRAL_STATUSES[r.status] ? r.status : 'none']++; }));
+    const refDecided = ref.connected + ref.ended + ref.declined + ref.rejected;
+
+    const level = this.monthlyReport(year);
+    return {
+      year, crisisTotal, crisisClientCount: crisisClients.size, crisisByMonth, crisisTypes,
+      admissionCount, admittedClientCount: admittedClients.size, dischargeCount, kindCounts,
+      avgStayDays: stayCount ? stayDaysSum / stayCount : null, stayCount, ongoing, readmitEligible, readmitted,
+      scoreChange, planItemTotal, planItemCounts, closureTotal, closureOutcomes,
+      ref, refDecided, refSuccessRate: refDecided ? (ref.connected + ref.ended) / refDecided : null,
+      levelImprovedCount: level.levelImprovedCount, levelWorsenedCount: level.levelWorsenedCount
+    };
+  },
+
   // 연간 실적보고서 — monthlyReport()의 'YYYY-MM' 접두사 매칭 로직이 'YYYY'
   // 접두사에도 그대로 들어맞으므로, 집계 로직을 다시 쓰지 않고 그대로 재사용한
   // 뒤 연간 전용 필드(연도, 월별 상담건수 추이)만 덧붙인다.
@@ -4000,6 +4114,7 @@ const UI = {
       case 'resourceDirectory': main.innerHTML = Views.resourceDirectory(); Views.bindResourceDirectory(); break;
       case 'search': main.innerHTML = Views.search(); Views.bindSearch(); break;
       case 'stats': main.innerHTML = Views.stats(); Views.bindStats(); break;
+      case 'outcomes': main.innerHTML = Views.outcomes(State.currentParams); Views.bindOutcomes(); break;
       case 'selfCare': main.innerHTML = Views.selfCarePage(); Views.bindSelfCarePage(); break;
       case 'training': main.innerHTML = Views.trainingPage(); Views.bindTrainingPage(); break;
       case 'tour': main.innerHTML = Views.tourPage(); Views.bindTourPage(); break;
@@ -7524,7 +7639,8 @@ const Views = {
   stats(){
     const s = Stats.compute();
     let html = Views.printHeaderHtml('통계 및 월간 실적보고서');
-    html += '<h1 class="page-title">' + icon('barChart', { size: 22 }) + ' 통계</h1>';
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('barChart', { size: 22 }) + ' 통계</h1>' +
+      '<button class="btn btn-sm btn-primary" id="goOutcomesBtn">' + icon('trendingUp') + ' 성과 지표 보기</button></div>';
 
     html += '<div class="summary-grid">' +
       '<div class="summary-card" style="cursor:default;"><div class="num">' + s.totalClients + '</div><div class="label">총 대상자</div></div>' +
@@ -7563,6 +7679,83 @@ const Views = {
 
     return html;
   },
+  // 성과 지표 화면 — 연도를 고르면 그 해와 전년을 나란히 보여준다. 숫자에 좋고 나쁨을 매기지 않는다.
+  outcomes(params){
+    const year = (params && params.year) || String(new Date().getFullYear());
+    const prevYear = String(parseInt(year, 10) - 1);
+    const o = Stats.outcomes(year), pv = Stats.outcomes(prevYear);
+    const e = Utils.escapeHtml;
+    const pct = (v) => v === null ? '-' : Math.round(v * 100) + '%';
+    const tile = (num, label, prevText) => '<div class="summary-card" style="cursor:default;"><div class="num">' + num + '</div><div class="label">' + label + '</div>' +
+      '<div class="help-text" style="margin-top:4px;">' + prevYear + '년 ' + prevText + '</div></div>';
+    const planAchieved = o.planItemCounts.achieved || 0, planAchievedPrev = pv.planItemCounts.achieved || 0;
+
+    let html = Views.printHeaderHtml('성과 지표 ' + year + '년');
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('trendingUp', { size: 22 }) + ' 성과 지표</h1>' +
+      '<div style="display:flex;gap:8px;align-items:center;"><select id="outcomeYearSelect" aria-label="성과 지표 연도">' + Views.yearOptionsHtml(year) + '</select>' +
+      '<button class="btn btn-sm" id="outcomePrintBtn">' + icon('printer') + ' 인쇄</button>' +
+      '<button class="btn btn-sm" id="outcomeBackBtn">' + icon('arrowLeft') + ' 통계로</button></div></div>';
+    html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">기록된 입원·위기·평가 점수·서비스계획·종결·연계를 연도별로 집계합니다. 숫자의 좋고 나쁨이나 임상적 의미는 판정하지 않으며, 전년과 나란히 놓고 변화를 보는 용도입니다. 기록이 빠져 있으면 실제보다 적게 나옵니다.</p>';
+
+    html += '<div class="summary-grid">' +
+      tile(o.crisisTotal, '위기개입 건수', pv.crisisTotal + '건') +
+      tile(o.admissionCount, '입원 건수 (' + o.admittedClientCount + '명)', pv.admissionCount + '건') +
+      tile(o.readmitEligible ? pct(o.readmitted / o.readmitEligible) : '-', '재입원율 (' + CONSTANTS.READMISSION_DAYS + '일 이내)', pv.readmitEligible ? pct(pv.readmitted / pv.readmitEligible) : '-') +
+      tile(o.avgStayDays === null ? '-' : Math.round(o.avgStayDays) + '일', '평균 입원 기간', pv.avgStayDays === null ? '-' : Math.round(pv.avgStayDays) + '일') +
+      tile(o.planItemTotal ? pct(planAchieved / o.planItemTotal) : '-', '서비스 목표 달성률', pv.planItemTotal ? pct(planAchievedPrev / pv.planItemTotal) : '-') +
+      tile(pct(o.refSuccessRate), '연계 성사율', pct(pv.refSuccessRate)) +
+      '</div>';
+
+    html += '<div class="panel"><div class="panel-title">' + icon('siren') + ' 위기개입 월별 추이 (' + year + '년 ' + o.crisisTotal + '건, ' + o.crisisClientCount + '명)</div>' +
+      Views.renderBarChart(o.crisisByMonth.map((v, i) => ({ label: (i + 1) + '월', value: v }))) +
+      (Object.keys(o.crisisTypes).length ? '<div class="divider"></div><p style="font-size:0.85rem;">유형별: ' + Object.keys(o.crisisTypes).map(k => e(k) + ' ' + o.crisisTypes[k] + '건').join(' · ') + '</p>' : '') + '</div>';
+
+    html += '<div class="panel"><div class="panel-title">' + icon('building') + ' 입원</div><p style="font-size:0.88rem;line-height:1.9;">' +
+      '입원 ' + o.admissionCount + '건 (' + o.admittedClientCount + '명) · 퇴원 ' + o.dischargeCount + '건' +
+      (o.ongoing ? ' · 퇴원 기록 없음(입원 중으로 봄) ' + o.ongoing + '건' : '') + '<br>' +
+      '평균 입원 기간: ' + (o.avgStayDays === null ? '-' : Math.round(o.avgStayDays) + '일 (퇴원까지 기록된 ' + o.stayCount + '건 기준)') + '<br>' +
+      '재입원: ' + (o.readmitEligible ? o.readmitted + '건 / 퇴원 ' + o.readmitEligible + '건 = ' + pct(o.readmitted / o.readmitEligible) : '-') +
+      ' <span class="help-text">(퇴원 후 ' + CONSTANTS.READMISSION_DAYS + '일이 지난 퇴원만 포함 — 최근 퇴원은 아직 알 수 없어 뺍니다)</span></p>' +
+      (Object.keys(o.kindCounts).length ? '<div class="divider"></div>' + Views.renderBarChart(Object.keys(o.kindCounts).map(k => ({ label: k, value: o.kindCounts[k] }))) : '') + '</div>';
+
+    const scales = Object.keys(o.scoreChange);
+    html += '<div class="panel"><div class="panel-title">' + icon('barChart') + ' 평가 점수 변화 (한 해 안에 같은 척도를 2회 이상 측정한 대상자)</div>';
+    if (!scales.length){
+      html += '<div class="empty-msg">해당 연도에 같은 척도를 2회 이상 측정한 기록이 없습니다.</div>';
+    } else {
+      html += '<table><thead><tr><th>척도</th><th>대상자</th><th>첫 점수 평균</th><th>마지막 점수 평균</th><th>평균 변화</th><th>점수가 좋아짐</th><th>나빠짐</th><th>같음</th></tr></thead><tbody>' +
+        scales.map(k => {
+          const r = o.scoreChange[k];
+          const avgFirst = r.firstSum / r.n, avgLast = r.lastSum / r.n, d = avgLast - avgFirst;
+          return '<tr><th scope="row" style="text-align:left;">' + e(k) + ' <span class="help-text">(' + (CONSTANTS.SCALE_DIRECTION[k] === 'higher' ? '높을수록 좋음' : '낮을수록 좋음') + ')</span></th><td>' + r.n + '명</td><td>' + avgFirst.toFixed(1) + '</td><td>' + avgLast.toFixed(1) +
+            '</td><td>' + (d > 0 ? '+' : '') + d.toFixed(1) + '</td><td>' + r.better + '명</td><td>' + r.worse + '명</td><td>' + r.same + '명</td></tr>';
+        }).join('') + '</tbody></table>' +
+        '<p class="help-text" style="margin-top:8px;">"좋아짐/나빠짐"은 점수의 방향만 비교한 것이며 임상적으로 의미 있는 변화인지는 판단하지 않습니다.</p>';
+    }
+    html += '</div>';
+
+    html += '<div class="panel"><div class="panel-title">' + icon('clipboardList') + ' 서비스 목표와 종결 결과</div>';
+    html += o.planItemTotal
+      ? '<p style="font-size:0.88rem;margin-bottom:6px;">' + year + '년에 작성한 서비스계획 항목 ' + o.planItemTotal + '개의 현재 상태</p>' +
+        Views.renderBarChart(Object.keys(CONSTANTS.PLAN_ITEM_STATUSES).map(k => ({ label: CONSTANTS.PLAN_ITEM_STATUSES[k].label.replace(/^\S+\s/, ''), value: o.planItemCounts[k] || 0 })))
+      : '<div class="empty-msg">해당 연도에 작성한 서비스계획 항목이 없습니다.</div>';
+    html += '<div class="divider"></div>' + (o.closureTotal
+      ? '<p style="font-size:0.88rem;margin-bottom:6px;">' + year + '년에 종결한 ' + o.closureTotal + '건의 서비스 결과</p>' + Views.renderBarChart(Object.keys(o.closureOutcomes).map(k => ({ label: k, value: o.closureOutcomes[k] })))
+      : '<div class="empty-msg">해당 연도에 종결한 사례가 없습니다.</div>');
+    html += '<div class="divider"></div><p style="font-size:0.88rem;">관리수준 변화: 완화 ' + o.levelImprovedCount + '건 · 강화 ' + o.levelWorsenedCount + '건 (전년 완화 ' + pv.levelImprovedCount + '건 · 강화 ' + pv.levelWorsenedCount + '건)</p></div>';
+
+    html += '<div class="panel"><div class="panel-title">' + icon('link') + ' 자원연계 결과 (의뢰일이 ' + year + '년인 건)</div>' +
+      '<p style="font-size:0.88rem;">연계 완료 ' + o.ref.connected + ' · 이용 종료 ' + o.ref.ended + ' · 대상자 거절 ' + o.ref.declined + ' · 기관 수용 불가 ' + o.ref.rejected + ' · 결과 확인 불가 ' + o.ref.unknown + ' · 결과 대기 ' + o.ref.referred + ' · 상태 미기록 ' + o.ref.none + '<br>' +
+      '연계 성사율 ' + pct(o.refSuccessRate) + ' <span class="help-text">(결과가 정해진 ' + o.refDecided + '건 중 연계 완료·이용 종료)</span></p></div>';
+    html += Views.printSignatureHtml();
+    return html;
+  },
+  bindOutcomes(){
+    const year = State.currentParams.year;
+    document.getElementById('outcomeYearSelect').onchange = (ev) => UI.navigate('outcomes', { year: ev.target.value });
+    document.getElementById('outcomeBackBtn').onclick = () => UI.navigate('stats', {});
+    document.getElementById('outcomePrintBtn').onclick = () => window.print();
+  },
   renderBarChart(items){
     const max = Math.max(1, ...items.map(i => i.value));
     return '<div class="barchart">' + items.map(i =>
@@ -7572,6 +7765,7 @@ const Views = {
     ).join('') + '</div>';
   },
   bindStats(){
+    document.getElementById('goOutcomesBtn').onclick = () => UI.navigate('outcomes', {});
     document.getElementById('journalDateInput').onchange = (e) => {
       Views._journalDate = e.target.value;
       UI.renderCurrentView();
