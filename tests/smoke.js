@@ -587,6 +587,34 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('요약·빠른 이동·통합검색');
   });
 
+  await step('데이터가 있는 상태에서 기관주소록·일정·후속조치 목록이 그려진다(회귀 방지)', async () => {
+    const r = await page.evaluate(async () => {
+      await ResourceDirectory.add({ type: '정신의료기관', name: '회귀점검병원', phone: '02-111-2222' });
+      await ResourceDirectory.add({ type: '사회복지관', name: '회귀점검복지관' });
+      for (let i = 0; i < 120; i++) await Schedules.add({ clientId: 'PL1', date: Utils.addDaysStr(Utils.todayStr(), 1 + (i % 30)), contactType: '방문', memo: '회귀' + i });
+      for (let i = 0; i < 120; i++) await FollowUps.add({ clientId: 'PL1', type: '기타', text: '회귀후속' + i, dueDate: Utils.addDaysStr(Utils.todayStr(), 2 + (i % 30)) });
+      const out = {};
+      for (const [v, p] of [['resourceDirectory', {}], ['schedule', {}], ['followUps', {}], ['soapList', {}]]){
+        State.currentParams = p; Views._rowLimits = {};
+        const html = Views[v]();
+        out[v] = { len: html.length, more: html.includes('data-more-rows') };
+      }
+      State.currentParams = {};
+      return { out, rd: Views.resourceDirectory().includes('회귀점검병원') && Views.resourceDirectory().includes('회귀점검복지관') && Views.resourceDirectory().includes('data-edit-resdir') };
+    });
+    assert(r.rd, '기관주소록에 등록한 기관이 목록에 나오지 않음');
+    assert(r.out.schedule.more && r.out.followUps.more && r.out.soapList.more, '긴 목록에 더 보기가 없음: ' + JSON.stringify(r.out));
+    // 실제 화면 이동에서도 오류 없이 그려진다
+    for (const v of ['resourceDirectory', 'schedule', 'followUps']){
+      await page.evaluate((name) => UI.navigate(name, {}), v);
+      await page.waitForTimeout(200);
+      const txt = await page.evaluate(() => document.getElementById('appMain').textContent);
+      assert(txt.length > 100, v + ' 화면이 비어 있음');
+      if (v === 'resourceDirectory') assert(txt.includes('회귀점검병원'), '기관주소록 화면에 기관이 안 보임');
+    }
+    noNewErrors('목록 회귀 점검');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],

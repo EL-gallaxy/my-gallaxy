@@ -8290,7 +8290,7 @@ const Views = {
           ' <button class="btn btn-sm" ' + editAttr + '="' + it.id + '">수정</button>' +
           ' <button class="btn btn-sm btn-danger" ' + delAttr + '="' + it.id + '">삭제</button></td></tr>';
       });
-      html += '</tbody></table>';
+      html += '</tbody></table>' + Views.moreRowsHtml(schKey, items.length, schShown);
     }
     html += '</div>';
     return html;
@@ -8463,7 +8463,7 @@ const Views = {
           '<td>' + Utils.escapeHtml(r.note || '-') + '</td>' +
           '<td><button class="btn btn-sm" data-edit-resdir="' + r.id + '">수정</button> <button class="btn btn-sm btn-danger" data-del-resdir="' + r.id + '">삭제</button></td></tr>';
       });
-      html += '</tbody></table>' + Views.moreRowsHtml(schKey, items.length, schShown);
+      html += '</tbody></table>';
     }
     html += '</div>';
     return html;
