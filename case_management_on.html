@@ -852,6 +852,20 @@ const Utils = {
     rrn: /\d{6}\s?-\s?[1-8]\d{6}/,
     phone: /(?:0\d{1,2}[-.\s]\d{3,4}[-.\s]\d{4}|01[016789]\d{7,8})/
   },
+  // 오타로 보이는 날짜를 짚는다. 막지 않고 문구만 돌려준다(없으면 빈 문자열).
+  // opts: { future: 오늘보다 뒤를 허용(기본 false), maxFutureDays, maxPastDays }
+  dateWarning(label, dateStr, opts){
+    if (!dateStr) return '';
+    opts = opts || {};
+    const today = Utils.todayStr();
+    if (dateStr > today){
+      if (!opts.future) return label + '(' + dateStr + ')이 오늘보다 뒤입니다.';
+      if (opts.maxFutureDays && dateStr > Utils.addDaysStr(today, opts.maxFutureDays)) return label + '(' + dateStr + ')이 ' + Math.round(opts.maxFutureDays / 30) + '개월 넘게 뒤입니다.';
+      return '';
+    }
+    if (opts.maxPastDays && dateStr < Utils.addDaysStr(today, -opts.maxPastDays)) return label + '(' + dateStr + ')이 ' + opts.maxPastDays + '일보다 더 이전입니다.';
+    return '';
+  },
   // 슈퍼비전 등 밖으로 가져갈 때 쓰는 가림 처리. ID·별칭·주민번호·전화번호를 바꾼다(자유 입력 속 실명 등은 직접 확인해야 한다).
   deidentify(text, client){
     let t = String(text || '');
@@ -1662,6 +1676,25 @@ const Thresholds = {
   },
   async save(values){ await Storage.setSetting('thresholds', values); this.apply(values); },
   async reset(){ await Storage.setSetting('thresholds', {}); this.apply({}); }
+};
+
+/* 기록 보관기간 — 종결한 대상자의 기록을 언제까지 갖고 있을지 정한 기준(년). 기준을 넘긴 종결 대상자를 설정 화면에서
+   보여 주고, 백업을 받은 뒤 사용자가 직접 골라 삭제한다. 자동으로 지우지 않는다. */
+const Retention = {
+  years: 5,
+  async init(){ const y = parseInt(await Storage.getSetting('retentionYears'), 10); this.years = y >= 1 && y <= 50 ? y : 5; },
+  async setYears(v){
+    const y = parseInt(v, 10);
+    if (!(y >= 1 && y <= 50)) throw new Error('보관기간은 1~50년 사이로 입력해 주세요.');
+    this.years = y;
+    await Storage.setSetting('retentionYears', y);
+  },
+  // 종결일로부터 보관기간이 지난 종결 대상자 (종결일이 없으면 기준을 알 수 없어 제외)
+  expiredList(){
+    return Clients.list().filter(c => c.status === 'closed' && c.closedDate && Utils.daysSince(c.closedDate) >= this.years * 365)
+      .map(c => ({ id: c.id, alias: c.alias, closedDate: c.closedDate, years: Math.floor(Utils.daysSince(c.closedDate) / 365) }))
+      .sort((a, b) => a.closedDate.localeCompare(b.closedDate));
+  }
 };
 
 /* =========================================================================
@@ -2745,7 +2778,10 @@ const Debriefings = {
   REVIEW_ITEMS: ['안전계획 보완', '위기 시 선호 보완', '관리수준 재검토', '연락망·긴급연락처 확인', '복약·진료 연계 확인'],
   list(){ return Array.from(State.debriefings.values()).sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || ''))); },
   get(id){ return State.debriefings.get(id); },
-  byEvent(clientId, eventId){ return this.list().find(d => d.clientId === clientId && d.eventId === eventId) || null; },
+  byEvent(clientId, eventId){
+    for (const d of State.debriefings.values()) if (d.clientId === clientId && d.eventId === eventId) return d;
+    return null;
+  },
   hasContent(d){ return !!(d && (d.facts || d.wentWell || d.toImprove || d.staffImpact || d.actions || d.supervisionQuestion || (d.review || []).length)); },
   // 위기 사건에 디브리핑이 있는지 — 예전 "사후 점검" 칸이나 사건에 직접 붙여 둔 이전 형식도 쓴 것으로 본다.
   hasForEvent(clientId, ev){
@@ -3613,6 +3649,8 @@ const Search = {
     const push = (client, section, text) => {
       if ((text || '').toLowerCase().includes(kw)) results.push({ clientId: client.id, alias: client.alias, section, text });
     };
+    const debriefsByClient = {};
+    Debriefings.list().forEach(d => { if (d.clientId) (debriefsByClient[d.clientId] = debriefsByClient[d.clientId] || []).push(d); });
     Clients.list().forEach(c => {
       push(c, '기본정보', c.alias);
       push(c, '기본정보', c.referralSource);
@@ -3628,7 +3666,7 @@ const Search = {
       (c.managementHistory || []).forEach(h => push(c, '관리수준 이력', h.reason));
       (c.emergencyContacts || []).forEach(ec => push(c, '보호자·비상연락처', [ec.name, ec.relation, ec.phone, ec.note].filter(Boolean).join(' · ')));
       (c.resourceLinks || []).forEach(r => push(c, '자원연계 현황', [r.type, r.name, r.contact, r.note, (CONSTANTS.REFERRAL_STATUSES[r.status] || {}).label, r.resultNote].filter(Boolean).join(' · ')));
-      Debriefings.list().filter(d => d.clientId === c.id).forEach(d => push(c, '디브리핑', [d.facts, d.wentWell, d.toImprove, d.actions].filter(Boolean).join(' · ')));
+      (debriefsByClient[c.id] || []).forEach(d => push(c, '디브리핑', [d.facts, d.wentWell, d.toImprove, d.actions].filter(Boolean).join(' · ')));
       (c.crisisEvents || []).forEach(e => push(c, '위기개입 기록', [e.type, e.description, e.action, e.outcome, e.debrief].concat((e.steps || []).map(x => x.type + ' ' + x.note)).filter(Boolean).join(' · ')));
       (c.medications || []).forEach(m => push(c, '복약 현황', [m.name, m.dose, m.hospital, m.note].filter(Boolean).join(' · ')));
       (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · ')));
@@ -4216,7 +4254,7 @@ const Backup = {
     await Storage.setSetting('backupDirtySince', null);
   },
 
-  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'thresholds', 'seedClientIds', 'textSnippetsEnc', 'authMode', 'masterWrap', 'recoveryWrap'],
+  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'thresholds', 'retentionYears', 'seedClientIds', 'textSnippetsEnc', 'authMode', 'masterWrap', 'recoveryWrap'],
   overdueCached: false,
 
   // 첨부 제외 백업 — 대상자 기록은 안에 첨부파일이 함께 암호화되어 있어서, 지금 메모리에 풀려 있는 기록에서
@@ -4585,6 +4623,7 @@ const UI = {
   },
 
   navigate(view, params){
+    Views._rowLimits = {};
     State.currentView = view;
     State.currentParams = params || {};
     UI.renderSidebarActive();
@@ -6538,16 +6577,21 @@ const Views = {
 
     document.getElementById('addCrisisBtn').onclick = async () => {
       const crisisDate = document.getElementById('crisisDate').value;
-      await Clients.addCrisisEvent(id, {
+      const data = {
         type: document.getElementById('crisisType').value,
         date: crisisDate,
         time: document.getElementById('crisisTime').value,
         description: document.getElementById('crisisDescription').value,
         action: document.getElementById('crisisAction').value
-      });
-      toast('위기개입 기록을 추가했습니다.');
-      UI.renderCurrentView();
-      Views.openCrisisFollowUpSuggestModal(id, crisisDate);
+      };
+      const save = async () => {
+        await Clients.addCrisisEvent(id, data);
+        toast('위기개입 기록을 추가했습니다.');
+        UI.renderCurrentView();
+        Views.openCrisisFollowUpSuggestModal(id, crisisDate);
+      };
+      const w = Utils.dateWarning('위기개입 날짜', crisisDate, { maxPastDays: 90 });
+      if (w) UI.confirm(w + '\n그대로 저장할까요?', save); else await save();
     };
     document.querySelectorAll('[data-crisis-response]').forEach(el => { el.onclick = () => Views.openCrisisResponseModal(id, el.dataset.crisisResponse); });
     document.querySelectorAll('[data-crisis-debrief]').forEach(el => { el.onclick = () => UI.navigate('debriefEditor', { clientId: id, eventId: el.dataset.crisisDebrief }); });
@@ -7327,6 +7371,23 @@ const Views = {
   },
 
   /* ---------------- SOAP LIST ---------------- */
+  // 긴 목록은 처음 100건만 그리고 "더 보기"로 늘린다 — 기록이 수천 건 쌓여도 화면 전환이 느려지지 않게 한다.
+  ROW_PAGE: 100,
+  _rowLimits: {},
+  rowLimit(key){ return Views._rowLimits[key] || Views.ROW_PAGE; },
+  moreRowsHtml(key, total, shown){
+    return total > shown ? '<p style="margin-top:10px;"><button class="btn btn-sm" data-more-rows="' + key + '">더 보기 (' + shown + ' / ' + total + '건 표시 중)</button></p>' : '';
+  },
+  bindMoreRows(){
+    document.querySelectorAll('[data-more-rows]').forEach(el => {
+      el.onclick = () => {
+        const key = el.dataset.moreRows, main = document.getElementById('appMain'), top = main.scrollTop;
+        Views._rowLimits[key] = Views.rowLimit(key) + Views.ROW_PAGE;
+        UI.renderCurrentView();
+        main.scrollTop = top;
+      };
+    });
+  },
   soapList(){
     const filter = State.currentParams.filter || 'all';
     let items = SoapModule.list();
@@ -7346,7 +7407,8 @@ const Views = {
       html += '<div class="empty-msg">해당 조건의 SOAP 기록이 없습니다.</div>';
     } else {
       html += '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담대상</th><th>상담영역</th><th>상태</th></tr></thead><tbody>';
-      items.forEach(s => {
+      const soapKey = 'soap:' + filter, soapShown = Views.rowLimit(soapKey);
+      items.slice(0, soapShown).forEach(s => {
         html += '<tr class="clickable-row" data-open-soap="' + s.id + '">' +
           '<td>' + Utils.formatSoapDate(s) + ((s.revisions || []).length ? ' <span class="badge badge-draft">수정됨</span>' : '') + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td><td>' + Utils.escapeHtml(s.contactType) + '</td>' +
           '<td>' + Utils.escapeHtml(CONSTANTS.SOAP_SUBJECTS[s.subject] || CONSTANTS.SOAP_SUBJECTS.client) + '</td>' +
@@ -7354,12 +7416,13 @@ const Views = {
           '<td>' + (s.status === 'draft' ? '<span class="badge badge-draft">📝 임시저장</span>' : '<span class="badge badge-final">✅ 완료</span>') + '</td>' +
           '</tr>';
       });
-      html += '</tbody></table>';
+      html += '</tbody></table>' + Views.moreRowsHtml(soapKey, items.length, soapShown);
     }
     html += '</div>';
     return html;
   },
   bindSoapList(){
+    Views.bindMoreRows();
     document.getElementById('newSoapBtn').onclick = () => UI.navigate('soapEditor', {});
     document.getElementById('exportSoapsCsvBtn').onclick = () => {
       const filter = State.currentParams.filter || 'all';
@@ -7469,6 +7532,16 @@ const Views = {
     return html;
   },
 
+  // 창 안에서 쓰는 날짜 확인 — 처음 누르면 오류 칸에 경고를 보이고, 같은 내용으로 한 번 더 누르면 통과시킨다.
+  guardDates(errEl, warnings, state){
+    const key = warnings.join('|');
+    if (!key) return true;
+    if (state.key === key) return true;
+    state.key = key;
+    errEl.textContent = '⚠ ' + warnings.join(' ') + ' 맞다면 같은 버튼을 한 번 더 눌러 저장하세요.';
+    errEl.classList.remove('hidden');
+    return false;
+  },
   // 기록을 쓰는 동안 그 사람의 안전·복약 정보를 화면 전환 없이 볼 수 있게 하는 요약. 입력된 값을 그대로 보여 줄 뿐 판단하지 않는다.
   soapReferenceHtml(clientId, currentSoapId){
     const c = clientId && Clients.get(clientId);
@@ -7703,7 +7776,8 @@ const Views = {
     if (items.length === 0){
       html += '<div class="empty-msg">해당 조건의 후속조치가 없습니다.</div>';
     } else {
-      items.forEach(f => {
+      const fuKey = 'fu:' + filter, fuShown = Views.rowLimit(fuKey);
+      items.slice(0, fuShown).forEach(f => {
         const c = Clients.get(f.clientId);
         const overdue = f.status === 'pending' && f.dueDate < today;
         html += '<div class="list-row' + (overdue ? '' : '') + '" style="' + (overdue ? 'background:var(--danger-soft);' : '') + '">' +
@@ -7717,11 +7791,13 @@ const Views = {
           '<button class="btn btn-sm" data-edit-fu="' + f.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-fu="' + f.id + '">삭제</button>' +
           '</div></div>';
       });
+      html += Views.moreRowsHtml(fuKey, items.length, fuShown);
     }
     html += '</div>';
     return html;
   },
   bindFollowUps(){
+    Views.bindMoreRows();
     document.getElementById('newFuBtn').onclick = () => Views.openFollowUpModal();
     document.querySelectorAll('.tab-btn').forEach(el => { el.onclick = () => UI.navigate('followUps', { filter: el.dataset.f }); });
     document.querySelectorAll('[data-complete-fu]').forEach(el => { el.onclick = async () => { await FollowUps.complete(el.dataset.completeFu); toast('완료 처리했습니다.'); UI.renderCurrentView(); }; });
@@ -7880,7 +7956,8 @@ const Views = {
       html += '<div class="empty-msg">해당 조건의 일정이 없습니다.</div>';
     } else {
       html += '<table><thead><tr><th>날짜</th><th>시간</th><th>구분</th><th>대상자</th><th>내용</th><th>상태</th><th></th></tr></thead><tbody>';
-      items.forEach(it => {
+      const schKey = 'sch:' + (selectedDate || filter), schShown = Views.rowLimit(schKey);
+      items.slice(0, schShown).forEach(it => {
         const c = Clients.get(it.clientId);
         const kindBadge = it.kind === 'schedule' ? '<span class="tag">일정</span>' : '<span class="tag">후속조치</span>';
         const doneAttr = it.kind === 'schedule' ? 'data-done-sch' : 'data-done-fu';
@@ -7900,6 +7977,7 @@ const Views = {
     return html;
   },
   bindSchedule(){
+    Views.bindMoreRows();
     document.getElementById('newSchBtn').onclick = () => Views.openScheduleModal();
     document.getElementById('dailyBriefingBtn').onclick = () => UI.navigate('dailyBriefing', {});
     document.getElementById('icsExportBtn').onclick = () => {
@@ -8066,7 +8144,7 @@ const Views = {
           '<td>' + Utils.escapeHtml(r.note || '-') + '</td>' +
           '<td><button class="btn btn-sm" data-edit-resdir="' + r.id + '">수정</button> <button class="btn btn-sm btn-danger" data-del-resdir="' + r.id + '">삭제</button></td></tr>';
       });
-      html += '</tbody></table>';
+      html += '</tbody></table>' + Views.moreRowsHtml(schKey, items.length, schShown);
     }
     html += '</div>';
     return html;
@@ -8921,12 +8999,14 @@ const Views = {
     };
     document.getElementById('qdKind').addEventListener('change', syncKind);
     document.getElementById('qdCancel').onclick = () => UI.closeModal();
+    const qdGuard = {};
     document.getElementById('qdSave').onclick = async () => {
       try{
         const v = (id) => document.getElementById(id).value;
         const d = Debriefings.blank({ kind: v('qdKind') });
         Object.assign(d, { date: v('qdDate'), time: v('qdTime'), crisisType: v('qdType'), route: v('qdRoute'), outcome: v('qdOutcome'),
           subjectNote: v('qdSubject'), clientId: Views.resolveClientPickerValue(v('qdClient')) });
+        if (!Views.guardDates(document.getElementById('qdError'), [Utils.dateWarning('날짜', d.date, { maxPastDays: 30 })].filter(Boolean), qdGuard)) return;
         await Debriefings.save(d, false);
         UI.closeModal();
         toast('빠른 기록을 저장했습니다. 내용은 디브리핑 탭에서 채울 수 있습니다.');
@@ -9020,7 +9100,8 @@ const Views = {
             if (params.eventId && !params.debriefId) back(); else UI.navigate('debriefings', {});
           }catch(err){ errBox.textContent = err.message || '저장하지 못했습니다.'; errBox.classList.remove('hidden'); }
         };
-        const pii = Views.soapPrivacyWarnings({ S: d.subjectNote + '\n' + d.facts, O: d.wentWell, A: d.toImprove, PText: d.actions + '\n' + d.supervisionQuestion });
+        const dw = Utils.dateWarning('디브리핑 날짜', d.date, { maxPastDays: 90 });
+        const pii = (dw ? [dw] : []).concat(Views.soapPrivacyWarnings({ S: d.subjectNote + '\n' + d.facts, O: d.wentWell, A: d.toImprove, PText: d.actions + '\n' + d.supervisionQuestion }));
         if (pii.length) UI.confirm(pii.join('\n') + '\n그대로 저장할까요?', doSave); else doSave();
       }catch(err){ errBox.textContent = err.message || '저장하지 못했습니다.'; errBox.classList.remove('hidden'); }
     };
@@ -9103,7 +9184,7 @@ const Views = {
       ['backupSection', '데이터 백업 및 복원'], ['printSettingsSection', '인쇄 문서 설정'],
       ['tourSection', '앱 둘러보기'], ['simpleModeSection', '간소화 모드'],
       ['dashboardWidgetsSection', '대시보드 위젯 표시'], ['themeSection', '화면 테마'],
-      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['thresholdSection', '점검 기준 일수'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
+      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['thresholdSection', '점검 기준 일수'], ['retentionSection', '기록 보관·파기'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
     ];
     html += '<div class="panel" style="display:flex;gap:8px;flex-wrap:wrap;">' +
       SETTINGS_SECTIONS.map(([id, label]) => '<button class="btn btn-sm" data-scroll="' + id + '">' + label + '</button>').join('') +
@@ -9195,6 +9276,21 @@ const Views = {
         '<div style="display:flex;gap:8px;"><button class="btn btn-primary btn-sm" id="saveThresholdBtn">저장</button><button class="btn btn-sm" id="resetThresholdBtn">기본값으로 되돌리기</button></div></div>';
     }
 
+    {
+      const exp = Retention.expiredList();
+      html += '<div class="panel" id="retentionSection"><div class="panel-title">' + icon('trash') + ' 기록 보관·파기</div>' +
+        '<p class="help-text" style="margin-bottom:10px;">종결한 대상자의 기록을 종결일부터 몇 년까지 보관할지 정합니다. 기간이 지난 대상자는 아래에 나열하며, 자동으로 지우지 않습니다. 보관기간은 기관 규정과 관련 법령에 맞춰 정하세요.</p>' +
+        '<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;"><div class="field" style="margin:0;max-width:160px;"><label for="retYears">보관기간(년)</label><input type="number" min="1" max="50" id="retYears" value="' + Retention.years + '"></div>' +
+        '<button class="btn btn-sm btn-primary" id="saveRetentionBtn">저장</button></div>' +
+        '<div class="error-msg hidden" id="retError" role="alert"></div>' +
+        '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:6px;">보관기간이 지난 종결 대상자 ' + exp.length + '명</p>' +
+        (exp.length
+          ? exp.map(x => '<div class="list-row"><div class="list-row-main"><div class="row-title">' + Utils.escapeHtml(x.id) + (x.alias ? ' (' + Utils.escapeHtml(x.alias) + ')' : '') + '</div><div class="row-sub">종결일 ' + Utils.escapeHtml(x.closedDate) + ' · ' + x.years + '년 경과</div></div>' +
+            '<div class="row-actions"><button class="btn btn-sm btn-danger" data-retention-del="' + Utils.escapeHtml(x.id) + '">완전 삭제</button></div></div>').join('') +
+            '<p class="help-text" style="margin-top:8px;">삭제하면 그 대상자의 SOAP·후속조치·일정·디브리핑이 함께 지워지고 되돌릴 수 없습니다. 삭제 전에 위의 "백업 파일 저장"으로 전체 백업을 받아 두세요.</p>'
+          : '<div class="empty-msg">보관기간이 지난 종결 대상자가 없습니다.</div>') + '</div>';
+    }
+
     html += '<div class="panel" id="recoverySection"><div class="panel-title">' + icon('shield') + ' 비밀번호 복구 코드</div>' +
       '<p class="help-text" style="margin-bottom:10px;">비밀번호를 잊으면 기록을 열 수 없습니다. 복구 코드를 만들어 종이에 적거나 인쇄해 안전한 곳에 보관해 두면, 비밀번호를 잊어도 이 코드로 기록을 열고 새 비밀번호를 정할 수 있습니다. 코드는 만들 때 한 번만 보여 드리며, 코드를 아는 사람은 누구나 기록을 열 수 있으니 잘 보관해 주세요.</p>' +
       '<p style="font-size:0.88rem;margin-bottom:10px;">상태: <strong id="recoveryStatusText">확인 중…</strong></p>' +
@@ -9251,6 +9347,26 @@ const Views = {
       await Storage.setSetting('autoLockMinutes', Number(e.target.value));
       toast('자동 잠금 시간이 변경되었습니다.');
     };
+    document.getElementById('saveRetentionBtn').onclick = async () => {
+      try{
+        await Retention.setYears(document.getElementById('retYears').value);
+        toast('보관기간을 저장했습니다.');
+        UI.renderCurrentView();
+      }catch(err){ const b = document.getElementById('retError'); b.textContent = err.message; b.classList.remove('hidden'); }
+    };
+    document.querySelectorAll('[data-retention-del]').forEach(el => {
+      el.onclick = () => {
+        const cid = el.dataset.retentionDel, c = Clients.get(cid);
+        if (!c) return;
+        const st = Backup.statusCached;
+        const backupLine = st.never ? '백업을 받은 적이 없습니다.' : (st.changed ? '마지막 백업 이후 바뀐 기록이 있습니다.' : '마지막 백업 이후 바뀐 기록이 없습니다.');
+        UI.confirm(cid + (c.alias ? '(' + c.alias + ')' : '') + ' 대상자의 모든 기록(SOAP·후속조치·일정·디브리핑)을 완전히 삭제합니다. 되돌릴 수 없습니다.\n' + backupLine + ' 삭제 전에 전체 백업을 받으셨나요?', async () => {
+          await Clients.remove(cid);
+          toast(cid + ' 기록을 삭제했습니다.');
+          UI.renderCurrentView();
+        });
+      };
+    });
     document.getElementById('saveThresholdBtn').onclick = async () => {
       const v = { contactGap: {}, reassess: {}, planSoon: document.getElementById('thPlanSoon').value, debrief: document.getElementById('thDebrief').value, crisisLoad: document.getElementById('thLoad').value };
       Object.keys(CONSTANTS.MANAGEMENT_LEVELS).forEach(k => {
@@ -10005,12 +10121,14 @@ const Views = {
     });
     if (!editing) Views.bindRepeatFields('nf');
     document.getElementById('nfCancel').onclick = () => UI.closeModal();
+    const nfGuard = {};
     document.getElementById('nfSubmit').onclick = async () => {
       try{
         const typeEl = document.querySelector('#modalBox input[name=nfType]:checked');
         const clientId = Views.resolveClientPickerValue(document.getElementById('nfClient').value);
         const baseDate = document.getElementById('nfDue').value;
         if (!baseDate) throw new Error('예정일을 입력해 주세요.');
+        if (!Views.guardDates(document.getElementById('nfError'), [Utils.dateWarning('예정일', baseDate, { future: true, maxFutureDays: 366, maxPastDays: 60 })].filter(Boolean), nfGuard)) return;
         if (editing){
           await FollowUps.update(editId, {
             clientId, type: typeEl ? typeEl.value : '기타',
@@ -10063,11 +10181,13 @@ const Views = {
     );
     if (!editing) Views.bindRepeatFields('ns');
     document.getElementById('nsCancel').onclick = () => UI.closeModal();
+    const nsGuard = {};
     document.getElementById('nsSubmit').onclick = async () => {
       try{
         const clientId = Views.resolveClientPickerValue(document.getElementById('nsClient').value);
         const baseDate = document.getElementById('nsDate').value;
         if (!baseDate) throw new Error('날짜를 입력해 주세요.');
+        if (!Views.guardDates(document.getElementById('nsError'), [Utils.dateWarning('일정 날짜', baseDate, { future: true, maxFutureDays: 366, maxPastDays: 60 })].filter(Boolean), nsGuard)) return;
         if (editing){
           await Schedules.update(editId, {
             clientId, date: baseDate,
@@ -10206,6 +10326,7 @@ async function initApp(){
   await FontSize.init();
   await DashboardPrefs.init();
   await Thresholds.init();
+  await Retention.init();
   await SimpleMode.init();
   UI.applySimpleModeNav();
 
