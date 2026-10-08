@@ -188,6 +188,28 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('대상자 참고·날짜 점검');
   });
 
+  await step('개인정보 경고, 비식별 복사, 점검 기준 일수 설정이 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      const w = (t) => Views.soapPrivacyWarnings({ S: t, O: '', A: '', PText: '' }).length;
+      const c = Clients.get('ME1');
+      const d = Utils.deidentify('ME1(' + c.alias + ') 900101-1234567 연락 010-1234-5678 / 02-123-4567', c);
+      const before = CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL.crisis;
+      await Thresholds.save({ contactGap: { crisis: '3', intensive: 'abc' }, reassess: {}, planSoon: '7' });
+      const after = { gap: CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL.crisis, bad: CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL.intensive, plan: CONSTANTS.PLAN_REVIEW_SOON_DAYS };
+      const stored = await Storage.getSetting('thresholds');
+      await Thresholds.reset();
+      return { rrn: w('번호 900101-1234567 입니다'), phone: w('연락처 010-1234-5678'), none: w('2026-10-08에 방문, 3회 연락'), d, before, after, stored: !!stored, back: CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL.crisis, planBack: CONSTANTS.PLAN_REVIEW_SOON_DAYS };
+    });
+    assert(r.rrn === 1 && r.phone === 1 && r.none === 0, '개인정보 경고가 다름: ' + JSON.stringify(r));
+    assert(!/ME1|마감|900101|1234-5678|123-4567/.test(r.d), '비식별 처리가 덜 됨: ' + r.d);
+    assert(r.after.gap === 3 && r.after.bad === 30 && r.after.plan === 7 && r.stored, '기준 일수 저장/잘못된 값 처리가 다름: ' + JSON.stringify(r.after));
+    assert(r.back === r.before && r.planBack === 14, '기본값 복원이 다름');
+    await page.evaluate(() => UI.navigate('settings', {}));
+    await page.waitForTimeout(200);
+    assert(await page.evaluate(() => !!document.getElementById('saveThresholdBtn')), '설정 화면에 기준 일수 패널이 없음');
+    noNewErrors('개인정보·기준 일수');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
