@@ -6096,14 +6096,16 @@ const Views = {
       notes.forEach(n => {
         const st = CONSTANTS.STRESS_LEVELS[n.stressLevel] || CONSTANTS.STRESS_LEVELS.none;
         html += '<div class="list-row"><div class="list-row-main">' +
-          '<div class="row-title">' + n.date + ((n.stressLevel && n.stressLevel !== 'none') ? ' · <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span>' : '') + '</div>' +
-          '<div class="row-sub" style="white-space:pre-line;">' + Utils.escapeHtml(n.note) + '</div>' +
+          '<div class="row-title">' + Utils.escapeHtml(n.title || '(제목 없음)') + '</div>' +
+          '<div class="row-sub">' + n.date + ((n.stressLevel && n.stressLevel !== 'none') ? ' · <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span>' : '') + '</div>' +
+          '<div class="row-sub" style="white-space:pre-line;margin-top:4px;">' + Utils.escapeHtml(n.note) + '</div>' +
           '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
       });
     }
     html += '</div>';
 
     html += '<div class="panel"><div class="panel-title">새 기록 추가</div><div class="form-grid">' +
+      '<div class="field full"><label>제목</label><input type="text" id="scTitle" maxlength="100" placeholder="예: 힘들었던 하루, 감사한 일"></div>' +
       '<div class="field"><label>날짜</label><input type="date" id="scDate" value="' + Utils.todayStr() + '"></div>' +
       '<div class="field"><label>소진도(선택)</label><select id="scStress">' +
       Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '">' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>' +
@@ -6120,6 +6122,7 @@ const Views = {
         date: document.getElementById('scDate').value,
         category: 'selfcare',
         stressLevel: document.getElementById('scStress').value,
+        title: document.getElementById('scTitle').value,
         note
       });
       toast('기록했습니다.');
