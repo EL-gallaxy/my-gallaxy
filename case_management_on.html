@@ -829,6 +829,13 @@ const Utils = {
     return Math.round((todayMidnight - then) / 86400000);
   },
   // Friendly "약 N일/개월 경과" phrasing for a day count.
+  // 'YYYY-MM-DD'에 n개월을 더한다(말일을 넘기면 그 달 말일로 맞춘다: 1/31 + 1개월 = 2/28·29).
+  addMonthsStr(dateStr, n){
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const first = new Date(y, m - 1 + n, 1);
+    const last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    return first.getFullYear() + '-' + String(first.getMonth() + 1).padStart(2, '0') + '-' + String(Math.min(d, last)).padStart(2, '0');
+  },
   formatElapsedDays(days){
     if (days < 60) return days + '일';
     return Math.floor(days / 30) + '개월';
@@ -1140,7 +1147,10 @@ const CONSTANTS = {
     temporary:   { label: '일시관리', emoji: '🟢', badgeClass: 'badge-temporary' }
   },
   QUICK_P_ACTIONS: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인'],
-  FOLLOWUP_TYPES: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인', '위기 후속 모니터링', '기타'],
+  FOLLOWUP_TYPES: ['대상자 재연락', '보호자 연락', '프로그램 참여 확인', '위기 후속 모니터링', '종결 후 사후 확인', '기타'],
+  // 종결 요약 — 서비스 결과 구분과 사후 확인 시점(종결일 기준 N개월 뒤).
+  CLOSURE_OUTCOMES: ['목표 달성', '부분 달성', '달성하지 못함', '평가 불가'],
+  AFTERCARE_MONTHS: [3, 6, 12],
   REFERRAL_SOURCES: ['본인', '가족', '정신의료기관', '타 기관 의뢰', '행정기관(경찰·소방·주민센터 등)', '기타'],
   CLOSURE_REASONS: ['자립/목표 달성', '타 기관 이관', '장기 입원', '관할지역 전출', '사망', '연락두절', '본인 거부', '기타'],
   RESOURCE_TYPES: ['정신재활시설(주간재활 등)', '직업재활시설', '정신의료기관', '사회복지관', '자활센터', '주거지원', '기타'],
@@ -1599,22 +1609,54 @@ const Clients = {
   // 사례 종결/전출 — 대상자는 목록에 남지만 활성 대상자 화면과 미접촉 대상자 알림에서
   // 제외된다. 재등록(재개)은 언제든 가능하며 종결 이력 자체는 덮어써 보존하지 않는다
   // (한 번에 하나의 종결 상태만 의미가 있으므로).
-  async close(id, { reason, date, note }){
-    const client = State.clients.get(id);
-    if (!client) return;
-    client.status = 'closed';
+  _closureFields(client, { reason, date, note, outcome, summary, aftercare }){
     client.closedReason = reason || '';
     client.closedDate = date || Utils.todayStr();
     client.closedNote = (note || '').trim();
+    client.closedOutcome = CONSTANTS.CLOSURE_OUTCOMES.includes(outcome) ? outcome : '';
+    client.closedSummary = (summary || '').trim();
+    client.closedAftercare = (aftercare || '').trim();
+  },
+  // 종결 — 종결 요약(결과·경과·사후관리 계획)을 남기고, 선택한 시점(종결일 기준 N개월 뒤)마다
+  // "종결 후 사후 확인" 후속조치를 등록한다. 사망 사례는 사후 확인을 만들지 않는다.
+  async close(id, data){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.status = 'closed';
+    this._closureFields(client, data);
+    client.closedAftercareFollowUps = [];
+    if (data.reason !== '사망'){
+      for (const months of (data.aftercareMonths || [])){
+        if (!CONSTANTS.AFTERCARE_MONTHS.includes(months)) continue;
+        const fu = await FollowUps.add({ clientId: id, type: '종결 후 사후 확인', text: '종결 후 ' + months + '개월 사후 확인', dueDate: Utils.addMonthsStr(client.closedDate, months) });
+        client.closedAftercareFollowUps.push({ id: fu.id, months });
+      }
+    }
     await Storage.saveEncrypted('clients', client);
   },
+  // 종결 정보(사유·종결일·요약 등)만 고친다. 이미 등록된 사후 확인 후속조치는 건드리지 않는다.
+  async updateClosure(id, data){
+    const client = State.clients.get(id);
+    if (!client) return;
+    this._closureFields(client, data);
+    await Storage.saveEncrypted('clients', client);
+  },
+  // 재등록 — 아직 하지 않은 사후 확인 후속조치는 의미가 없어지므로 함께 지운다(완료한 것은 남긴다).
   async reopen(id){
     const client = State.clients.get(id);
     if (!client) return;
+    for (const a of (client.closedAftercareFollowUps || [])){
+      const fu = FollowUps.get(a.id);
+      if (fu && fu.status === 'pending') await FollowUps.remove(a.id);
+    }
     client.status = 'active';
     client.closedReason = '';
     client.closedDate = '';
     client.closedNote = '';
+    client.closedOutcome = '';
+    client.closedSummary = '';
+    client.closedAftercare = '';
+    client.closedAftercareFollowUps = [];
     await Storage.saveEncrypted('clients', client);
   },
 
@@ -2703,14 +2745,30 @@ const SoapModule = {
     ].join('\n');
   },
 
+  // 최종 저장된 기록을 고치면 고치기 전 내용을 revisions에 남긴다(내용·상태가 실제로 바뀐 경우만).
+  REVISION_FIELDS: ['date', 'time', 'contactType', 'subject', 'areas', 'S', 'O', 'A', 'PActions', 'PText', 'pDate'],
+  _revisionOf(prev, replacedAt){
+    const snap = { id: Utils.uid('rev'), replacedAt, savedAt: prev.updatedAt || '', status: prev.status };
+    this.REVISION_FIELDS.forEach(k => { snap[k] = JSON.parse(JSON.stringify(prev[k] === undefined ? '' : prev[k])); });
+    return snap;
+  },
+  _differs(prev, next, nextStatus){
+    if (prev.status !== nextStatus) return true;
+    return this.REVISION_FIELDS.some(k => JSON.stringify(prev[k] === undefined ? '' : prev[k]) !== JSON.stringify(next[k] === undefined ? '' : next[k]));
+  },
   async save(soap, finalize){
     if (!soap.clientId) throw new Error('대상자를 선택해 주세요.');
     if (!soap.date) throw new Error('날짜를 입력해 주세요.');
     const now = new Date().toISOString();
     const isNew = !soap.id;
+    const prev = isNew ? null : State.soaps.get(soap.id);
     if (isNew){ soap.id = Utils.uid('soap'); soap.createdAt = now; }
+    const nextStatus = finalize ? 'final' : 'draft';
+    if (prev && prev !== soap && prev.status === 'final' && this._differs(prev, soap, nextStatus)){
+      soap.revisions = (prev.revisions || []).concat([this._revisionOf(prev, now)]);
+    }
     soap.updatedAt = now;
-    soap.status = finalize ? 'final' : 'draft';
+    soap.status = nextStatus;
 
     State.soaps.set(soap.id, soap);
     await Storage.saveEncrypted('soaps', soap);
@@ -3098,7 +3156,7 @@ const Search = {
         const ia = c.intakeAssessment;
         push(c, '초기사정지', [ia.chiefComplaint, ia.presentIllness, ia.psychiatricHistory, ia.familyHistory, ia.socialHistory, ia.economicStatus, ia.strengths].filter(Boolean).join(' · '));
       }
-      push(c, '종결정보', c.closedReason);
+      push(c, '종결정보', [c.closedReason, c.closedOutcome, c.closedSummary, c.closedAftercare].filter(Boolean).join(' · '));
       push(c, '종결정보', c.closedNote);
       (c.managementHistory || []).forEach(h => push(c, '관리수준 이력', h.reason));
       (c.emergencyContacts || []).forEach(ec => push(c, '보호자·비상연락처', [ec.name, ec.relation, ec.phone, ec.note].filter(Boolean).join(' · ')));
@@ -3931,7 +3989,7 @@ const Views = {
       const toLabel = (CONSTANTS.MANAGEMENT_LEVELS[h.to] || {}).label || h.to;
       push(h.date, '', '🔄', '관리수준 변경', fromLabel + ' → ' + toLabel + (h.reason ? ' (' + h.reason + ')' : ''));
     });
-    if (c.status === 'closed' && c.closedDate) push(c.closedDate, '', '🔚', '종결', c.closedReason || '');
+    if (c.status === 'closed' && c.closedDate) push(c.closedDate, '', '🔚', '종결', [c.closedReason, c.closedOutcome].filter(Boolean).join(' · '));
     SoapModule.listByClient(c.id).forEach(s => {
       events.push({
         date: s.date, time: s.time || '', icon: '💬',
@@ -4573,8 +4631,16 @@ const Views = {
       '<button class="btn btn-sm" id="addTagBtn">추가</button></div></div>';
 
     if (isClosed){
-      basicHtml += '<div class="panel"><div class="panel-title">종결 정보</div>' +
-        '<p style="font-size:0.88rem;">종결일: ' + (c.closedDate || '-') + ' · 사유: ' + Utils.escapeHtml(c.closedReason || '-') + '</p>' +
+      const aftercare = (c.closedAftercareFollowUps || []).map(a => {
+        const fu = FollowUps.get(a.id);
+        return '<li>' + a.months + '개월 후 확인 — ' + (fu ? fu.dueDate + ' ' + (fu.status === 'completed' ? '<span class="badge badge-completed">✅ 완료</span>' : (fu.dueDate < Utils.todayStr() ? '<span class="badge badge-crisis">⏰ 기한 초과</span>' : '<span class="badge badge-pending">⏳ 예정</span>')) : '<span class="help-text">삭제됨</span>') + '</li>';
+      }).join('');
+      basicHtml += '<div class="panel"><div class="panel-title">종결 정보 <button class="btn btn-sm" id="editClosureBtn" style="margin-left:10px;">수정</button></div>' +
+        '<p style="font-size:0.88rem;">종결일: ' + (c.closedDate || '-') + ' · 사유: ' + Utils.escapeHtml(c.closedReason || '-') +
+        (c.closedOutcome ? ' · 서비스 결과: <strong>' + Utils.escapeHtml(c.closedOutcome) + '</strong>' : '') + '</p>' +
+        (c.closedSummary ? '<p style="font-size:0.85rem;"><strong>종결 요약</strong><br>' + Utils.nl2br(c.closedSummary) + '</p>' : '') +
+        (c.closedAftercare ? '<p style="font-size:0.85rem;"><strong>사후관리 계획</strong><br>' + Utils.nl2br(c.closedAftercare) + '</p>' : '') +
+        (aftercare ? '<p style="font-size:0.85rem;margin-bottom:4px;"><strong>사후 확인 일정</strong></p><ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.8;">' + aftercare + '</ul>' : '') +
         (c.closedNote ? '<p style="font-size:0.85rem;color:var(--text-muted);">' + Utils.nl2br(c.closedNote) + '</p>' : '') +
         '</div>';
     }
@@ -5059,7 +5125,7 @@ const Views = {
     } else {
       timeline.forEach(s => {
         soapHtml += '<div class="list-row"><div class="list-row-main" data-open-soap="' + s.id + '">' +
-          '<div class="row-title">' + Utils.formatSoapDate(s) + ' · ' + Utils.escapeHtml(s.contactType) + '상담 ' +
+          '<div class="row-title">' + Utils.formatSoapDate(s) + ' · ' + Utils.escapeHtml(s.contactType) + '상담 ' + ((s.revisions || []).length ? '<span class="badge badge-draft">수정됨</span> ' : '') +
           (s.status === 'draft' ? '<span class="badge badge-draft">📝 임시저장</span>' : '<span class="badge badge-final">✅ 완료</span>') + '</div>' +
           '<div class="row-sub">' + Utils.truncate(Utils.escapeHtml(s.A || s.S || ''), 70) + '</div></div></div>';
       });
@@ -5518,26 +5584,9 @@ const Views = {
     };
 
     const closeBtn = document.getElementById('closeClientBtn');
-    if (closeBtn) closeBtn.onclick = () => {
-      UI.openModal(
-        '<h3>사례 종결 / 전출 처리</h3>' +
-        '<div class="field"><label>사유</label><select id="closeReasonInput">' +
-        CONSTANTS.CLOSURE_REASONS.map(r => '<option value="' + r + '">' + r + '</option>').join('') + '</select></div>' +
-        '<div class="field"><label>종결일</label><input type="date" id="closeDateInput" value="' + Utils.todayStr() + '"></div>' +
-        '<div class="field"><label>메모(선택)</label><textarea id="closeNoteInput" style="min-height:70px;"></textarea></div>' +
-        '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="closeCancel">취소</button><button class="btn btn-danger" id="closeSubmit">종결 처리</button></div>'
-      );
-      document.getElementById('closeCancel').onclick = () => UI.closeModal();
-      document.getElementById('closeSubmit').onclick = async () => {
-        const reason = document.getElementById('closeReasonInput').value;
-        const date = document.getElementById('closeDateInput').value;
-        const note = document.getElementById('closeNoteInput').value;
-        UI.closeModal();
-        await Clients.close(id, { reason, date, note });
-        toast('사례를 종결 처리했습니다.');
-        UI.renderCurrentView();
-      };
-    };
+    if (closeBtn) closeBtn.onclick = () => Views.openClosureModal(id, false);
+    const editClosureBtn = document.getElementById('editClosureBtn');
+    if (editClosureBtn) editClosureBtn.onclick = () => Views.openClosureModal(id, true);
     const reopenBtn = document.getElementById('reopenClientBtn');
     if (reopenBtn) reopenBtn.onclick = () => UI.confirm('이 대상자를 다시 활성 상태로 재등록할까요?', async () => {
       await Clients.reopen(id);
@@ -6360,7 +6409,7 @@ const Views = {
       html += '<table><thead><tr><th>날짜</th><th>대상자</th><th>접촉유형</th><th>상담대상</th><th>상담영역</th><th>상태</th></tr></thead><tbody>';
       items.forEach(s => {
         html += '<tr class="clickable-row" data-open-soap="' + s.id + '">' +
-          '<td>' + Utils.formatSoapDate(s) + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td><td>' + Utils.escapeHtml(s.contactType) + '</td>' +
+          '<td>' + Utils.formatSoapDate(s) + ((s.revisions || []).length ? ' <span class="badge badge-draft">수정됨</span>' : '') + '</td><td>' + Utils.escapeHtml(s.clientId) + '</td><td>' + Utils.escapeHtml(s.contactType) + '</td>' +
           '<td>' + Utils.escapeHtml(CONSTANTS.SOAP_SUBJECTS[s.subject] || CONSTANTS.SOAP_SUBJECTS.client) + '</td>' +
           '<td>' + (s.areas || []).map(a => '<span class="tag">' + Utils.escapeHtml(a) + '</span>').join('') + '</td>' +
           '<td>' + (s.status === 'draft' ? '<span class="badge badge-draft">📝 임시저장</span>' : '<span class="badge badge-final">✅ 완료</span>') + '</td>' +
@@ -6447,6 +6496,17 @@ const Views = {
       '<div class="field" style="max-width:220px;"><label>예정일</label><input type="date" id="soapPDate" value="' + (soap.pDate || '') + '"></div>' +
       '<p class="help-text">예정일을 입력하고 최종저장하면 위 선택 항목이 자동으로 후속조치로 등록됩니다.</p>' +
       '</div>';
+
+    if (soap.id && (soap.revisions || []).length){
+      html += '<details class="panel"><summary class="panel-title">수정 이력 (' + soap.revisions.length + '회)</summary>' +
+        '<p class="help-text" style="margin-bottom:10px;">최종 저장된 기록을 고칠 때마다 고치기 전 내용이 남습니다. 이 앱은 한 대의 PC에 저장되므로 위·변조를 막는 증빙 장치는 아니며, 변경 내용을 스스로 확인하기 위한 기록입니다.</p>' +
+        soap.revisions.slice().reverse().map(r => {
+          const part = (label, v) => v ? '<p style="font-size:0.85rem;white-space:pre-line;margin:4px 0;"><strong>' + label + '</strong> ' + Utils.escapeHtml(v) + '</p>' : '';
+          return '<details style="margin-bottom:8px;"><summary style="cursor:pointer;font-size:0.88rem;">' + Utils.formatDateTime(r.replacedAt) + ' 수정됨 — 이전 내용 보기 (이전 저장: ' + (r.savedAt ? Utils.formatDateTime(r.savedAt) : '-') + ')</summary>' +
+            '<div style="padding:8px 0 0 14px;"><p class="help-text">' + Utils.escapeHtml(r.date + (r.time ? ' ' + r.time : '') + ' · ' + r.contactType + (r.areas && r.areas.length ? ' · ' + r.areas.join(', ') : '')) + '</p>' +
+            part('S', r.S) + part('O', r.O) + part('A', r.A) + part('P', [(r.PActions || []).join(', '), r.PText].filter(Boolean).join(' / ')) + '</div></details>';
+        }).join('') + '</details>';
+    }
 
     if (soap.status === 'final' && soap.id){
       html += '<div class="panel"><div class="panel-title">SOAP 전체 복사</div>' +
@@ -8154,6 +8214,60 @@ const Views = {
         toast(Utils.formatSoapDate(src) + ' 기록을 불러왔습니다. 오늘 상황에 맞게 고쳐 쓰세요.');
       };
     });
+  },
+
+  // 사례 종결 / 종결 정보 수정 — 종결 요약(결과·경과·사후관리 계획)과 사후 확인 일정을 함께 정한다.
+  openClosureModal(id, editing){
+    const c = Clients.get(id);
+    if (!c) return;
+    const e = Utils.escapeHtml;
+    const cur = editing ? c : { closedReason: CONSTANTS.CLOSURE_REASONS[0], closedDate: Utils.todayStr(), closedOutcome: '', closedSummary: '', closedAftercare: '', closedNote: '' };
+    UI.openModal(
+      '<h3>' + (editing ? '종결 정보 수정' : '사례 종결 / 전출 처리') + '</h3>' +
+      '<div class="form-grid"><div class="field"><label>사유</label><select id="closeReasonInput">' +
+      CONSTANTS.CLOSURE_REASONS.map(r => '<option value="' + r + '"' + (cur.closedReason === r ? ' selected' : '') + '>' + r + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>종결일</label><input type="date" id="closeDateInput" value="' + e(cur.closedDate) + '"></div>' +
+      '<div class="field"><label>서비스 결과</label><select id="closeOutcomeInput"><option value="">(선택 안 함)</option>' +
+      CONSTANTS.CLOSURE_OUTCOMES.map(o => '<option value="' + o + '"' + (cur.closedOutcome === o ? ' selected' : '') + '>' + o + '</option>').join('') + '</select></div></div>' +
+      '<div class="field"><label>종결 요약 (서비스 경과와 결과)</label><textarea id="closeSummaryInput" style="min-height:80px;">' + e(cur.closedSummary || '') + '</textarea></div>' +
+      '<div class="field"><label>사후관리 계획 (이후 지원·연계 기관)</label><textarea id="closeAftercareInput" style="min-height:60px;">' + e(cur.closedAftercare || '') + '</textarea></div>' +
+      (editing ? '' : '<div class="field" id="closeAftercareWrap"><label id="closeAftercareLabel">사후 확인 일정 (종결일 기준, 후속조치로 등록)</label><div class="checkbox-group" role="group" aria-labelledby="closeAftercareLabel">' +
+        CONSTANTS.AFTERCARE_MONTHS.map((m, i) => '<label class="chip-check' + (i < 2 ? ' checked' : '') + '"><input type="checkbox" class="closeAftercareChk" value="' + m + '"' + (i < 2 ? ' checked' : '') + '>' + m + '개월 후</label>').join('') +
+        '</div><p class="help-text">재등록하면 아직 하지 않은 사후 확인은 함께 삭제됩니다. 사망 사유에는 등록하지 않습니다.</p></div>') +
+      '<div class="field"><label>메모(선택)</label><textarea id="closeNoteInput" style="min-height:50px;">' + e(cur.closedNote || '') + '</textarea></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="closeCancel">취소</button><button class="btn ' + (editing ? 'btn-primary' : 'btn-danger') + '" id="closeSubmit">' + (editing ? '저장' : '종결 처리') + '</button></div>'
+    );
+    document.querySelectorAll('#modalBox .chip-check input').forEach(chk => {
+      chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
+    });
+    const syncAftercare = () => {
+      const wrap = document.getElementById('closeAftercareWrap');
+      if (wrap) wrap.classList.toggle('hidden', document.getElementById('closeReasonInput').value === '사망');
+    };
+    document.getElementById('closeReasonInput').onchange = syncAftercare;
+    syncAftercare();
+    document.getElementById('closeCancel').onclick = () => UI.closeModal();
+    document.getElementById('closeSubmit').onclick = async () => {
+      const data = {
+        reason: document.getElementById('closeReasonInput').value,
+        date: document.getElementById('closeDateInput').value,
+        outcome: document.getElementById('closeOutcomeInput').value,
+        summary: document.getElementById('closeSummaryInput').value,
+        aftercare: document.getElementById('closeAftercareInput').value,
+        note: document.getElementById('closeNoteInput').value,
+        aftercareMonths: Array.from(document.querySelectorAll('.closeAftercareChk:checked')).map(el => parseInt(el.value, 10))
+      };
+      UI.closeModal();
+      if (editing){
+        await Clients.updateClosure(id, data);
+        toast('종결 정보를 수정했습니다.');
+      } else {
+        await Clients.close(id, data);
+        const n = (Clients.get(id).closedAftercareFollowUps || []).length;
+        toast('사례를 종결 처리했습니다.' + (n ? ' 사후 확인 후속조치 ' + n + '건을 등록했습니다.' : ''));
+      }
+      UI.renderCurrentView();
+    };
   },
 
   // editId가 있으면 새로 등록하는 대신 기존 후속조치를 불러와 수정한다(반복 등록 없음).
