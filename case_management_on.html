@@ -469,7 +469,7 @@
     #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
     #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #makeRecoveryBtn, #goRecoverySettingsBtn, #exportLightBackupBtn, #crisisReportPrintBtn, #crisisReportBackBtn, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, #qbQuickDebrief, #dbQuickBtn, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
+    #clNewSoap, #makeRecoveryBtn, #goRecoverySettingsBtn, #exportLightBackupBtn, #crisisReportPrintBtn, #crisisReportBackBtn, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, #qbQuickDebrief, #dbQuickBtn, #dbAgendaBtn, #agendaPrintBtn, #agendaBackBtn, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
@@ -1321,6 +1321,7 @@ const CONSTANTS = {
   // 다음 점검일이 이 일수 안으로 다가오면 대시보드에서 짚어준다.
   PLAN_REVIEW_SOON_DAYS: 14,
   DEBRIEF_DUE_DAYS: 3,
+  CRISIS_LOAD_MONTHLY: 5,
   GOAL_STATUSES: {
     in_progress:  { label: '🔄 진행중', badgeClass: 'badge-pending' },
     achieved:     { label: '✅ 달성',   badgeClass: 'badge-temporary' },
@@ -1624,7 +1625,7 @@ const FontSize = {
 const DashboardPrefs = {
   WIDGETS: {
     crisis: icon('siren') + ' 위기관리 대상자 현황', overdue: icon('alertTriangle') + ' 기한 초과 후속조치', gap: icon('clock') + ' 미접촉 대상자',
-    referral: icon('link') + ' 연계 결과 확인', planReview: icon('clipboardList') + ' 서비스계획 점검', inpatient: icon('building') + ' 입원 중 대상자', medRenewal: icon('pill') + ' 복약 갱신 임박', reassessment: icon('clipboardList') + ' 정기 재사정 필요', safetyGap: icon('shield') + ' 안전 정보 공백 점검', debriefGap: icon('messageSquare') + ' 디브리핑 미작성',
+    referral: icon('link') + ' 연계 결과 확인', planReview: icon('clipboardList') + ' 서비스계획 점검', inpatient: icon('building') + ' 입원 중 대상자', medRenewal: icon('pill') + ' 복약 갱신 임박', reassessment: icon('clipboardList') + ' 정기 재사정 필요', safetyGap: icon('shield') + ' 안전 정보 공백 점검', debriefGap: icon('messageSquare') + ' 디브리핑 미작성', crisisLoad: icon('heart') + ' 위기 대응 부담 알림',
     today: icon('clock') + ' 오늘 할 일', draft: icon('edit') + ' 미완성 SOAP', recent: '최근 기록', dataManage: '데이터 관리'
   },
   hidden: {},
@@ -1645,7 +1646,7 @@ const Thresholds = {
   DEFAULTS: null,
   init: async function(){
     if (!this.DEFAULTS) this.DEFAULTS = JSON.parse(JSON.stringify({
-      contactGap: CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL, reassess: CONSTANTS.REASSESSMENT_INTERVAL_DAYS_BY_LEVEL, planSoon: CONSTANTS.PLAN_REVIEW_SOON_DAYS, debrief: CONSTANTS.DEBRIEF_DUE_DAYS
+      contactGap: CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL, reassess: CONSTANTS.REASSESSMENT_INTERVAL_DAYS_BY_LEVEL, planSoon: CONSTANTS.PLAN_REVIEW_SOON_DAYS, debrief: CONSTANTS.DEBRIEF_DUE_DAYS, crisisLoad: CONSTANTS.CRISIS_LOAD_MONTHLY
     }));
     this.apply((await Storage.getSetting('thresholds')) || {});
   },
@@ -1657,6 +1658,7 @@ const Thresholds = {
     });
     CONSTANTS.PLAN_REVIEW_SOON_DAYS = num(saved.planSoon, d.planSoon);
     CONSTANTS.DEBRIEF_DUE_DAYS = num(saved.debrief, d.debrief);
+    CONSTANTS.CRISIS_LOAD_MONTHLY = num(saved.crisisLoad, d.crisisLoad);
   },
   async save(values){ await Storage.setSetting('thresholds', values); this.apply(values); },
   async reset(){ await Storage.setSetting('thresholds', {}); this.apply({}); }
@@ -2821,6 +2823,37 @@ const Debriefings = {
     await Storage.saveEncrypted('debriefings', d);
     return made;
   },
+  // 미등록으로 응대했던 위기개입을 새 대상자로 등록하면서 위기개입 기록으로 옮긴다. 디브리핑은 등록 대상자 사건으로 바뀐다.
+  async convertToClient(id, { clientId, alias, managementLevel }){
+    const d = State.debriefings.get(id);
+    if (!d || d.kind !== 'crisisUnreg') throw new Error('미등록 대상자 위기개입 기록만 전환할 수 있습니다.');
+    const client = await Clients.add({ id: clientId, alias, managementLevel, registrationDate: d.date });
+    await Clients.addCrisisEvent(client.id, { type: d.crisisType || CONSTANTS.CRISIS_EVENT_TYPES[0], date: d.date, time: d.time, description: d.facts, action: d.actions });
+    const ev = client.crisisEvents[client.crisisEvents.length - 1];
+    ev.outcome = d.outcome || '';
+    await Storage.saveEncrypted('clients', client);
+    d.kind = 'crisisReg'; d.clientId = client.id; d.eventId = ev.id; d.subjectNote = '';
+    await this.save(d, false);
+    return client;
+  },
+  // 미등록 대상자 위기개입 분포 — 유형·경로·결과별, 연 단위면 월별도 센다.
+  unregStats(prefix){
+    const out = { total: 0, byType: {}, byRoute: {}, byOutcome: {}, byMonth: new Array(12).fill(0) };
+    const inc = (o, k) => { k = k || '(미입력)'; o[k] = (o[k] || 0) + 1; };
+    this.list().forEach(d => {
+      if (d.kind !== 'crisisUnreg' || !(d.date || '').startsWith(prefix)) return;
+      out.total++; inc(out.byType, d.crisisType); inc(out.byRoute, d.route); inc(out.byOutcome, d.outcome);
+      out.byMonth[parseInt(d.date.slice(5, 7), 10) - 1]++;
+    });
+    return out;
+  },
+  // 그 달 위기 응대 건수 추정 — 미등록 위기개입 + 대상자 상세의 위기개입 기록 + 사건과 연결 없이 남긴 등록 대상자 디브리핑.
+  crisisLoad(prefix){
+    let n = 0;
+    this.list().forEach(d => { if ((d.date || '').startsWith(prefix) && (d.kind === 'crisisUnreg' || (d.kind === 'crisisReg' && !d.eventId))) n++; });
+    Clients.list().forEach(c => (c.crisisEvents || []).forEach(ev => { if ((ev.date || '').startsWith(prefix)) n++; }));
+    return n;
+  },
   async remove(id){
     State.debriefings.delete(id);
     await Storage.idbDelete('debriefings', id);
@@ -3882,7 +3915,7 @@ const Stats = {
 
     const level = this.monthlyReport(year);
     return {
-      year, crisisTotal, crisisClientCount: crisisClients.size, crisisByMonth, crisisTypes,
+      year, crisisTotal, crisisClientCount: crisisClients.size, crisisByMonth, crisisTypes, unreg: Debriefings.unregStats(year),
       avgResponseMinutes: responseSpanCount ? responseSpanSum / responseSpanCount : null, responseSpanCount,
       admissionCount, admittedClientCount: admittedClients.size, dischargeCount, kindCounts,
       avgStayDays: stayCount ? stayDaysSum / stayCount : null, stayCount, ongoing, readmitEligible, readmitted,
@@ -4596,6 +4629,7 @@ const UI = {
       case 'outcomes': main.innerHTML = Views.outcomes(State.currentParams); Views.bindOutcomes(); break;
       case 'selfCare': main.innerHTML = Views.selfCarePage(); Views.bindSelfCarePage(); break;
       case 'debriefings': main.innerHTML = Views.debriefings(); Views.bindDebriefings(); break;
+      case 'supervisionAgenda': main.innerHTML = Views.supervisionAgenda(); Views.bindSupervisionAgenda(); break;
       case 'debriefEditor': main.innerHTML = Views.debriefEditor(State.currentParams); Views.bindDebriefEditor(State.currentParams); break;
       case 'training': main.innerHTML = Views.trainingPage(); Views.bindTrainingPage(); break;
       case 'tour': main.innerHTML = Views.tourPage(); Views.bindTourPage(); break;
@@ -4794,6 +4828,7 @@ const Views = {
     const crisisClients = Clients.list().filter(c => c.managementLevel === 'crisis' && c.status !== 'closed');
     const reassessGaps = Clients.reassessmentGapList();
     const debriefGaps = Debriefings.pendingList();
+    const crisisLoadN = Debriefings.crisisLoad(Utils.todayStr().slice(0, 7));
     const safetyGaps = Clients.safetyGapList();
 
     const hasSeed = (State.seedClientIds || []).length > 0 && (State.seedClientIds || []).some(id => State.clients.has(id));
@@ -4961,6 +4996,11 @@ const Views = {
       });
       html += '</div>';
     }
+    if (!hide('crisisLoad') && crisisLoadN >= CONSTANTS.CRISIS_LOAD_MONTHLY){
+      html += '<div class="panel" id="crisisLoadSection"><div class="panel-title">' + icon('heart') + ' 이번 달 위기 응대 ' + crisisLoadN + '건</div>' +
+        '<p style="font-size:0.88rem;line-height:1.7;">위기 응대가 이어지고 있습니다(기준 ' + CONSTANTS.CRISIS_LOAD_MONTHLY + '건). 몸과 마음이 보내는 신호를 살피고, 필요하면 동료 지지나 슈퍼비전을 요청해 보세요.</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button class="btn btn-sm" data-goto-view="selfCare">자기돌봄 기록</button><button class="btn btn-sm" data-goto-view="debriefings">디브리핑 · 슈퍼비전 안건</button></div></div>';
+    }
     // 입원 중 대상자 — "이상"이 아니라 현황이므로 점검 목록과 달리 있을 때만 보여준다.
     if (!hide('inpatient') && inpatients.length){
       html += '<div class="panel" id="inpatientSection"><div class="panel-title">' + icon('building') + ' 입원 중 대상자 (퇴원 예정 ' + CONSTANTS.ADMISSION_DISCHARGE_SOON_DAYS + '일 이내는 퇴원 후 연계 준비)</div>';
@@ -5122,6 +5162,7 @@ const Views = {
     document.querySelectorAll('[data-goto-client]').forEach(el => {
       el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient });
     });
+    document.querySelectorAll('[data-goto-view]').forEach(el => { el.onclick = () => UI.navigate(el.dataset.gotoView, {}); });
     document.querySelectorAll('[data-goto-debrief]').forEach(el => {
       el.onclick = () => UI.navigate('debriefEditor', el.dataset.gotoDebrief ? { debriefId: el.dataset.gotoDebrief } : { clientId: el.dataset.gotoDebriefClient, eventId: el.dataset.gotoDebriefEvent });
     });
@@ -8336,7 +8377,7 @@ const Views = {
           { label: '위기개입 · 등록 대상자', value: dc.crisisReg, color: 'var(--warn)' },
           { label: '상담·방문', value: dc.counsel, color: 'var(--accent)' },
           { label: '기타', value: dc.other, color: 'var(--draft)' }
-        ]) + '<p class="help-text">등록 대상자 위기개입은 대상자 상세의 위기개입 기록과 같은 사건일 수 있어 합산하지 않았습니다. 미등록 대상자 위기개입은 이 기록에만 남습니다.</p>';
+        ]) + (dc.crisisUnreg ? (() => { const u = Debriefings.unregStats(r.month); const line = (t, m) => '<p style="font-size:0.85rem;margin-top:6px;"><strong>' + t + '</strong> ' + Object.keys(m).map(k => Utils.escapeHtml(k) + ' ' + m[k] + '건').join(' · ') + '</p>'; return line('미등록 위기개입 유형:', u.byType) + line('경로:', u.byRoute) + line('결과:', u.byOutcome); })() : '') + '<p class="help-text">등록 대상자 위기개입은 대상자 상세의 위기개입 기록과 같은 사건일 수 있어 합산하지 않았습니다. 미등록 대상자 위기개입은 이 기록에만 남습니다.</p>';
     }
     html += Views.durationReportHtml(r);
     html += Views.monthEndCheckHtml(monthStr);
@@ -8482,6 +8523,15 @@ const Views = {
       (o.avgResponseMinutes !== null ? '<p style="font-size:0.85rem;margin-top:6px;">대응 소요 시간(경과를 2단계 이상 기록한 ' + o.responseSpanCount + '건) 평균 ' + Utils.formatMinutes(o.avgResponseMinutes) + '</p>' : '') +
       (Object.keys(o.crisisTypes).length ? '<div class="divider"></div><p style="font-size:0.85rem;">유형별: ' + Object.keys(o.crisisTypes).map(k => e(k) + ' ' + o.crisisTypes[k] + '건').join(' · ') + '</p>' : '') + '</div>';
 
+    if (o.unreg.total){
+      const bars = (m) => Views.renderBarChart(Object.keys(m).map(k => ({ label: k, value: m[k] })));
+      html += '<div class="panel"><div class="panel-title">' + icon('siren') + ' 미등록 대상자 위기개입 (' + year + '년 ' + o.unreg.total + '건, 디브리핑 기록 기준)</div>' +
+        Views.renderBarChart(o.unreg.byMonth.map((v, i) => ({ label: (i + 1) + '월', value: v }))) +
+        '<div class="divider"></div><p style="font-weight:600;font-size:0.88rem;margin-bottom:6px;">위기 유형별</p>' + bars(o.unreg.byType) +
+        '<p style="font-weight:600;font-size:0.88rem;margin:10px 0 6px;">접수·대응 경로별</p>' + bars(o.unreg.byRoute) +
+        '<p style="font-weight:600;font-size:0.88rem;margin:10px 0 6px;">결과별</p>' + bars(o.unreg.byOutcome) +
+        '<p class="help-text" style="margin-top:6px;">등록하지 않은 대상자의 위기개입이라 위의 "위기개입 월별 추이"(등록 대상자)와 겹치지 않습니다.</p></div>';
+    }
     html += '<div class="panel"><div class="panel-title">' + icon('building') + ' 입원</div><p style="font-size:0.88rem;line-height:1.9;">' +
       '입원 ' + o.admissionCount + '건 (' + o.admittedClientCount + '명) · 퇴원 ' + o.dischargeCount + '건' +
       (o.ongoing ? ' · 퇴원 기록 없음(입원 중으로 봄) ' + o.ongoing + '건' : '') + '<br>' +
@@ -8759,7 +8809,8 @@ const Views = {
     const agenda = Debriefings.list().filter(d => d.forSupervision && !d.supervisionDone).length;
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('messageSquare', { size: 22 }) + ' 디브리핑</h1>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary btn-sm" id="dbQuickBtn">⚡ 위기 빠른 기록</button><button class="btn btn-sm" id="dbNewUnregBtn">＋ 미등록 대상자 위기개입</button>' +
-      '<button class="btn btn-sm" id="dbNewRegBtn">＋ 등록 대상자 / 상담</button></div></div>';
+      '<button class="btn btn-sm" id="dbNewRegBtn">＋ 등록 대상자 / 상담</button>' +
+      '<button class="btn btn-sm" id="dbAgendaBtn">' + icon('printer') + ' 슈퍼비전 안건 출력</button></div></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">위기개입이나 상담 뒤에 사실·잘 된 점·바꿀 점·내가 받은 영향을 정리하는 공간입니다. 등록하지 않은 대상자의 위기개입도 여기에 남길 수 있습니다. "나에게 미친 영향"은 보고서·통계 어디에도 나오지 않습니다.</p>';
     html += '<div class="summary-grid">' +
       '<div class="summary-card" style="cursor:default;"><div class="num">' + dc.crisisUnreg + '</div><div class="label">이번 달 미등록 대상자 위기개입</div></div>' +
@@ -8787,6 +8838,7 @@ const Views = {
     const f = Views._debriefFilter;
     document.getElementById('dbQuickBtn').onclick = () => Views.openQuickDebriefModal();
     document.getElementById('dbNewUnregBtn').onclick = () => UI.navigate('debriefEditor', { kind: 'crisisUnreg' });
+    document.getElementById('dbAgendaBtn').onclick = () => UI.navigate('supervisionAgenda', {});
     document.getElementById('dbNewRegBtn').onclick = () => UI.navigate('debriefEditor', { kind: 'counsel' });
     document.getElementById('dbKindFilter').onchange = (e) => { f.kind = e.target.value; UI.renderCurrentView(); };
     document.getElementById('dbSupOnly').onchange = (e) => { f.supervisionOnly = e.target.checked; UI.renderCurrentView(); };
@@ -8874,6 +8926,7 @@ const Views = {
     html += '<div class="error-msg hidden" id="dbError" role="alert"></div>' +
       '<div style="display:flex;gap:10px;margin-bottom:30px;"><button class="btn btn-primary" id="dbSaveBtn">저장</button>' +
       (d.id && d.forSupervision ? '<button class="btn" id="dbDoneBtn">' + (d.supervisionDone ? '슈퍼비전 다룸 해제' : '슈퍼비전에서 다룸') + '</button>' : '') +
+      (d.id && d.kind === 'crisisUnreg' ? '<button class="btn" id="dbConvertBtn">등록 대상자로 전환</button>' : '') +
       (d.id ? '<button class="btn btn-danger" id="dbDeleteBtn" style="margin-left:auto;">삭제</button>' : '') + '</div>';
     return html;
   },
@@ -8926,6 +8979,29 @@ const Views = {
       toast(!cur.supervisionDone ? '슈퍼비전에서 다룬 것으로 표시했습니다.' : '다시 안건으로 돌렸습니다.');
       UI.navigate('debriefEditor', { debriefId: cur.id });
     };
+    const convBtn = document.getElementById('dbConvertBtn');
+    if (convBtn) convBtn.onclick = () => {
+      const d = Views._debriefDraft;
+      UI.openModal(
+        '<h3>등록 대상자로 전환</h3>' +
+        '<p class="help-text" style="margin-bottom:10px;">이 위기개입을 새 대상자로 등록하고, 대상자 상세의 위기개입 기록으로 옮깁니다. 디브리핑은 그 사건에 연결됩니다. 변경 전에 저장하지 않은 입력은 사라지니 먼저 저장하세요.</p>' +
+        '<div class="form-grid"><div class="field"><label for="cvId">새 대상자 ID</label><input type="text" id="cvId" placeholder="예: A123"></div>' +
+        '<div class="field"><label for="cvAlias">별칭(선택)</label><input type="text" id="cvAlias"></div>' +
+        '<div class="field full"><label for="cvLevel">관리 수준</label><select id="cvLevel">' + Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => '<option value="' + k + '"' + (k === 'crisis' ? ' selected' : '') + '>' + CONSTANTS.MANAGEMENT_LEVELS[k].label + '</option>').join('') + '</select></div></div>' +
+        '<div class="error-msg hidden" id="cvError" role="alert"></div>' +
+        '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="cvCancel">취소</button><button class="btn btn-primary" id="cvOk">전환</button></div>'
+      );
+      document.getElementById('cvCancel').onclick = () => UI.closeModal();
+      document.getElementById('cvOk').onclick = async () => {
+        try{
+          const c = await Debriefings.convertToClient(d.id, { clientId: document.getElementById('cvId').value, alias: document.getElementById('cvAlias').value, managementLevel: document.getElementById('cvLevel').value });
+          UI.closeModal();
+          toast('대상자 ' + c.id + '(으)로 등록하고 위기개입 기록으로 옮겼습니다.');
+          Views._debriefDraft = null;
+          UI.navigate('clientDetail', { id: c.id });
+        }catch(err){ const b = document.getElementById('cvError'); b.textContent = err.message || '전환하지 못했습니다.'; b.classList.remove('hidden'); }
+      };
+    };
     const delBtn = document.getElementById('dbDeleteBtn');
     if (delBtn) delBtn.onclick = () => UI.confirm('이 디브리핑을 삭제할까요?', async () => {
       await Debriefings.remove(Views._debriefDraft.id);
@@ -8933,6 +9009,31 @@ const Views = {
       toast('삭제했습니다.');
       UI.navigate('debriefings', {});
     });
+  },
+
+  // 슈퍼비전 안건 출력 — 아직 다루지 않은 안건 디브리핑을 비식별로 한 장에 모은다. "나에게 미친 영향"은 싣지 않는다.
+  supervisionAgenda(){
+    const e = Utils.escapeHtml;
+    const items = Debriefings.list().filter(d => d.forSupervision && !d.supervisionDone).reverse();
+    const mask = (t, d) => e(Utils.deidentify(t || '', d.clientId ? Clients.get(d.clientId) : null));
+    let html = Views.printHeaderHtml('슈퍼비전 안건');
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('bookOpen', { size: 22 }) + ' 슈퍼비전 안건 (' + items.length + '건)</h1>' +
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="agendaPrintBtn">' + icon('printer') + ' 인쇄</button>' +
+      '<button class="btn btn-sm" id="agendaBackBtn">' + icon('arrowLeft') + ' 디브리핑으로</button></div></div>';
+    html += '<div class="example-banner">대상자 ID·별칭·전화번호·주민번호는 가려서 표시합니다. 본문에 직접 적은 이름은 가려지지 않으니 인쇄 전에 확인하세요. "나에게 미친 영향"은 싣지 않습니다.</div>';
+    if (!items.length) return html + '<div class="panel"><div class="empty-msg">슈퍼비전 안건으로 표시한 디브리핑이 없습니다.</div></div>';
+    items.forEach((d, i) => {
+      const dash = (v) => v ? v : '-';
+      html += '<div class="panel"><div class="panel-title">' + (i + 1) + '. ' + e(d.date) + ' · ' + e(Debriefings.KINDS[d.kind] || '') + (d.crisisType ? ' · ' + e(d.crisisType) : '') + '</div>' +
+        '<p style="font-size:0.88rem;">경로: ' + e(dash(d.route)) + ' · 결과: ' + e(dash(d.outcome)) + '</p>' +
+        [['사실 정리', d.facts], ['잘 된 점', d.wentWell], ['다음에 바꿀 점', d.toImprove], ['묻고 싶은 것', d.supervisionQuestion]].filter(x => x[1]).map(x => '<p style="font-size:0.9rem;white-space:pre-line;"><strong>' + x[0] + ':</strong> ' + mask(x[1], d) + '</p>').join('') + '</div>';
+    });
+    return html;
+  },
+  bindSupervisionAgenda(){
+    document.getElementById('agendaBackBtn').onclick = () => UI.navigate('debriefings', {});
+    const pb = document.getElementById('agendaPrintBtn');
+    if (pb) pb.onclick = () => window.print();
   },
 
   /* ---------------- SETTINGS ---------------- */
@@ -9033,6 +9134,7 @@ const Views = {
         '</tbody></table>' +
         '<div class="field" style="margin-top:10px;"><label>서비스계획 점검 예고 (다음 점검일 며칠 전부터 알릴지)</label>' + numIn('thPlanSoon', CONSTANTS.PLAN_REVIEW_SOON_DAYS) + '</div>' +
         '<div class="field"><label>디브리핑 미작성 알림 (위기 사건 후 며칠이 지나면 알릴지)</label>' + numIn('thDebrief', CONSTANTS.DEBRIEF_DUE_DAYS) + '</div>' +
+        '<div class="field"><label>위기 대응 부담 알림 (한 달에 위기 응대가 몇 건 이상이면 알릴지)</label>' + numIn('thLoad', CONSTANTS.CRISIS_LOAD_MONTHLY) + '</div>' +
         '<div style="display:flex;gap:8px;"><button class="btn btn-primary btn-sm" id="saveThresholdBtn">저장</button><button class="btn btn-sm" id="resetThresholdBtn">기본값으로 되돌리기</button></div></div>';
     }
 
@@ -9093,7 +9195,7 @@ const Views = {
       toast('자동 잠금 시간이 변경되었습니다.');
     };
     document.getElementById('saveThresholdBtn').onclick = async () => {
-      const v = { contactGap: {}, reassess: {}, planSoon: document.getElementById('thPlanSoon').value, debrief: document.getElementById('thDebrief').value };
+      const v = { contactGap: {}, reassess: {}, planSoon: document.getElementById('thPlanSoon').value, debrief: document.getElementById('thDebrief').value, crisisLoad: document.getElementById('thLoad').value };
       Object.keys(CONSTANTS.MANAGEMENT_LEVELS).forEach(k => {
         v.contactGap[k] = document.getElementById('thGap_' + k).value;
         v.reassess[k] = document.getElementById('thRe_' + k).value;

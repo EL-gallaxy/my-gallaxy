@@ -333,6 +333,46 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('빠른 기록·미작성 알림');
   });
 
+  await step('미등록 위기개입 통계·등록 전환·슈퍼비전 안건 출력·위기 대응 부담 알림이 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      const m = Utils.todayStr().slice(0, 7);
+      const mk = async (o) => { const d = Debriefings.blank({ kind: 'crisisUnreg' }); Object.assign(d, o); await Debriefings.save(d, false); return d; };
+      const a = await mk({ subjectNote: '전환대상', crisisType: '자해', route: '전화', outcome: '현장에서 안정됨', facts: '전환 사실 010-9999-8888', actions: '재방문', forSupervision: true, supervisionQuestion: '질문', staffImpact: '출력금지영향' });
+      await mk({ subjectNote: '다른건', crisisType: '자해', route: '방문', outcome: '응급입원' });
+      const st = Debriefings.unregStats(m);
+      const load = Debriefings.crisisLoad(m);
+      // 안건 출력
+      const agendaHtml = Views.supervisionAgenda();
+      // 전환
+      const c = await Debriefings.convertToClient(a.id, { clientId: 'CV1', alias: '전환별칭', managementLevel: 'crisis' });
+      const conv = Debriefings.get(a.id);
+      const ev = Clients.get('CV1').crisisEvents[0];
+      let dupErr = '';
+      try{ await Debriefings.convertToClient(a.id, { clientId: 'CV2' }); }catch(e){ dupErr = e.message; }
+      // 부담 알림
+      await Thresholds.save({ crisisLoad: '1' });
+      UI.navigate('dashboard', {});
+      return { typeSelf: st.byType['자해'], total: st.total, route: st.byRoute['전화'], load, loadOk: load >= 2,
+        agenda: agendaHtml.includes('전환 사실') && agendaHtml.includes('[전화번호 가림]') && !agendaHtml.includes('010-9999') && !agendaHtml.includes('출력금지영향'),
+        conv: conv.kind === 'crisisReg' && conv.clientId === 'CV1' && conv.eventId === ev.id && conv.subjectNote === '', evType: ev.type, evOutcome: ev.outcome, evDate: ev.date === conv.date, level: c.managementLevel, dupErr };
+    });
+    assert(r.total >= 2 && r.typeSelf >= 2 && r.route >= 1 && r.loadOk, '미등록 통계가 다름: ' + JSON.stringify(r));
+    assert(r.agenda, '슈퍼비전 안건 출력이 다름(비식별/영향 제외): ' + JSON.stringify(r));
+    assert(r.conv && r.evType === '자해' && r.evOutcome === '현장에서 안정됨' && r.evDate && r.level === 'crisis' && /미등록/.test(r.dupErr), '등록 전환이 다름: ' + JSON.stringify(r));
+    await page.waitForTimeout(250);
+    const loadPanel = await page.evaluate(() => (document.getElementById('crisisLoadSection') || {}).textContent || '');
+    assert(loadPanel.includes('위기 응대') && loadPanel.includes('건'), '위기 대응 부담 알림이 대시보드에 없음');
+    await page.evaluate(async () => { await Thresholds.reset(); });
+    for (const v of ['supervisionAgenda', 'outcomes']){
+      await page.evaluate((name) => UI.navigate(name, {}), v);
+      await page.waitForTimeout(200);
+      const txt = await page.evaluate(() => document.getElementById('appMain').textContent);
+      assert(txt.length > 30 && !txt.includes('알 수 없는 화면'), v + ' 화면이 비어 있음');
+      if (v === 'outcomes') assert(txt.includes('미등록 대상자 위기개입'), '성과지표에 미등록 위기개입이 없음');
+    }
+    noNewErrors('미등록 통계·전환·안건·부담');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
