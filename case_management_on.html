@@ -1109,6 +1109,68 @@ const Storage = {
   DB_VERSION: 4,
   _dbPromise: null,
 
+  // 저장 구조가 바뀌는 새 버전을 처음 열 때 — 기존 기록이 있으면 업그레이드 전에 백업 파일을 먼저 받도록 안내한다.
+  // 백업은 암호화된 기록을 그대로 읽어 담으므로 비밀번호 없이도 만들 수 있고, 현재 백업과 같은 형식이다.
+  async existingVersion(){
+    try{
+      if (!indexedDB.databases) return 0;
+      const list = await indexedDB.databases();
+      const row = list.find(d => d.name === this.DB_NAME);
+      return row ? row.version || 0 : 0;
+    }catch(e){ return 0; }
+  },
+  async _readLegacyDb(){
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(this.DB_NAME);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  },
+  async _legacyAll(db, store){
+    if (!db.objectStoreNames.contains(store)) return [];
+    return new Promise((resolve, reject) => {
+      const r = db.transaction(store, 'readonly').objectStore(store).getAll();
+      r.onsuccess = () => resolve(r.result || []);
+      r.onerror = () => reject(r.error);
+    });
+  },
+  async confirmUpgradeBackup(){
+    const old = await this.existingVersion();
+    if (!old || old >= this.DB_VERSION) return;
+    let db;
+    try{ db = await this._readLegacyDb(); }catch(e){ return; }
+    const stores = Backup.DATA_STORES;
+    let hasData = false;
+    for (const st of stores){ if ((await this._legacyAll(db, st)).length){ hasData = true; break; } }
+    if (!hasData){ db.close(); return; }
+    await new Promise((resolve) => {
+      UI._modalLocked = true;
+      UI.openModal(
+        '<h3>업데이트 전에 백업해 두세요</h3>' +
+        '<p style="margin-bottom:10px;">새 버전은 저장 구조를 바꿉니다. 만약을 위해 지금 기록을 백업 파일로 먼저 저장하고 이어서 진행하는 것을 권합니다. 백업 파일은 암호화된 상태 그대로이며 비밀번호 없이 만들어집니다.</p>' +
+        '<div class="error-msg hidden" id="upgBackupErr" role="alert"></div>' +
+        '<div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;"><button class="btn" id="upgSkip">백업 없이 계속</button><button class="btn btn-primary" id="upgBackup">백업 파일 저장하고 계속</button></div>'
+      );
+      const finish = () => { UI._modalLocked = false; UI.closeModal(); try{ db.close(); }catch(e){ /* 이미 닫힘 */ } resolve(); };
+      document.getElementById('upgSkip').onclick = finish;
+      document.getElementById('upgBackup').onclick = async () => {
+        try{
+          const data = { app: 'case_management_on', version: 1, exportedAt: new Date().toISOString(), beforeUpdate: true, settings: {} };
+          const settings = await this._legacyAll(db, 'settings');
+          Backup.SETTINGS_KEYS.forEach(k => { const row = settings.find(r => r.key === k); data.settings[k] = row ? row.value : undefined; });
+          for (const st of stores) data[st] = await this._legacyAll(db, st);
+          CSV.download('case_management_on_backup_before_update_' + Utils.todayStr() + '.json', JSON.stringify(data), 'application/json');
+          finish();
+        }catch(e){
+          console.error(e);
+          const b = document.getElementById('upgBackupErr');
+          b.textContent = '백업 파일을 만들지 못했습니다: ' + (e && e.message ? e.message : e) + ' — "백업 없이 계속"을 누르면 그대로 진행합니다.';
+          b.classList.remove('hidden');
+        }
+      };
+    });
+  },
+
   openDB(){
     if (this._dbPromise) return this._dbPromise;
     this._dbPromise = new Promise((resolve, reject) => {
@@ -1650,9 +1712,12 @@ const DashboardPrefs = {
   },
   hidden: {},
 
+  moreOpen: false,
   async init(){
     this.hidden = (await Storage.getSetting('dashboardHiddenWidgets')) || {};
+    this.moreOpen = !!(await Storage.getSetting('dashboardMoreOpen'));
   },
+  async setMoreOpen(v){ this.moreOpen = !!v; await Storage.setSetting('dashboardMoreOpen', this.moreOpen); },
   isHidden(key){ return !!this.hidden[key]; },
   async setHidden(key, isHidden){
     this.hidden[key] = isHidden;
@@ -5142,13 +5207,19 @@ const Views = {
         ? '<span class="help-text">🔔 브라우저 알림이 켜져 있습니다.</span>'
         : '<button class="btn btn-sm" id="enableNotifBtn">' + icon('bell') + ' 브라우저 알림 사용</button>') +
       '</div>';
+    const headHtml = html;
+    html = '';
 
     const hide = (key) => DashboardPrefs.isHidden(key);
-
-    html += '<div class="summary-grid">' +
+    const topCards = '<div class="summary-grid">' +
       (hide('overdue') ? '' : '<button class="summary-card overdue" data-goto="followUps" data-filter="overdue"><div class="num">' + overdue.length + '</div><div class="label">' + icon('alertTriangle', { size: 15 }) + ' 기한 초과</div></button>') +
       (hide('today') ? '' : '<button class="summary-card today" data-scroll="todaySection"><div class="num">' + (dueToday.length + todaySchedules.length) + '</div><div class="label">' + icon('clock', { size: 15 }) + ' 오늘 할 일</div></button>') +
       (hide('draft') ? '' : '<button class="summary-card draft" data-scroll="draftSection"><div class="num">' + draftSoaps.length + '</div><div class="label">' + icon('edit', { size: 15 }) + ' 미완성 SOAP</div></button>') +
+      (hide('debriefGap') ? '' : '<button class="summary-card overdue" data-scroll="debriefGapSection"><div class="num">' + debriefGaps.length + '</div><div class="label">' + icon('messageSquare', { size: 15 }) + ' 디브리핑 미작성</div></button>') +
+      '</div>';
+    let topPanels = '', todayHtml = '', quickHtml = '';
+
+    html += '<div class="summary-grid">' +
       '<button class="summary-card upcoming" data-goto="schedule" data-filter="upcoming"><div class="num">' + upcomingCount + '</div><div class="label">' + icon('calendar', { size: 15 }) + ' 예정 일정</div></button>' +
       (hide('gap') ? '' : '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">' + icon('clock', { size: 15 }) + ' 미접촉 대상자</div></button>') +
       (hide('crisis') ? '' : '<button class="summary-card overdue" data-scroll="crisisSection"><div class="num">' + crisisClients.length + '</div><div class="label">' + icon('siren', { size: 15 }) + ' 위기관리 대상자</div></button>') +
@@ -5156,7 +5227,6 @@ const Views = {
       (hide('planReview') ? '' : '<button class="summary-card gap" data-scroll="planReviewSection"><div class="num">' + planReviews.length + '</div><div class="label">' + icon('clipboardList', { size: 15 }) + ' 서비스계획 점검</div></button>') +
       (hide('inpatient') ? '' : '<button class="summary-card gap" data-scroll="inpatientSection"><div class="num">' + inpatients.length + '</div><div class="label">' + icon('building', { size: 15 }) + ' 입원 중 대상자</div></button>') +
       (hide('medRenewal') ? '' : '<button class="summary-card overdue" data-scroll="medRenewalSection"><div class="num">' + medRenewals.length + '</div><div class="label">' + icon('pill', { size: 15 }) + ' 복약 갱신 임박</div></button>') +
-      (hide('debriefGap') ? '' : '<button class="summary-card overdue" data-scroll="debriefGapSection"><div class="num">' + debriefGaps.length + '</div><div class="label">' + icon('messageSquare', { size: 15 }) + ' 디브리핑 미작성</div></button>') +
       (hide('reassessment') ? '' : '<button class="summary-card gap" data-scroll="reassessmentSection"><div class="num">' + reassessGaps.length + '</div><div class="label">' + icon('clipboardList', { size: 15 }) + ' 정기 재사정 필요</div></button>') +
       (hide('safetyGap') ? '' : '<button class="summary-card overdue" data-scroll="safetyGapSection"><div class="num">' + safetyGaps.length + '</div><div class="label">' + icon('shield', { size: 15 }) + ' 안전 정보 공백</div></button>') +
       '<button class="summary-card upcoming" data-goto="selfCare"><div class="num">' + SelfCare.list().filter(n => (n.category || 'selfcare') === 'selfcare').length + '</div><div class="label">' + icon('heart', { size: 15 }) + ' 자기돌봄</div></button>' +
@@ -5256,7 +5326,8 @@ const Views = {
     checkPanels.forEach(p => {
       if (hide(p.key)) return;
       if (p.count === 0){ clearLabels.push(p.clearLabel); return; }
-      html += '<div class="panel" id="' + p.id + '"><div class="panel-title">' + p.title + '</div>' + p.body() + '</div>';
+      const panelHtml = '<div class="panel" id="' + p.id + '"><div class="panel-title">' + p.title + '</div>' + p.body() + '</div>';
+      if (p.key === 'overdue' || p.key === 'debriefGap') topPanels += panelHtml; else html += panelHtml;
     });
     if (!hide('referral') && pendingReferrals.length){
       html += '<div class="panel" id="referralSection"><div class="panel-title">' + icon('link') + ' 연계 결과 확인 (예정일 ' + CONSTANTS.REFERRAL_CHECK_SOON_DAYS + '일 이내 또는 경과)</div>';
@@ -5280,7 +5351,7 @@ const Views = {
       html += '</div>';
     }
     if (!hide('crisisLoad') && crisisLoadN >= CONSTANTS.CRISIS_LOAD_MONTHLY){
-      html += '<div class="panel" id="crisisLoadSection"><div class="panel-title">' + icon('heart') + ' 이번 달 위기 응대 ' + crisisLoadN + '건</div>' +
+      topPanels += '<div class="panel" id="crisisLoadSection"><div class="panel-title">' + icon('heart') + ' 이번 달 위기 응대 ' + crisisLoadN + '건</div>' +
         '<p style="font-size:0.88rem;line-height:1.7;">위기 응대가 이어지고 있습니다(기준 ' + CONSTANTS.CRISIS_LOAD_MONTHLY + '건). 몸과 마음이 보내는 신호를 살피고, 필요하면 동료 지지나 슈퍼비전을 요청해 보세요.</p>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button class="btn btn-sm" data-goto-view="selfCare">자기돌봄 기록</button><button class="btn btn-sm" data-goto-view="debriefings">디브리핑 · 슈퍼비전 안건</button></div></div>';
     }
@@ -5303,7 +5374,9 @@ const Views = {
         '<span style="font-size:0.88rem;">이상 없음 — ' + clearLabels.map(Utils.escapeHtml).join(', ') + '</span></div>';
     }
 
-    // Today
+    // Today (오늘 할 일 + 미완성 SOAP은 화면 위쪽에 둔다)
+    const moreSoFar = html;
+    html = '';
     if (!hide('today')){
       html += '<div class="panel" id="todaySection"><div class="panel-title">' + icon('clock') + ' 오늘 할 일</div>';
       if (dueToday.length === 0 && todaySchedules.length === 0){
@@ -5345,6 +5418,9 @@ const Views = {
       html += '</div>';
     }
 
+    todayHtml = html;
+    html = moreSoFar;
+
     // Recent records
     if (!hide('recent')){
       html += '<div class="panel"><div class="panel-title">최근 기록</div>';
@@ -5361,7 +5437,7 @@ const Views = {
     }
 
     // Quick buttons
-    html += '<div class="quick-btns">' +
+    quickHtml = '<div class="quick-btns" style="margin-bottom:16px;">' +
       '<button class="btn-quick" id="qbNewSoap">＋ 새 SOAP 기록</button>' +
       '<button class="btn-quick" id="qbQuickRecord">＋ 간단 기록</button>' +
       '<button class="btn-quick" id="qbQuickDebrief">⚡ 위기 빠른 기록</button>' +
@@ -5379,6 +5455,9 @@ const Views = {
         '</div></div>';
     }
 
+    const moreCount = contactGaps.length + medRenewals.length + reassessGaps.length + safetyGaps.length + pendingReferrals.length + planReviews.length + inpatients.length + crisisClients.length;
+    html = headHtml + quickHtml + topCards + topPanels + todayHtml +
+      '<details class="panel" id="dashMore"' + (DashboardPrefs.moreOpen ? ' open' : '') + '><summary class="panel-title">' + icon('sliders') + ' 그 밖의 점검과 현황' + (moreCount ? ' (확인할 것 ' + moreCount + '건)' : '') + '</summary>' + html + '</details>';
     return html;
   },
 
@@ -5458,9 +5537,13 @@ const Views = {
     document.querySelectorAll('[data-scroll]').forEach(el => {
       el.onclick = () => {
         const target = document.getElementById(el.dataset.scroll);
+        const more = document.getElementById('dashMore');
+        if (target && more && more.contains(target) && !more.open) more.open = true;
         if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       };
     });
+    const dashMore = document.getElementById('dashMore');
+    if (dashMore) dashMore.addEventListener('toggle', () => { if (dashMore.open !== DashboardPrefs.moreOpen) DashboardPrefs.setMoreOpen(dashMore.open); });
     document.querySelectorAll('[data-open-soap]').forEach(el => {
       el.onclick = () => UI.navigate('soapEditor', { soapId: el.dataset.openSoap });
     });
@@ -10822,6 +10905,7 @@ async function initApp(){
     return;
   }
 
+  try{ await Storage.confirmUpgradeBackup(); }catch(e){ console.error(e); }
   try{
     await Storage.openDB();
   }catch(e){
