@@ -256,33 +256,50 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('소요 시간·접촉 계획·의뢰서');
   });
 
-  await step('위기 디브리핑을 저장하고 후속조치로 등록하며 보고서에는 실무자 영향을 싣지 않는다', async () => {
+  await step('디브리핑 탭: 미등록 대상자 위기개입·등록 대상자 사건 디브리핑을 저장하고 보고서·통계에 반영한다', async () => {
     const r = await page.evaluate(async () => {
       const ev = Clients.get('CI1').crisisEvents[0];
-      const before = Clients.hasDebriefing(ev);
+      const before = Debriefings.hasForEvent('CI1', ev);
       const fuBefore = FollowUps.list().length;
-      const made = await Clients.saveDebriefing('CI1', ev.id, { date: Utils.todayStr(), participants: '본인', facts: '사실정리본문', wentWell: '잘된점본문', toImprove: '바꿀점본문', staffImpact: '비밀실무자영향', review: ['안전계획 보완', '없는항목'], actions: '안전계획 수정\n\n보호자 연락', registerFollowUps: true });
-      const e2 = Clients.get('CI1').crisisEvents[0];
-      const fus = FollowUps.list().filter(f => f.text.startsWith('[디브리핑]'));
+      const d = Debriefings.forEvent('CI1', ev.id);
+      Object.assign(d, { participants: '본인', facts: '사실정리본문', wentWell: '잘된점본문', toImprove: '바꿀점본문', staffImpact: '비밀실무자영향', review: ['안전계획 보완', '없는항목'], actions: '안전계획 수정\n\n보호자 연락', forSupervision: true, supervisionQuestion: '슈퍼비전질문' });
+      const made = await Debriefings.save(d, true);
+      const again = Debriefings.forEvent('CI1', ev.id);
       const html = Views.crisisReport({ clientId: 'CI1', eventId: ev.id });
-      return { before, made, after: Clients.hasDebriefing(e2), review: e2.debriefing.review.join(','), fuAdded: FollowUps.list().length - fuBefore, fuTexts: fus.map(f => f.text).join('|'), report: html.includes('사실정리본문') && html.includes('바꿀점본문'), leak: html.includes('비밀실무자영향') };
+      const u = Debriefings.blank({ kind: 'crisisUnreg' });
+      Object.assign(u, { subjectNote: '50대 여성 이웃 신고', clientId: 'CI1', crisisType: '112 신고', outcome: '현장에서 안정됨', facts: '미등록 사실', actions: '지역센터 안내' });
+      const made2 = await Debriefings.save(u, true);
+      let err = '';
+      try{ const bad = Debriefings.blank({ kind: 'crisisReg' }); await Debriefings.save(bad, false); }catch(e){ err = e.message; }
+      const m = Utils.todayStr().slice(0, 7);
+      const rep = Stats.monthlyReport(m);
+      return { before, made, after: Debriefings.hasForEvent('CI1', ev), review: again.review.join(','), fuAdded: FollowUps.list().length - fuBefore, report: html.includes('사실정리본문') && html.includes('바꿀점본문'), leak: html.includes('비밀실무자영향'), made2, uClient: Debriefings.get(u.id).clientId, err, unreg: rep.debriefCounts.crisisUnreg, reg: rep.debriefCounts.crisisReg };
     });
     assert(r.before === false && r.after === true && r.made === 2 && r.fuAdded === 2, '디브리핑 저장/후속조치 등록이 다름: ' + JSON.stringify(r));
     assert(r.review === '안전계획 보완', '반영 항목 정리가 다름: ' + r.review);
     assert(r.report && !r.leak, '보고서에 디브리핑이 안 실리거나 실무자 영향이 새어 나옴');
-    await page.evaluate(() => UI.navigate('clientDetail', { id: 'CI1' }));
-    await page.waitForTimeout(200);
-    await page.evaluate(() => { const ev = Clients.get('CI1').crisisEvents[0]; Views.openDebriefingModal('CI1', ev.id); });
-    await page.waitForTimeout(150);
+    assert(r.made2 === 0 && r.uClient === '' && /대상자/.test(r.err), '미등록 위기개입 처리가 다름: ' + JSON.stringify(r));
+    assert(r.unreg === 1 && r.reg === 1, '월간 보고서 디브리핑 건수가 다름: ' + JSON.stringify(r));
+    for (const [v, p] of [['debriefings', {}], ['debriefEditor', { kind: 'crisisUnreg' }], ['debriefEditor', { clientId: 'CI1', eventId: await page.evaluate(() => Clients.get('CI1').crisisEvents[0].id) }]]){
+      await page.evaluate(([name, params]) => UI.navigate(name, params), [v, p]);
+      await page.waitForTimeout(150);
+      const txt = await page.evaluate(() => document.getElementById('appMain').textContent);
+      assert(txt.length > 30 && !txt.includes('알 수 없는 화면'), v + ' 화면이 비어 있음');
+    }
     const filled = await page.evaluate(() => document.getElementById('dbStaff').value);
-    assert(filled === '비밀실무자영향', '디브리핑 창에 저장한 내용이 다시 나타나지 않음');
-    await page.evaluate(() => UI.closeModal());
+    assert(filled === '비밀실무자영향', '편집 화면에 저장한 내용이 다시 나타나지 않음');
+    // 화면에서 미등록 위기개입 저장
+    await page.evaluate(() => UI.navigate('debriefEditor', { kind: 'crisisUnreg' }));
+    await page.waitForTimeout(150);
+    await page.evaluate(() => { document.getElementById('dbSubject').value = '화면입력 미등록'; document.getElementById('dbFacts').value = '화면 사실'; document.getElementById('dbSaveBtn').click(); });
+    await page.waitForTimeout(300);
+    assert(await page.evaluate(() => Debriefings.list().some(d => d.subjectNote === '화면입력 미등록')), '화면에서 미등록 디브리핑이 저장되지 않음');
     noNewErrors('디브리핑');
   });
 
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
-      ['resourceDirectory', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
+      ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
       ['handoverSummary', { id: 'CI1' }], ['dailyBriefing', {}]];
     for (const [v, params] of views){
       await page.evaluate(([name, p]) => UI.navigate(name, p), [v, params]);
@@ -347,9 +364,9 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
       await Snippets.add({ label: '평문확인라벨', field: 'S', text: '평문확인내용XYZ' });
       const d = await Backup.exportAll();
       const raw = JSON.stringify(d);
-      return { clients: d.clients.length, soaps: d.soaps.length, hasSnippets: !!d.settings.textSnippetsEnc, leaked: raw.includes('평문확인내용XYZ') || raw.includes('점검1') || raw.includes('원본 S') };
+      return { clients: d.clients.length, soaps: d.soaps.length, debriefs: (d.debriefings || []).length, hasSnippets: !!d.settings.textSnippetsEnc, leaked: raw.includes('평문확인내용XYZ') || raw.includes('점검1') || raw.includes('원본 S') || raw.includes('비밀실무자영향') || raw.includes('화면 사실') };
     });
-    assert(r.clients >= 2 && r.soaps >= 2, '백업에 기록이 빠짐: ' + JSON.stringify(r));
+    assert(r.clients >= 2 && r.soaps >= 2 && r.debriefs >= 3, '백업에 기록이 빠짐: ' + JSON.stringify(r));
     assert(r.hasSnippets, '백업에 상용구가 빠짐');
     assert(!r.leaked, '백업 파일에 암호화되지 않은 내용이 들어 있음');
   });
