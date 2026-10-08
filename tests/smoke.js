@@ -210,6 +210,52 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('개인정보·기준 일수');
   });
 
+  await step('소요 시간 통계, 월 접촉 계획 대비 실제, 연계 의뢰서가 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      const today = Utils.todayStr(), m = today.slice(0, 7);
+      await Clients.add({ id: 'PL1', alias: '계획', managementLevel: 'maintenance', registrationDate: Utils.addDaysStr(today, -400) });
+      const mk = async (type, dur) => { const s = SoapModule.createBlank({ clientId: 'PL1' }); s.contactType = type; s.durationMin = dur; s.S = '시간'; await SoapModule.save(s, true); };
+      await mk('방문', 60); await mk('방문', 30); await mk('전화', ''); 
+      const rep = Stats.monthlyReport(m);
+      await Clients.update('PL1', { contactPlanPerMonth: 5 });
+      const c = Clients.get('PL1');
+      const txt = Clients.contactPlanText(c);
+      const lastDay = new Date(parseInt(m.slice(0, 4), 10), parseInt(m.slice(5, 7), 10), 0).getDate();
+      const short = Stats.monthEndCheck(m).planShortfall.filter(x => x.clientId === 'PL1').length;
+      await Clients.addResourceLink('PL1', { type: '기타', name: '의뢰기관', date: today, status: 'referred', note: '의뢰사유 본문' });
+      const link = Clients.get('PL1').resourceLinks[0];
+      const html = Views.referralLetter({ clientId: 'PL1', linkId: link.id });
+      return { visit: rep.durationByType['방문'], total: rep.durationTotal, rec: rep.durationRecorded, txt, short, lastDay, letter: html.includes('의뢰사유 본문') && html.includes('의뢰기관') && html.includes('PL1') && !html.includes('undefined'), clean: [Utils.cleanMinutes('0'), Utils.cleanMinutes('abc'), Utils.cleanMinutes('45')], linkId: link.id };
+    });
+    assert(r.visit && r.visit.count === 2 && r.visit.minutes === 90 && r.total === 90 && r.rec === 2, '소요 시간 집계가 다름: ' + JSON.stringify(r));
+    assert(r.txt === '이번 달 3회 / 계획 5회', '계획 대비 표시가 다름: ' + r.txt);
+    assert(r.clean[0] === '' && r.clean[1] === '' && r.clean[2] === 45, '소요 시간 정리가 다름');
+    assert(r.letter, '연계 의뢰서 내용이 다름');
+    await page.evaluate(([cid, lid]) => UI.navigate('referralLetter', { clientId: cid, linkId: lid }), ['PL1', r.linkId]);
+    await page.waitForTimeout(200);
+    const out = await page.evaluate(() => { document.getElementById('ltRequest').value = '요청문구'; document.getElementById('ltRequest').dispatchEvent(new Event('input')); return document.getElementById('ltRequestOut').textContent + '|' + document.getElementById('ltReasonOut').textContent; });
+    assert(out === '요청문구|의뢰사유 본문', '의뢰서 인쇄용 문구 동기화가 다름: ' + out);
+    await page.evaluate(() => UI.navigate('clientDetail', { id: 'PL1' }));
+    await page.waitForTimeout(200);
+    const hasPlanInput = await page.evaluate(() => !!document.getElementById('contactPlanInput') && document.getElementById('contactPlanInput').value === '5');
+    assert(hasPlanInput, '대상자 화면에 월 접촉 계획 입력이 없음');
+    // SOAP 화면의 소요 시간 입력이 저장된다
+    await page.evaluate(() => UI.navigate('soapEditor', { prefillClientId: 'PL1' }));
+    await page.waitForTimeout(200);
+    const saved = await page.evaluate(async () => {
+      document.getElementById('soapDuration').value = '40';
+      document.getElementById('soapS').value = '소요화면저장';
+      document.getElementById('saveFinalBtn').click();
+      await new Promise(r => setTimeout(r, 300));
+      const el = document.getElementById('confirmYesBtn'); if (el) el.click();
+      await new Promise(r => setTimeout(r, 300));
+      const s = SoapModule.list().find(x => x.S === '소요화면저장');
+      return s ? s.durationMin : null;
+    });
+    assert(saved === 40, '화면에서 입력한 소요 시간이 저장되지 않음: ' + saved);
+    noNewErrors('소요 시간·접촉 계획·의뢰서');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
