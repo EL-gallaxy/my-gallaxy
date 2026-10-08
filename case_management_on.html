@@ -466,7 +466,7 @@
     #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
     #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #crisisReportPrintBtn, #crisisReportBackBtn, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
+    #clNewSoap, #exportLightBackupBtn, #crisisReportPrintBtn, #crisisReportBackBtn, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
@@ -3794,10 +3794,24 @@ const Backup = {
   SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'seedClientIds', 'textSnippetsEnc'],
   overdueCached: false,
 
-  async exportAll(){
+  // 첨부 제외 백업 — 대상자 기록은 안에 첨부파일이 함께 암호화되어 있어서, 지금 메모리에 풀려 있는 기록에서
+  // 첨부 본문(dataUrl)만 비우고 같은 키로 다시 암호화해 담는다(파일 이름·종류는 남겨 "파일 없음"으로 표시된다).
+  async _clientsWithoutAttachments(){
+    const rows = [];
+    for (const c of State.clients.values()){
+      const copy = JSON.parse(JSON.stringify(c));
+      (copy.documents || []).forEach(d => (d.attachments || []).forEach(a => { a.dataUrl = ''; }));
+      const { iv, cipher } = await CryptoModule.encryptJSON(Auth.cryptoKey, copy);
+      rows.push({ id: copy.id, iv, cipher });
+    }
+    return rows;
+  },
+  async exportAll(opts){
+    opts = opts || {};
     const data = { app: 'case_management_on', version: 1, exportedAt: new Date().toISOString(), settings: {} };
+    if (opts.excludeAttachments) data.attachmentsExcluded = true;
     for (const k of this.SETTINGS_KEYS){ data.settings[k] = await Storage.getSetting(k); }
-    data.clients = await Storage.idbGetAll('clients');
+    data.clients = opts.excludeAttachments ? await this._clientsWithoutAttachments() : await Storage.idbGetAll('clients');
     data.soaps = await Storage.idbGetAll('soaps');
     data.followUps = await Storage.idbGetAll('followUps');
     data.schedules = await Storage.idbGetAll('schedules');
@@ -3806,16 +3820,33 @@ const Backup = {
     return data;
   },
 
-  async downloadBackup(){
-    const data = await this.exportAll();
-    CSV.download('case_management_on_backup_' + Utils.todayStr() + '.json', JSON.stringify(data, null, 2), 'application/json');
+  async downloadBackup(opts){
+    opts = opts || {};
+    const data = await this.exportAll(opts);
+    const text = JSON.stringify(data);
+    CSV.download('case_management_on_backup_' + (opts.excludeAttachments ? 'light_' : '') + Utils.todayStr() + '.json', text, 'application/json');
     await Storage.setSetting('lastBackupAt', new Date().toISOString());
+    if (!opts.excludeAttachments) await Storage.setSetting('lastFullBackupAt', new Date().toISOString());
+    this.lastExportBytes = text.length;
     await this.clearDirty();
     await this.refresh();
   },
 
   // 백업이 필요한지 판단한다: 한 번도 안 했고 기록이 있거나, 마지막 백업 후
   // 이 일수가 지났고 그 사이 바뀐 기록이 있을 때. 바뀐 게 없으면 재촉하지 않는다.
+  lastExportBytes: 0,
+  // 첨부(스캔·사진·PDF) 현황과 백업 크기 어림값. 첨부는 기록 안에서 암호화되며 base64가 두 번 겹쳐 원본의 약 1.7배가 된다.
+  attachmentStats(){
+    let count = 0, bytes = 0, pdfs = 0;
+    State.clients.forEach(c => (c.documents || []).forEach(d => (d.attachments || []).forEach(a => {
+      if (!a.dataUrl) return;
+      count++;
+      const b = a.dataUrl.length * 0.75;
+      bytes += b;
+      if (a.mimeType === 'application/pdf') pdfs++;
+    })));
+    return { count, pdfs, mb: bytes / 1048576, backupMb: bytes * 1.78 / 1048576 };
+  },
   REMINDER_THRESHOLD_DAYS: 7,
   async status(){
     const lastBackupAt = await Storage.getSetting('lastBackupAt');
@@ -4647,6 +4678,14 @@ const Views = {
     };
     const exportBtn = document.getElementById('exportBackupBtn');
     if (exportBtn) exportBtn.onclick = doBackupNow;
+    const lightBtn = document.getElementById('exportLightBackupBtn');
+    if (lightBtn) lightBtn.onclick = async () => {
+      try{
+        await Backup.downloadBackup({ excludeAttachments: true });
+        toast('가벼운 백업 파일을 저장했습니다 (약 ' + (Backup.lastExportBytes / 1048576).toFixed(1) + 'MB, 첨부 제외).');
+        UI.renderCurrentView();
+      }catch(e){ console.error(e); toast('백업 파일 생성에 실패했습니다.', 'error'); }
+    };
     const backupBannerBtn = document.getElementById('backupNowBannerBtn');
     if (backupBannerBtn) backupBannerBtn.onclick = doBackupNow;
     const importBtn = document.getElementById('importBackupBtn');
@@ -4656,7 +4695,7 @@ const Views = {
       importInput.onchange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        UI.confirm('백업 파일을 불러오면 현재 저장된 모든 데이터가 대체됩니다. 백업 당시 비밀번호로 다시 로그인해야 합니다. 계속할까요?', async () => {
+        UI.confirm('백업 파일을 불러오면 현재 저장된 모든 데이터가 대체됩니다. 백업 당시 비밀번호로 다시 로그인해야 합니다. 첨부 제외(가벼운) 백업이면 첨부파일은 복원되지 않고 현재 첨부도 사라집니다. 계속할까요?', async () => {
           try{
             await Backup.importFromFile(file);
             toast('복원이 완료되었습니다. 다시 로그인해 주세요.');
@@ -5361,7 +5400,9 @@ const Views = {
             '<div class="row-title">' + Utils.escapeHtml(d.name) + '</div>' +
             '<div class="row-sub">' + (d.receivedDate ? '수령일: ' + d.receivedDate : '미수령') + '</div>' +
             (attachments.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">' +
-              attachments.map(a => (a.mimeType && a.mimeType.startsWith('image/')
+              attachments.map(a => (!a.dataUrl
+                ? '<span style="padding:6px 8px;border:1px dashed var(--border-strong);border-radius:6px;font-size:0.78rem;color:var(--text-muted);" title="가벼운 백업(첨부 제외)으로 복원되어 파일이 없습니다">📄 ' + Utils.truncate(Utils.escapeHtml(a.filename), 14) + ' (파일 없음)</span>'
+                : a.mimeType && a.mimeType.startsWith('image/')
                 ? '<img src="' + a.dataUrl + '" data-view-attachment="' + a.id + '" data-view-attachment-doc="' + d.id + '" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid var(--border-strong);" title="' + Utils.escapeHtml(a.filename) + '">'
                 : '<span data-view-attachment="' + a.id + '" data-view-attachment-doc="' + d.id + '" style="cursor:pointer;padding:6px 8px;border:1px solid var(--border-strong);border-radius:6px;font-size:0.78rem;" title="' + Utils.escapeHtml(a.filename) + '">📄 ' + Utils.truncate(Utils.escapeHtml(a.filename), 14) + '</span>'
               ) + '<button class="btn-link" style="color:var(--danger);" data-del-attachment="' + a.id + '" data-del-attachment-doc="' + d.id + '" title="첨부파일 삭제">✕</button>').join('') +
@@ -6195,6 +6236,10 @@ const Views = {
         try{
           const attachment = await Utils.readFileAsAttachment(file);
           await Clients.addDocumentAttachment(id, docId, attachment);
+          // PDF는 줄이지 못하고 백업 파일에 원본의 약 1.7배로 들어가므로, 큰 파일이면 미리 알려 준다.
+          if (attachment.mimeType === 'application/pdf' && file.size > 3 * 1024 * 1024){
+            toast(file.name + ': PDF가 ' + (file.size / 1048576).toFixed(1) + 'MB라 백업 파일이 약 ' + (file.size * 1.78 / 1048576).toFixed(0) + 'MB 늘어납니다. 사진으로 찍어 올리면 자동으로 줄어듭니다.');
+          }
         }catch(err){ toast('파일을 첨부하지 못했습니다.', 'error'); }
       }
       UI.renderCurrentView();
@@ -6204,7 +6249,7 @@ const Views = {
         const client = Clients.get(id);
         const doc = (client.documents || []).find(d => d.id === el.dataset.viewAttachmentDoc);
         const att = doc && (doc.attachments || []).find(a => a.id === el.dataset.viewAttachment);
-        if (att) Utils.openDataUrlInNewTab(att.dataUrl);
+        if (att && att.dataUrl) Utils.openDataUrlInNewTab(att.dataUrl);
       };
     });
     document.querySelectorAll('[data-del-attachment]').forEach(el => {
@@ -8143,12 +8188,20 @@ const Views = {
       '<p style="font-size:0.85rem;margin:10px 0;">마지막 백업: <strong id="lastBackupAtText">확인 중…</strong></p>' +
       '<div class="divider"></div>' +
       '<p style="font-weight:600;font-size:0.88rem;margin-bottom:6px;">⬇ 백업 파일 저장하기</p>' +
+      '<p class="help-text" style="margin-bottom:8px;"><strong>가벼운 백업(첨부 제외)</strong>은 첨부파일을 뺀 기록만 담아 용량이 훨씬 작지만, 이 파일로 복원하면 <strong>첨부파일은 복원되지 않고 현재 저장된 첨부도 사라집니다.</strong> 평소에는 가벼운 백업을 자주 하고, 첨부가 바뀌었을 때만 전체 백업을 하는 방식으로 쓰세요.</p>' +
       '<p class="help-text" style="margin-bottom:16px;">아래 <strong>백업 파일 내보내기</strong> 버튼을 누르면 암호화된 상태 그대로 전체 데이터가 .json 파일로 다운로드됩니다. 이 파일을 USB나 클라우드 저장소 등 안전한 곳에 보관하세요.</p>' +
       '<p style="font-weight:600;font-size:0.88rem;margin-bottom:6px;">⬆ 백업 파일 불러오기 (복원하기)</p>' +
       '<p class="help-text" style="margin-bottom:6px;">아래 <strong>백업 파일 불러오기</strong> 버튼을 누르면 파일 선택 창이 열립니다. 그 창에서 이전에 저장해 둔 .json 백업 파일(예: case_management_on_backup_2026-01-01.json)을 찾아 선택하세요.</p>' +
       '<p class="help-text" style="margin-bottom:16px;">파일을 선택하면 자동으로 복원되고 페이지가 새로고침되며, 이후에는 <strong>그 백업 파일을 만들 당시 사용하던 비밀번호</strong>로 다시 로그인해야 합니다. 불러오는 즉시 현재 이 브라우저에 저장된 모든 데이터는 백업 파일 내용으로 대체되니 주의하세요.</p>' +
+      (function(){
+        const st = Backup.attachmentStats();
+        return '<p class="help-text" style="margin-bottom:12px;" id="attachmentStatsText">저장된 첨부파일: <strong>' + st.count + '개</strong>' + (st.count ? ' (약 ' + st.mb.toFixed(1) + 'MB, PDF ' + st.pdfs + '개)' : '') +
+          (st.count ? ' — 백업 파일에는 이 첨부 때문에 약 ' + st.backupMb.toFixed(1) + 'MB가 더해집니다. 사진은 올릴 때 자동으로 줄여 저장되지만 PDF는 줄이지 못합니다.' : '') +
+          '<br>마지막 전체 백업(첨부 포함): <strong id="lastFullBackupText">확인 중…</strong></p>';
+      })() +
       '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
       '<button class="btn btn-sm" id="exportBackupBtn">⬇ 백업 파일 내보내기</button>' +
+      '<button class="btn btn-sm" id="exportLightBackupBtn" title="첨부파일을 빼고 기록만 담은 가벼운 백업">⬇ 가벼운 백업 (첨부 제외)</button>' +
       '<button class="btn btn-sm" id="importBackupBtn">⬆ 백업 파일 불러오기</button>' +
       '<input type="file" id="importBackupInput" accept="application/json" class="hidden">' +
       '</div></div>';
@@ -8220,6 +8273,9 @@ const Views = {
     (async () => {
       const lastBackupAt = await Storage.getSetting('lastBackupAt');
       document.getElementById('lastBackupAtText').textContent = lastBackupAt ? Utils.formatDateTime(lastBackupAt) : '백업한 적 없음';
+      const lastFull = await Storage.getSetting('lastFullBackupAt');
+      const fullEl = document.getElementById('lastFullBackupText');
+      if (fullEl) fullEl.textContent = lastFull ? Utils.formatDateTime(lastFull) : '없음';
     })();
 
     document.getElementById('orgNameInput').onchange = (e) => OrgInfo.setName(e.target.value.trim());
