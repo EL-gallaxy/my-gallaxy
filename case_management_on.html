@@ -623,6 +623,7 @@
       <button class="nav-btn nav-secondary" id="navResourceDirectory" data-view="resourceDirectory"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="10" height="18"/><rect x="14" y="9" width="6" height="12"/><path d="M7 7h1M11 7h1M7 11h1M11 11h1M7 15h1M11 15h1"/></svg> <span class="nav-label">기관주소록</span></button>
       <button class="nav-btn nav-secondary" data-view="search"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.3" cy="10.3" r="6.3"/><path d="M20 20l-4.8-4.8"/></svg> <span class="nav-label">검색</span></button>
       <button class="nav-btn nav-secondary" data-view="stats"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M2.5 20h19"/></svg> <span class="nav-label">통계</span></button>
+      <button class="nav-btn nav-secondary" data-view="debriefings"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4.5h16v11H9l-4 4v-4H4Z"/></svg> <span class="nav-label">디브리핑</span></button>
       <button class="nav-btn nav-secondary" data-view="selfCare"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7.2-4.5-9.4-9C1.2 7.8 2.8 4.4 6.2 3.9c2-.3 3.9.6 5.8 3 1.9-2.4 3.8-3.3 5.8-3 3.4.5 5 3.9 3.6 7.1C19.2 15.5 12 20 12 20z"/></svg> <span class="nav-label">자기돌봄</span></button>
       <button class="nav-btn nav-secondary" data-view="training"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.3c-2-1.7-4.6-2.1-7.3-2.1v13c2.7 0 5.3.4 7.3 2.1 2-1.7 4.6-2.1 7.3-2.1v-13c-2.7 0-5.3.4-7.3 2.1Z"/><path d="M12 6.3v13"/></svg> <span class="nav-label">교육·슈퍼비전</span></button>
       <button class="nav-btn nav-secondary" data-view="settings"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.6a8 8 0 0 0 0-3.2l1.9-1.5-2-3.4-2.3.9a7.9 7.9 0 0 0-2.7-1.6L14 2.5h-4l-.4 2.3a7.9 7.9 0 0 0-2.7 1.6l-2.3-.9-2 3.4L4.5 10.4a8 8 0 0 0 0 3.2l-1.9 1.5 2 3.4 2.3-.9c.8.7 1.7 1.3 2.7 1.6l.4 2.3h4l.4-2.3a7.9 7.9 0 0 0 2.7-1.6l2.3.9 2-3.4-1.9-1.5Z"/></svg> <span class="nav-label">설정</span></button>
@@ -1085,7 +1086,7 @@ const CryptoModule = {
    ========================================================================= */
 const Storage = {
   DB_NAME: 'case_management_on_db',
-  DB_VERSION: 3,
+  DB_VERSION: 4,
   _dbPromise: null,
 
   openDB(){
@@ -1095,7 +1096,7 @@ const Storage = {
       req.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
-        ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes'].forEach(name => {
+        ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes', 'debriefings'].forEach(name => {
           if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
         });
       };
@@ -1196,6 +1197,7 @@ const State = {
   schedules: new Map(),
   resourceDirectory: new Map(),
   selfCareNotes: new Map(),
+  debriefings: new Map(),
   currentView: 'dashboard',
   currentParams: {},
   seedClientIds: [],
@@ -1209,6 +1211,7 @@ const State = {
     this.schedules.clear();
     this.resourceDirectory.clear();
     this.selfCareNotes.clear();
+    this.debriefings.clear();
   }
 };
 
@@ -1515,6 +1518,7 @@ const Auth = {
     for (const s of State.schedules.values()) await Storage.saveEncrypted('schedules', s);
     for (const r of State.resourceDirectory.values()) await Storage.saveEncrypted('resourceDirectory', r);
     for (const n of State.selfCareNotes.values()) await Storage.saveEncrypted('selfCareNotes', n);
+    for (const d of State.debriefings.values()) await Storage.saveEncrypted('debriefings', d);
 
     const { iv, cipher } = await CryptoModule.encryptJSON(newKey, { v: CryptoModule.VERIFIER_TEXT });
     await Storage.setSetting('authSalt', newSaltB64);
@@ -1684,6 +1688,7 @@ async function loadAllDataIntoState(){
   State.schedules.clear();
   State.resourceDirectory.clear();
   State.selfCareNotes.clear();
+  State.debriefings.clear();
 
   const clients = await Storage.loadAllDecrypted('clients');
   clients.forEach(c => State.clients.set(c.id, c));
@@ -1703,6 +1708,9 @@ async function loadAllDataIntoState(){
 
   const selfCareNotes = await Storage.loadAllDecrypted('selfCareNotes');
   selfCareNotes.forEach(n => State.selfCareNotes.set(n.id, n));
+
+  const debriefings = await Storage.loadAllDecrypted('debriefings');
+  debriefings.forEach(d => State.debriefings.set(d.id, d));
 
   await Snippets.load();
 
@@ -2159,35 +2167,6 @@ const Clients = {
     ev.outcome = CONSTANTS.CRISIS_OUTCOMES.includes(outcome) ? outcome : '';
     ev.reportedTo = t(reportedTo); ev.reportedDate = reportedDate || ''; ev.debrief = t(debrief);
     await Storage.saveEncrypted('clients', client);
-  },
-  // 디브리핑 — 위기 사건 뒤 돌아보는 구조화된 기록. 사건 결과 기록과 별개로 "무엇이 잘 되었고 무엇을 바꿀지",
-  // 실무자 본인이 받은 영향, 대상자 정보(안전계획 등)에 반영할 일을 남긴다. 후속조치 줄은 원하면 후속조치로 바로 등록한다.
-  DEBRIEF_REVIEW_ITEMS: ['안전계획 보완', '위기 시 선호 보완', '관리수준 재검토', '연락망·긴급연락처 확인', '복약·진료 연계 확인'],
-  async saveDebriefing(id, eventId, d){
-    const client = State.clients.get(id);
-    const ev = client && (client.crisisEvents || []).find(e => e.id === eventId);
-    if (!ev) throw new Error('위기개입 기록을 찾을 수 없습니다.');
-    const t = (v) => (v || '').trim();
-    const prev = ev.debriefing || {};
-    const lines = t(d.actions).split('\n').map(x => x.trim()).filter(Boolean);
-    ev.debriefing = {
-      date: d.date || Utils.todayStr(), participants: t(d.participants),
-      facts: t(d.facts), wentWell: t(d.wentWell), toImprove: t(d.toImprove), staffImpact: t(d.staffImpact),
-      review: (d.review || []).filter(x => this.DEBRIEF_REVIEW_ITEMS.includes(x)),
-      actions: lines.join('\n'), followUpsRegisteredAt: prev.followUpsRegisteredAt || ''
-    };
-    let made = 0;
-    if (d.registerFollowUps && lines.length){
-      const due = Utils.addDaysStr(Utils.todayStr(), 7);
-      for (const text of lines){ await FollowUps.add({ clientId: id, type: '위기 후속 모니터링', text: '[디브리핑] ' + text, dueDate: due }); made++; }
-      ev.debriefing.followUpsRegisteredAt = new Date().toISOString();
-    }
-    await Storage.saveEncrypted('clients', client);
-    return made;
-  },
-  hasDebriefing(ev){
-    const d = ev.debriefing;
-    return !!(d && (d.facts || d.wentWell || d.toImprove || d.staffImpact || d.actions || (d.review || []).length)) || !!(ev.debrief || '').trim();
   },
   // 첫 단계부터 마지막 단계까지의 소요 분(단계가 2개 미만이면 null)
   crisisSpanMinutes(ev){
@@ -2665,6 +2644,7 @@ const Clients = {
     for (const s of Array.from(State.soaps.values())) if (s.clientId === id){ State.soaps.delete(s.id); await Storage.idbDelete('soaps', s.id); }
     for (const f of Array.from(State.followUps.values())) if (f.clientId === id){ State.followUps.delete(f.id); await Storage.idbDelete('followUps', f.id); }
     for (const sc of Array.from(State.schedules.values())) if (sc.clientId === id){ State.schedules.delete(sc.id); await Storage.idbDelete('schedules', sc.id); }
+    for (const d of Array.from(State.debriefings.values())) if (d.clientId === id){ State.debriefings.delete(d.id); await Storage.idbDelete('debriefings', d.id); }
     for (const other of Array.from(State.clients.values())){
       if ((other.familyLinks || []).some(l => l.relatedClientId === id)){
         other.familyLinks = other.familyLinks.filter(l => l.relatedClientId !== id);
@@ -2750,6 +2730,94 @@ const Clients = {
    external AI backend could be substituted later without touching the rest
    of the app.
    ========================================================================= */
+/* =========================================================================
+   DEBRIEFINGS  (디브리핑) — 위기개입·상담 뒤에 돌아보는 기록. 등록 대상자뿐 아니라 "미등록 대상자"
+   (등록 없이 응대한 위기개입)도 남길 수 있도록 대상자 기록과 별도 저장소를 쓴다. 실무자 본인의 배움과
+   회복을 위한 기록이라 보고서·통계에는 건수만 반영하고, "나에게 미친 영향"은 어디에도 출력하지 않는다.
+   ========================================================================= */
+const Debriefings = {
+  KINDS: { crisisReg: '위기개입 · 등록 대상자', crisisUnreg: '위기개입 · 미등록 대상자', counsel: '상담·방문', other: '기타' },
+  ROUTES: ['전화', '방문', '내소', '경찰·소방 요청', '기관 의뢰', '기타'],
+  REVIEW_ITEMS: ['안전계획 보완', '위기 시 선호 보완', '관리수준 재검토', '연락망·긴급연락처 확인', '복약·진료 연계 확인'],
+  list(){ return Array.from(State.debriefings.values()).sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || ''))); },
+  get(id){ return State.debriefings.get(id); },
+  byEvent(clientId, eventId){ return this.list().find(d => d.clientId === clientId && d.eventId === eventId) || null; },
+  hasContent(d){ return !!(d && (d.facts || d.wentWell || d.toImprove || d.staffImpact || d.actions || d.supervisionQuestion || (d.review || []).length)); },
+  // 위기 사건에 디브리핑이 있는지 — 예전 "사후 점검" 칸이나 사건에 직접 붙여 둔 이전 형식도 쓴 것으로 본다.
+  hasForEvent(clientId, ev){
+    return this.hasContent(this.byEvent(clientId, ev.id)) || !!(ev.debrief || '').trim() || !!ev.debriefing;
+  },
+  blank(prefill){
+    prefill = prefill || {};
+    return {
+      id: '', kind: prefill.kind || 'crisisUnreg', date: Utils.todayStr(), time: '', clientId: '', eventId: '', subjectNote: '',
+      crisisType: '', route: '', outcome: '', participants: '', facts: '', wentWell: '', toImprove: '', staffImpact: '',
+      review: [], actions: '', followUpsRegisteredAt: '', forSupervision: false, supervisionQuestion: '', supervisionDone: false,
+      createdAt: '', updatedAt: ''
+    };
+  },
+  // 사건 하나에서 열 때의 기본값 — 기존 기록이 있으면 그것을, 없으면 사건 내용(과 이전 형식의 내용)을 채운 새 기록을 돌려준다.
+  forEvent(clientId, eventId){
+    const existing = this.byEvent(clientId, eventId);
+    if (existing) return JSON.parse(JSON.stringify(existing));
+    const c = Clients.get(clientId), ev = c && (c.crisisEvents || []).find(x => x.id === eventId);
+    const d = this.blank({ kind: 'crisisReg' });
+    d.clientId = clientId; d.eventId = eventId;
+    if (ev){
+      d.date = ev.date; d.time = ev.time || ''; d.crisisType = ev.type || ''; d.outcome = ev.outcome || '';
+      const old = ev.debriefing || {};
+      d.participants = old.participants || ''; d.facts = old.facts || ev.description || ''; d.wentWell = old.wentWell || '';
+      d.toImprove = old.toImprove || ev.debrief || ''; d.staffImpact = old.staffImpact || '';
+      d.review = (old.review || []).filter(x => this.REVIEW_ITEMS.includes(x)); d.actions = old.actions || '';
+    }
+    return d;
+  },
+  // registerFollowUps: 등록 대상자에게만 후속 조치 줄을 후속조치(기한 7일 뒤)로 올린다. 만든 건수를 돌려준다.
+  async save(d, registerFollowUps){
+    if (!d.date) throw new Error('날짜를 입력해 주세요.');
+    if (!this.KINDS[d.kind]) d.kind = 'other';
+    const t = (v) => (v || '').trim();
+    const registered = d.kind === 'crisisReg' || (d.kind !== 'crisisUnreg' && !!d.clientId);
+    if (registered && d.clientId && !Clients.get(d.clientId)) throw new Error('등록된 대상자를 찾을 수 없습니다. 대상자 ID를 확인해 주세요.');
+    if (d.kind === 'crisisReg' && !d.clientId) throw new Error('등록 대상자 위기개입은 대상자를 골라 주세요.');
+    const now = new Date().toISOString();
+    const isNew = !d.id;
+    if (isNew){ d.id = Utils.uid('dbf'); d.createdAt = now; }
+    d.updatedAt = now;
+    ['subjectNote', 'participants', 'facts', 'wentWell', 'toImprove', 'staffImpact', 'supervisionQuestion', 'crisisType', 'route', 'outcome'].forEach(k => { d[k] = t(d[k]); });
+    d.actions = t(d.actions).split('\n').map(x => x.trim()).filter(Boolean).join('\n');
+    d.review = (d.review || []).filter(x => this.REVIEW_ITEMS.includes(x));
+    if (d.kind === 'crisisUnreg'){ d.clientId = ''; d.eventId = ''; d.review = []; }
+    d.forSupervision = !!d.forSupervision;
+    if (!d.forSupervision) d.supervisionDone = false;
+    let made = 0;
+    if (registerFollowUps && d.clientId && d.actions){
+      const due = Utils.addDaysStr(Utils.todayStr(), 7);
+      for (const text of d.actions.split('\n')){ await FollowUps.add({ clientId: d.clientId, type: '위기 후속 모니터링', text: '[디브리핑] ' + text, dueDate: due }); made++; }
+      d.followUpsRegisteredAt = now;
+    }
+    State.debriefings.set(d.id, d);
+    await Storage.saveEncrypted('debriefings', d);
+    return made;
+  },
+  async remove(id){
+    State.debriefings.delete(id);
+    await Storage.idbDelete('debriefings', id);
+  },
+  async setSupervisionDone(id, done){
+    const d = State.debriefings.get(id);
+    if (!d) return;
+    d.supervisionDone = !!done;
+    await Storage.saveEncrypted('debriefings', d);
+  },
+  // 월·연 단위 건수 — 위기개입은 등록/미등록을 나눠 센다. (등록 대상자 위기개입은 대상자 상세의 위기개입 기록과 겹칠 수 있다)
+  counts(prefix){
+    const out = { crisisReg: 0, crisisUnreg: 0, counsel: 0, other: 0, total: 0 };
+    this.list().forEach(d => { if ((d.date || '').startsWith(prefix)){ out[this.KINDS[d.kind] ? d.kind : 'other']++; out.total++; } });
+    return out;
+  }
+};
+
 const SoapModule = {
   TOPIC_KEYWORDS: [
     { key: 'sleep',   label: '수면 상태',       words: ['수면', '잠을', '잠이', '불면', '잠들', '잔다고'],
@@ -3495,7 +3563,8 @@ const Search = {
       (c.managementHistory || []).forEach(h => push(c, '관리수준 이력', h.reason));
       (c.emergencyContacts || []).forEach(ec => push(c, '보호자·비상연락처', [ec.name, ec.relation, ec.phone, ec.note].filter(Boolean).join(' · ')));
       (c.resourceLinks || []).forEach(r => push(c, '자원연계 현황', [r.type, r.name, r.contact, r.note, (CONSTANTS.REFERRAL_STATUSES[r.status] || {}).label, r.resultNote].filter(Boolean).join(' · ')));
-      (c.crisisEvents || []).forEach(e => push(c, '위기개입 기록', [e.type, e.description, e.action, e.outcome, e.debrief].concat(e.debriefing ? [e.debriefing.facts, e.debriefing.wentWell, e.debriefing.toImprove, e.debriefing.actions] : []).concat((e.steps || []).map(x => x.type + ' ' + x.note)).filter(Boolean).join(' · ')));
+      Debriefings.list().filter(d => d.clientId === c.id).forEach(d => push(c, '디브리핑', [d.facts, d.wentWell, d.toImprove, d.actions].filter(Boolean).join(' · ')));
+      (c.crisisEvents || []).forEach(e => push(c, '위기개입 기록', [e.type, e.description, e.action, e.outcome, e.debrief].concat((e.steps || []).map(x => x.type + ' ' + x.note)).filter(Boolean).join(' · ')));
       (c.medications || []).forEach(m => push(c, '복약 현황', [m.name, m.dose, m.hospital, m.note].filter(Boolean).join(' · ')));
       (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · ')));
       (c.documents || []).forEach(d => push(c, '필수 서류', d.name));
@@ -3625,7 +3694,7 @@ const Stats = {
       totalSoaps: soapsInMonth.length,
       contactTypeCounts,
       subjectCounts, familySessionCount, referralStatusCounts, referralTotal,
-      durationByType, durationTotal, durationRecorded
+      durationByType, durationTotal, durationRecorded, debriefCounts: Debriefings.counts(monthStr)
     };
   },
 
@@ -3657,7 +3726,7 @@ const Stats = {
       const lack = [];
       if (!(ev.steps || []).length) lack.push('대응 경과');
       if (!ev.outcome) lack.push('결과');
-      if (!Clients.hasDebriefing(ev)) lack.push('디브리핑');
+      if (!Debriefings.hasForEvent(c.id, ev)) lack.push('디브리핑');
       if (lack.length) out.openCrisis.push({ clientId: c.id, date: ev.date, text: ev.type + ' · ' + lack.join('·') + ' 미기록' });
     }));
     byDate(out.openCrisis);
@@ -4043,7 +4112,7 @@ const Snippets = {
 };
 
 const Backup = {
-  DATA_STORES: ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes'],
+  DATA_STORES: ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes', 'debriefings'],
   // 마지막 백업 이후 기록이 바뀌었는지 추적한다. undefined = 아직 추적 전(이 기능이
   // 생기기 전부터 쓰던 경우 — 바뀌었을 수 있다고 본다), null = 백업 후 변경 없음,
   // 날짜 문자열 = 백업 후 처음 바뀐 시각.
@@ -4088,6 +4157,7 @@ const Backup = {
     data.schedules = await Storage.idbGetAll('schedules');
     data.resourceDirectory = await Storage.idbGetAll('resourceDirectory');
     data.selfCareNotes = await Storage.idbGetAll('selfCareNotes');
+    data.debriefings = await Storage.idbGetAll('debriefings');
     return data;
   },
 
@@ -4150,7 +4220,7 @@ const Backup = {
     if (!data || data.app !== 'case_management_on' || !data.settings || !data.settings.authSalt){
       throw new Error('INVALID_FILE');
     }
-    for (const store of ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes']){
+    for (const store of ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes', 'debriefings']){
       const existing = await Storage.idbGetAll(store);
       for (const row of existing) await Storage.idbDelete(store, row.id);
     }
@@ -4165,6 +4235,7 @@ const Backup = {
     for (const row of (data.schedules || [])) await Storage.idbPut('schedules', row);
     for (const row of (data.resourceDirectory || [])) await Storage.idbPut('resourceDirectory', row);
     for (const row of (data.selfCareNotes || [])) await Storage.idbPut('selfCareNotes', row);
+    for (const row of (data.debriefings || [])) await Storage.idbPut('debriefings', row);
     // 복원한 직후의 상태는 그 백업 파일과 같으므로 "변경 없음"으로 돌려놓는다.
     await this.clearDirty();
   }
@@ -4398,6 +4469,7 @@ const UI = {
     { view: 'resourceDirectory', icon: 'building', label: '기관주소록' },
     { view: 'search', icon: 'search', label: '검색' },
     { view: 'stats', icon: 'barChart', label: '통계' },
+    { view: 'debriefings', icon: 'messageSquare', label: '디브리핑' },
     { view: 'selfCare', icon: 'heart', label: '자기돌봄' },
     { view: 'training', icon: 'bookOpen', label: '교육·슈퍼비전' },
     { view: 'settings', icon: 'settings', label: '설정' }
@@ -4437,7 +4509,7 @@ const UI = {
 
   // 모바일 하단 바가 "핵심 4개 + 더보기"로 접힐 때, 더보기 안의 화면을 보고
   // 있으면 더보기 버튼 자체도 활성 표시가 되도록 여기 나열해 둔다.
-  NAV_SECONDARY_VIEWS: ['schedule', 'resourceDirectory', 'search', 'stats', 'selfCare', 'training', 'settings'],
+  NAV_SECONDARY_VIEWS: ['schedule', 'resourceDirectory', 'search', 'stats', 'debriefings', 'debriefEditor', 'selfCare', 'training', 'settings'],
   // 백업이 필요하면 어느 화면에서든 보이는 작은 버튼을 띄운다(누르면 바로 백업 파일 저장).
   renderBackupChip(){
     const btn = document.getElementById('backupChipBtn');
@@ -4453,8 +4525,9 @@ const UI = {
 
   renderSidebarActive(){
     document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.view === State.currentView);
-      if (btn.dataset.view === State.currentView) btn.setAttribute('aria-current', 'page');
+      const cur = State.currentView === 'debriefEditor' ? 'debriefings' : State.currentView;
+      btn.classList.toggle('active', btn.dataset.view === cur);
+      if (btn.dataset.view === cur) btn.setAttribute('aria-current', 'page');
       else btn.removeAttribute('aria-current');
     });
     const moreBtn = document.getElementById('navMoreBtn');
@@ -4501,6 +4574,8 @@ const UI = {
       case 'stats': main.innerHTML = Views.stats(); Views.bindStats(); break;
       case 'outcomes': main.innerHTML = Views.outcomes(State.currentParams); Views.bindOutcomes(); break;
       case 'selfCare': main.innerHTML = Views.selfCarePage(); Views.bindSelfCarePage(); break;
+      case 'debriefings': main.innerHTML = Views.debriefings(); Views.bindDebriefings(); break;
+      case 'debriefEditor': main.innerHTML = Views.debriefEditor(State.currentParams); Views.bindDebriefEditor(State.currentParams); break;
       case 'training': main.innerHTML = Views.trainingPage(); Views.bindTrainingPage(); break;
       case 'tour': main.innerHTML = Views.tourPage(); Views.bindTourPage(); break;
       case 'settings': main.innerHTML = Views.settings(); Views.bindSettings(); break;
@@ -5454,7 +5529,7 @@ const Views = {
             (Clients.crisisSpanMinutes(ev) !== null ? ' · 첫 단계부터 마지막 단계까지 ' + Utils.formatMinutes(Clients.crisisSpanMinutes(ev)) : '') + '</summary>' +
             '<ol style="margin:6px 0 0;padding-left:20px;font-size:0.85rem;line-height:1.7;">' + ev.steps.map(st =>
               '<li><strong>' + Utils.escapeHtml((st.date !== ev.date ? st.date.slice(5) + ' ' : '') + st.time) + '</strong> ' + Utils.escapeHtml(st.type) + (st.who ? ' (' + Utils.escapeHtml(st.who) + ')' : '') + (st.note ? ' — ' + Utils.escapeHtml(st.note) : '') + '</li>').join('') + '</ol></details>' : '') +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-primary" data-crisis-response="' + ev.id + '">대응 경과</button><button class="btn btn-sm' + (Clients.hasDebriefing(ev) ? '' : ' btn-primary') + '" data-crisis-debrief="' + ev.id + '">디브리핑' + (Clients.hasDebriefing(ev) ? ' ✓' : '') + '</button><button class="btn btn-sm" data-crisis-report="' + ev.id + '">사후 보고서</button><button class="btn btn-sm" data-edit-crisis="' + ev.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-crisis="' + ev.id + '">삭제</button></div></div>';
+          '</div><div class="row-actions"><button class="btn btn-sm btn-primary" data-crisis-response="' + ev.id + '">대응 경과</button><button class="btn btn-sm' + (Debriefings.hasForEvent(c.id, ev) ? '' : ' btn-primary') + '" data-crisis-debrief="' + ev.id + '">디브리핑' + (Debriefings.hasForEvent(c.id, ev) ? ' ✓' : '') + '</button><button class="btn btn-sm" data-crisis-report="' + ev.id + '">사후 보고서</button><button class="btn btn-sm" data-edit-crisis="' + ev.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-crisis="' + ev.id + '">삭제</button></div></div>';
       });
     }
     safetyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -6366,7 +6441,7 @@ const Views = {
       Views.openCrisisFollowUpSuggestModal(id, crisisDate);
     };
     document.querySelectorAll('[data-crisis-response]').forEach(el => { el.onclick = () => Views.openCrisisResponseModal(id, el.dataset.crisisResponse); });
-    document.querySelectorAll('[data-crisis-debrief]').forEach(el => { el.onclick = () => Views.openDebriefingModal(id, el.dataset.crisisDebrief); });
+    document.querySelectorAll('[data-crisis-debrief]').forEach(el => { el.onclick = () => UI.navigate('debriefEditor', { clientId: id, eventId: el.dataset.crisisDebrief }); });
     document.querySelectorAll('[data-crisis-report]').forEach(el => { el.onclick = () => UI.navigate('crisisReport', { clientId: id, eventId: el.dataset.crisisReport }); });
     document.querySelectorAll('[data-del-crisis]').forEach(el => {
       el.onclick = () => UI.confirm('이 위기개입 기록을 삭제할까요?', async () => {
@@ -8216,6 +8291,16 @@ const Views = {
 
     html += '</div>';
     html += Views.printSignatureHtml();
+    if (r.debriefCounts.total){
+      const dc = r.debriefCounts;
+      html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">디브리핑 기록 (해당월)</p>' +
+        Views.renderBarChart([
+          { label: '위기개입 · 미등록 대상자', value: dc.crisisUnreg, color: 'var(--danger)' },
+          { label: '위기개입 · 등록 대상자', value: dc.crisisReg, color: 'var(--warn)' },
+          { label: '상담·방문', value: dc.counsel, color: 'var(--accent)' },
+          { label: '기타', value: dc.other, color: 'var(--draft)' }
+        ]) + '<p class="help-text">등록 대상자 위기개입은 대상자 상세의 위기개입 기록과 같은 사건일 수 있어 합산하지 않았습니다. 미등록 대상자 위기개입은 이 기록에만 남습니다.</p>';
+    }
     html += Views.durationReportHtml(r);
     html += Views.monthEndCheckHtml(monthStr);
     return html;
@@ -8624,6 +8709,149 @@ const Views = {
       if (noMatchMsg) noMatchMsg.classList.toggle('hidden', !q || visibleCount > 0);
     };
     Views.bindNotePage(Views._trainingCfg);
+  },
+
+  /* ---------------- DEBRIEFINGS ---------------- */
+  debriefings(){
+    const e = Utils.escapeHtml;
+    const f = Views._debriefFilter || (Views._debriefFilter = { kind: 'all', supervisionOnly: false });
+    let list = Debriefings.list();
+    if (f.kind !== 'all') list = list.filter(d => d.kind === f.kind);
+    if (f.supervisionOnly) list = list.filter(d => d.forSupervision && !d.supervisionDone);
+    const ym = Utils.todayStr().slice(0, 7), dc = Debriefings.counts(ym);
+    const agenda = Debriefings.list().filter(d => d.forSupervision && !d.supervisionDone).length;
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('messageSquare', { size: 22 }) + ' 디브리핑</h1>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary btn-sm" id="dbNewUnregBtn">＋ 미등록 대상자 위기개입</button>' +
+      '<button class="btn btn-sm" id="dbNewRegBtn">＋ 등록 대상자 / 상담</button></div></div>';
+    html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">위기개입이나 상담 뒤에 사실·잘 된 점·바꿀 점·내가 받은 영향을 정리하는 공간입니다. 등록하지 않은 대상자의 위기개입도 여기에 남길 수 있습니다. "나에게 미친 영향"은 보고서·통계 어디에도 나오지 않습니다.</p>';
+    html += '<div class="summary-grid">' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + dc.crisisUnreg + '</div><div class="label">이번 달 미등록 대상자 위기개입</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + dc.crisisReg + '</div><div class="label">이번 달 등록 대상자 위기개입</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + dc.counsel + '</div><div class="label">이번 달 상담·방문</div></div>' +
+      '<div class="summary-card" style="cursor:default;"><div class="num">' + agenda + '</div><div class="label">슈퍼비전 안건(미처리)</div></div></div>';
+    html += '<div class="panel" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">' +
+      '<div class="field" style="margin:0;max-width:260px;"><label for="dbKindFilter">구분</label><select id="dbKindFilter"><option value="all">전체</option>' +
+      Object.keys(Debriefings.KINDS).map(k => '<option value="' + k + '"' + (f.kind === k ? ' selected' : '') + '>' + Debriefings.KINDS[k] + '</option>').join('') + '</select></div>' +
+      '<label class="chip-check' + (f.supervisionOnly ? ' checked' : '') + '"><input type="checkbox" id="dbSupOnly"' + (f.supervisionOnly ? ' checked' : '') + '>슈퍼비전 안건만</label></div>';
+    html += '<div class="panel">';
+    if (!list.length) html += '<div class="empty-msg">' + (Debriefings.list().length ? '조건에 맞는 디브리핑이 없습니다.' : '아직 디브리핑 기록이 없습니다. 위 버튼으로 첫 기록을 남겨 보세요.') + '</div>';
+    list.forEach(d => {
+      const who = d.clientId ? e(d.clientId) + (Clients.get(d.clientId) && Clients.get(d.clientId).alias ? ' (' + e(Clients.get(d.clientId).alias) + ')' : '') : (d.subjectNote ? e(d.subjectNote) : '(대상자 설명 없음)');
+      html += '<div class="list-row"><div class="list-row-main" data-open-debrief="' + d.id + '" style="cursor:pointer;">' +
+        '<div class="row-title">' + e(d.date) + (d.time ? ' ' + e(d.time) : '') + ' · <span class="badge ' + (d.kind === 'crisisUnreg' || d.kind === 'crisisReg' ? 'badge-crisis' : 'badge-draft') + '">' + e(Debriefings.KINDS[d.kind] || '기타') + '</span>' +
+        (d.crisisType ? ' ' + e(d.crisisType) : '') + (d.forSupervision ? ' <span class="badge badge-pending">' + (d.supervisionDone ? '슈퍼비전 다룸' : '슈퍼비전 안건') + '</span>' : '') + '</div>' +
+        '<div class="row-sub">' + who + (d.outcome ? ' · 결과: ' + e(d.outcome) : '') + '</div>' +
+        (d.toImprove ? '<div class="row-sub">바꿀 점: ' + e(d.toImprove.slice(0, 80)) + (d.toImprove.length > 80 ? '…' : '') + '</div>' : '') +
+        '</div></div>';
+    });
+    return html + '</div>';
+  },
+  bindDebriefings(){
+    const f = Views._debriefFilter;
+    document.getElementById('dbNewUnregBtn').onclick = () => UI.navigate('debriefEditor', { kind: 'crisisUnreg' });
+    document.getElementById('dbNewRegBtn').onclick = () => UI.navigate('debriefEditor', { kind: 'counsel' });
+    document.getElementById('dbKindFilter').onchange = (e) => { f.kind = e.target.value; UI.renderCurrentView(); };
+    document.getElementById('dbSupOnly').onchange = (e) => { f.supervisionOnly = e.target.checked; UI.renderCurrentView(); };
+    document.querySelectorAll('[data-open-debrief]').forEach(el => { el.onclick = () => UI.navigate('debriefEditor', { debriefId: el.dataset.openDebrief }); });
+  },
+
+  debriefEditor(params){
+    let d;
+    if (params.debriefId && Debriefings.get(params.debriefId)) d = JSON.parse(JSON.stringify(Debriefings.get(params.debriefId)));
+    else if (params.clientId && params.eventId) d = Debriefings.forEvent(params.clientId, params.eventId);
+    else d = Debriefings.blank({ kind: params.kind || 'crisisUnreg' });
+    Views._debriefDraft = d;
+    const e = Utils.escapeHtml;
+    const ta = (id, label, v, hint, rows) => '<div class="field full"><label for="' + id + '">' + label + '</label>' + (hint ? '<div class="help-text" style="margin:-2px 0 4px;">' + hint + '</div>' : '') + '<textarea id="' + id + '" style="min-height:' + ((rows || 3) * 22) + 'px;">' + e(v || '') + '</textarea></div>';
+    const unreg = d.kind === 'crisisUnreg';
+    let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('messageSquare', { size: 22 }) + ' 디브리핑 ' + (d.id ? '수정' : '작성') + '</h1>' +
+      '<button class="btn btn-sm" id="dbBackBtn">' + icon('arrowLeft') + ' 목록으로</button></div>';
+    html += '<div class="panel"><div class="form-grid">' +
+      '<div class="field"><label for="dbKind">구분</label><select id="dbKind">' + Object.keys(Debriefings.KINDS).map(k => '<option value="' + k + '"' + (k === d.kind ? ' selected' : '') + '>' + Debriefings.KINDS[k] + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label for="dbDate">날짜</label><input type="date" id="dbDate" value="' + e(d.date) + '"></div>' +
+      '<div class="field"><label for="dbTime">시각(선택)</label><input type="time" id="dbTime" value="' + e(d.time || '') + '"></div>' +
+      '<div class="field" id="dbClientWrap"' + (unreg ? ' style="display:none;"' : '') + '><label for="dbClient">등록 대상자</label>' + Views.clientPickerHtml(d.clientId, 'dbClient') + '</div>' +
+      '<div class="field full" id="dbSubjectWrap"' + (unreg ? '' : ' style="display:none;"') + '><label for="dbSubject">누구였나 (식별 정보 없이)</label><input type="text" id="dbSubject" value="' + e(d.subjectNote || '') + '" placeholder="예: 50대 여성, 이웃 신고로 출동 / 이름·연락처·주소는 적지 않기"></div>' +
+      '<div class="field"><label for="dbCrisisType">위기 유형</label><select id="dbCrisisType"><option value="">(선택 안 함)</option>' + CONSTANTS.CRISIS_EVENT_TYPES.map(t => '<option value="' + t + '"' + (t === d.crisisType ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label for="dbRoute">접수·대응 경로</label><select id="dbRoute"><option value="">(선택 안 함)</option>' + Debriefings.ROUTES.map(t => '<option value="' + t + '"' + (t === d.route ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label for="dbOutcome">결과</label><select id="dbOutcome"><option value="">(선택 안 함)</option>' + CONSTANTS.CRISIS_OUTCOMES.map(t => '<option value="' + t + '"' + (t === d.outcome ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label for="dbPeople">참여자</label><input type="text" id="dbPeople" value="' + e(d.participants || '') + '" placeholder="예: 본인, 팀장"></div>' +
+      '</div></div>';
+    html += '<div class="panel"><div class="form-grid">' +
+      ta('dbFacts', '무슨 일이 있었나 (사실 위주)', d.facts, '느낀 점은 아래 칸에 따로 적습니다.', 4) +
+      ta('dbWell', '잘 된 점', d.wentWell) +
+      ta('dbImprove', '다음에 바꿀 점', d.toImprove) +
+      ta('dbStaff', '나(실무자)에게 미친 영향과 필요한 지원', d.staffImpact, '충격, 피로, 죄책감 등을 적어 두면 슈퍼비전이나 동료 지지를 요청할 때 근거가 됩니다. 보고서·통계에는 나오지 않습니다.') +
+      '<div class="field full" id="dbReviewWrap"' + (unreg ? ' style="display:none;"' : '') + '><label>대상자 정보에 반영할 일</label><div class="checkbox-group">' +
+      Debriefings.REVIEW_ITEMS.map(k => '<label class="chip-check' + ((d.review || []).includes(k) ? ' checked' : '') + '"><input type="checkbox" class="dbReview" value="' + k + '"' + ((d.review || []).includes(k) ? ' checked' : '') + '>' + k + '</label>').join('') + '</div></div>' +
+      ta('dbActions', '후속 조치 (한 줄에 하나)', d.actions) +
+      '<div class="field full" id="dbRegisterWrap"' + (unreg ? ' style="display:none;"' : '') + '><label class="chip-check"><input type="checkbox" id="dbRegister">저장하면서 위 후속 조치를 후속조치 목록에 등록(기한 7일 뒤)</label>' +
+      (d.followUpsRegisteredAt ? '<div class="help-text">이미 ' + e(Utils.formatDateTime(d.followUpsRegisteredAt)) + '에 등록했습니다. 다시 체크하면 같은 내용이 한 번 더 등록됩니다.</div>' : '') + '</div>' +
+      '<div class="field full"><label class="chip-check' + (d.forSupervision ? ' checked' : '') + '"><input type="checkbox" id="dbSup"' + (d.forSupervision ? ' checked' : '') + '>슈퍼비전에 가져갈 안건으로 표시</label></div>' +
+      ta('dbSupQ', '슈퍼비전에서 묻고 싶은 것', d.supervisionQuestion) +
+      '</div></div>';
+    html += '<div class="error-msg hidden" id="dbError" role="alert"></div>' +
+      '<div style="display:flex;gap:10px;margin-bottom:30px;"><button class="btn btn-primary" id="dbSaveBtn">저장</button>' +
+      (d.id && d.forSupervision ? '<button class="btn" id="dbDoneBtn">' + (d.supervisionDone ? '슈퍼비전 다룸 해제' : '슈퍼비전에서 다룸') + '</button>' : '') +
+      (d.id ? '<button class="btn btn-danger" id="dbDeleteBtn" style="margin-left:auto;">삭제</button>' : '') + '</div>';
+    return html;
+  },
+  _readDebriefForm(){
+    const d = Views._debriefDraft, v = (id) => document.getElementById(id).value;
+    d.kind = v('dbKind'); d.date = v('dbDate'); d.time = v('dbTime');
+    d.clientId = Views.resolveClientPickerValue(v('dbClient')); d.subjectNote = v('dbSubject');
+    d.crisisType = v('dbCrisisType'); d.route = v('dbRoute'); d.outcome = v('dbOutcome'); d.participants = v('dbPeople');
+    d.facts = v('dbFacts'); d.wentWell = v('dbWell'); d.toImprove = v('dbImprove'); d.staffImpact = v('dbStaff');
+    d.review = Array.from(document.querySelectorAll('.dbReview:checked')).map(x => x.value);
+    d.actions = v('dbActions'); d.forSupervision = document.getElementById('dbSup').checked; d.supervisionQuestion = v('dbSupQ');
+    return d;
+  },
+  bindDebriefEditor(params){
+    const back = () => {
+      Views._debriefDraft = null;
+      if (params.eventId && params.clientId && !params.debriefId){ Views._clientDetailTab = 'safety'; Views._clientDetailTabClientId = params.clientId; UI.navigate('clientDetail', { id: params.clientId }); }
+      else UI.navigate('debriefings', {});
+    };
+    document.getElementById('dbBackBtn').onclick = back;
+    document.querySelectorAll('.chip-check input').forEach(chk => chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked)));
+    const syncKind = () => {
+      const unreg = document.getElementById('dbKind').value === 'crisisUnreg';
+      document.getElementById('dbClientWrap').style.display = unreg ? 'none' : '';
+      document.getElementById('dbSubjectWrap').style.display = unreg ? '' : 'none';
+      document.getElementById('dbReviewWrap').style.display = unreg ? 'none' : '';
+      document.getElementById('dbRegisterWrap').style.display = unreg ? 'none' : '';
+    };
+    document.getElementById('dbKind').addEventListener('change', syncKind);
+    document.getElementById('dbSaveBtn').onclick = async () => {
+      const errBox = document.getElementById('dbError');
+      try{
+        const d = Views._readDebriefForm();
+        const doSave = async () => {
+          try{
+            const made = await Debriefings.save(d, document.getElementById('dbRegister').checked);
+            toast(made ? '디브리핑을 저장하고 후속조치 ' + made + '건을 등록했습니다.' : '디브리핑을 저장했습니다.');
+            Views._debriefDraft = null;
+            if (params.eventId && !params.debriefId) back(); else UI.navigate('debriefings', {});
+          }catch(err){ errBox.textContent = err.message || '저장하지 못했습니다.'; errBox.classList.remove('hidden'); }
+        };
+        const pii = Views.soapPrivacyWarnings({ S: d.subjectNote + '\n' + d.facts, O: d.wentWell, A: d.toImprove, PText: d.actions + '\n' + d.supervisionQuestion });
+        if (pii.length) UI.confirm(pii.join('\n') + '\n그대로 저장할까요?', doSave); else doSave();
+      }catch(err){ errBox.textContent = err.message || '저장하지 못했습니다.'; errBox.classList.remove('hidden'); }
+    };
+    const doneBtn = document.getElementById('dbDoneBtn');
+    if (doneBtn) doneBtn.onclick = async () => {
+      const cur = Debriefings.get(Views._debriefDraft.id);
+      await Debriefings.setSupervisionDone(cur.id, !cur.supervisionDone);
+      toast(!cur.supervisionDone ? '슈퍼비전에서 다룬 것으로 표시했습니다.' : '다시 안건으로 돌렸습니다.');
+      UI.navigate('debriefEditor', { debriefId: cur.id });
+    };
+    const delBtn = document.getElementById('dbDeleteBtn');
+    if (delBtn) delBtn.onclick = () => UI.confirm('이 디브리핑을 삭제할까요?', async () => {
+      await Debriefings.remove(Views._debriefDraft.id);
+      Views._debriefDraft = null;
+      toast('삭제했습니다.');
+      UI.navigate('debriefings', {});
+    });
   },
 
   /* ---------------- SETTINGS ---------------- */
@@ -9304,51 +9532,6 @@ const Views = {
       }
     };
   },
-  openDebriefingModal(clientId, eventId){
-    const c = Clients.get(clientId);
-    const ev = c && (c.crisisEvents || []).find(x => x.id === eventId);
-    if (!ev) return;
-    const e = Utils.escapeHtml, d = ev.debriefing || {};
-    const ta = (id, label, v, hint) => '<div class="field full"><label for="' + id + '">' + label + '</label>' + (hint ? '<div class="help-text" style="margin:-2px 0 4px;">' + hint + '</div>' : '') + '<textarea id="' + id + '" style="min-height:64px;">' + e(v || '') + '</textarea></div>';
-    UI.openModal(
-      '<h3>디브리핑 — ' + e(ev.date + ' ' + ev.type) + '</h3>' +
-      '<p class="help-text" style="margin-bottom:10px;">사건을 정리하고 다음에 바꿀 점을 남깁니다. 잘잘못을 가리는 용도가 아니라 배우고 대비하기 위한 기록입니다.</p>' +
-      '<div class="form-grid"><div class="field"><label for="dbDate">디브리핑 일자</label><input type="date" id="dbDate" value="' + e(d.date || Utils.todayStr()) + '"></div>' +
-      '<div class="field"><label for="dbPeople">참여자</label><input type="text" id="dbPeople" value="' + e(d.participants || '') + '" placeholder="예: 본인, 팀장"></div>' +
-      ta('dbFacts', '무슨 일이 있었나 (사실 위주)', d.facts, '느낀 점은 아래 칸에 따로 적습니다.') +
-      ta('dbWell', '잘 된 점', d.wentWell) +
-      ta('dbImprove', '다음에 바꿀 점', d.toImprove || ev.debrief) +
-      ta('dbStaff', '나(실무자)에게 미친 영향과 필요한 지원', d.staffImpact, '충격, 피로, 죄책감 등을 적어 두면 슈퍼비전이나 동료 지지를 요청할 때 근거가 됩니다.') +
-      '<div class="field full"><label>대상자 정보에 반영할 일</label><div class="checkbox-group">' +
-      Clients.DEBRIEF_REVIEW_ITEMS.map(k => '<label class="chip-check' + ((d.review || []).includes(k) ? ' checked' : '') + '"><input type="checkbox" class="dbReview" value="' + k + '"' + ((d.review || []).includes(k) ? ' checked' : '') + '>' + k + '</label>').join('') + '</div></div>' +
-      ta('dbActions', '후속 조치 (한 줄에 하나)', d.actions) +
-      '<div class="field full"><label class="chip-check"><input type="checkbox" id="dbRegister">저장하면서 위 후속 조치를 후속조치 목록에 등록(기한 7일 뒤)</label>' +
-      (d.followUpsRegisteredAt ? '<div class="help-text">이미 ' + e(Utils.formatDateTime(d.followUpsRegisteredAt)) + '에 등록했습니다. 다시 체크하면 같은 내용이 한 번 더 등록됩니다.</div>' : '') + '</div></div>' +
-      '<div class="error-msg hidden" id="dbError" role="alert"></div>' +
-      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="dbCancel">취소</button><button class="btn btn-primary" id="dbSave">저장</button></div>'
-    );
-    document.getElementById('modalBox').style.maxWidth = '720px';
-    document.querySelectorAll('.dbReview').forEach(chk => chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked)));
-    document.getElementById('dbCancel').onclick = () => UI.closeModal();
-    document.getElementById('dbSave').onclick = async () => {
-      try{
-        const made = await Clients.saveDebriefing(clientId, eventId, {
-          date: document.getElementById('dbDate').value, participants: document.getElementById('dbPeople').value,
-          facts: document.getElementById('dbFacts').value, wentWell: document.getElementById('dbWell').value,
-          toImprove: document.getElementById('dbImprove').value, staffImpact: document.getElementById('dbStaff').value,
-          review: Array.from(document.querySelectorAll('.dbReview:checked')).map(x => x.value),
-          actions: document.getElementById('dbActions').value, registerFollowUps: document.getElementById('dbRegister').checked
-        });
-        UI.closeModal();
-        toast(made ? '디브리핑을 저장하고 후속조치 ' + made + '건을 등록했습니다.' : '디브리핑을 저장했습니다.');
-        UI.renderCurrentView();
-      }catch(err){
-        const box = document.getElementById('dbError');
-        box.textContent = err.message || '저장하지 못했습니다.';
-        box.classList.remove('hidden');
-      }
-    };
-  },
   // 위기개입 사후 보고서 — 센터 내부 보고용으로 사건 개요, 시간순 대응 경과, 결과, 사후 점검을 한 장에 인쇄한다.
   crisisReport(params){
     const c = Clients.get(params.clientId);
@@ -9378,8 +9561,8 @@ const Views = {
     html += '<div class="panel"><div class="panel-title">보고 및 사후 점검</div>' +
       '<p style="font-size:0.9rem;line-height:1.8;">보고 대상: ' + dash(ev.reportedTo) + ' · 보고일: ' + dash(ev.reportedDate) + '</p>' +
       '<p style="font-size:0.9rem;white-space:pre-line;"><strong>사후 점검·개선할 점:</strong> ' + dash(ev.debrief) + '</p></div>';
-    const db = ev.debriefing;
-    if (db && (db.facts || db.wentWell || db.toImprove || db.actions || (db.review || []).length)){
+    const db = Debriefings.byEvent(c.id, ev.id);
+    if (db && Debriefings.hasContent(db)){
       html += '<div class="panel"><div class="panel-title">디브리핑' + (db.date ? ' (' + e(db.date) + ')' : '') + '</div>' +
         (db.participants ? '<p style="font-size:0.9rem;">참여자: ' + e(db.participants) + '</p>' : '') +
         [['사실 정리', db.facts], ['잘 된 점', db.wentWell], ['다음에 바꿀 점', db.toImprove], ['후속 조치', db.actions]].filter(x => x[1]).map(x => '<p style="font-size:0.9rem;white-space:pre-line;"><strong>' + x[0] + ':</strong> ' + e(x[1]) + '</p>').join('') +
