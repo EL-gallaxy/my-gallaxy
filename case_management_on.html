@@ -465,7 +465,7 @@
     #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
     #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
+    #clNewSoap, #crisisReportPrintBtn, #crisisReportBackBtn, #saveRecoveryBtn, #saveCrisisPrefBtn, #goOutcomesBtn, #outcomeBackBtn, #outcomePrintBtn, #outcomeYearSelect, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
@@ -839,6 +839,15 @@ const Utils = {
     const last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
     return first.getFullYear() + '-' + String(first.getMonth() + 1).padStart(2, '0') + '-' + String(Math.min(d, last)).padStart(2, '0');
   },
+  // 분 단위 시간을 "2시간 35분" 꼴로 바꾼다.
+  formatMinutes(min){
+    min = Math.max(0, Math.round(min));
+    const h = Math.floor(min / 60), m = min % 60;
+    const parts = [];
+    if (h) parts.push(h + '시간');
+    if (m || !h) parts.push(m + '분');
+    return parts.join(' ');
+  },
   formatElapsedDays(days){
     if (days < 60) return days + '일';
     return Math.floor(days / 30) + '개월';
@@ -1183,6 +1192,9 @@ const CONSTANTS = {
     medium: { label: '중간', badgeClass: 'badge-intensive' },
     high:   { label: '높음', badgeClass: 'badge-crisis' }
   },
+  // 위기 대응 경과(시간순) — 단계 유형과 사건 결과. 실제로 한 일을 시각과 함께 그대로 적는다.
+  CRISIS_STEP_TYPES: ['위기 인지·최초 접촉', '현장 출동·방문', '대상자 평가(위험·안전 확인)', '보호자·가족 통보', '112 신고·경찰 요청', '119 신고·구급 요청', '응급입원 의뢰·동행', '병원 도착·인계', '관계기관 연락', '현장 종료·귀소', '기타'],
+  CRISIS_OUTCOMES: ['현장에서 안정됨', '응급입원', '외래·입원 연계', '경찰·구급 인계', '사망', '기타'],
   CRISIS_EVENT_TYPES: ['자살시도', '자해', '응급입원 동행', '112 신고', '119 신고', '타해 위험', '기타'],
   CONTACT_RELATIONS: ['배우자', '부모', '자녀', '형제자매', '기타 보호자', '기타'],
   ASSESSMENT_SCALES: ['GAF (전반적 기능평가)', 'K-MMSE (간이정신상태검사)', 'K-BDI (벡 우울척도)', 'BPRS (간이정신병리평가척도)', 'PHQ-9 (우울 선별)', 'GAD-7 (불안 선별)', 'C-SSRS (자살 위험 선별)', '기타'],
@@ -1966,6 +1978,34 @@ const Clients = {
       date: date || Utils.todayStr(), time: time || '', description: (description || '').trim(), action: (action || '').trim()
     });
     await Storage.saveEncrypted('clients', client);
+  },
+  // 위기 사건의 시간순 대응 경과·결과·보고·사후 점검을 저장한다. 단계는 시각순으로 정렬해 두고,
+  // 단계 날짜가 비어 있으면 사건 날짜로 본다.
+  crisisStepTime(ev, st){
+    return new Date((st.date || ev.date) + 'T' + (st.time || '00:00')).getTime();
+  },
+  async saveCrisisResponse(id, eventId, { steps, outcome, reportedTo, reportedDate, debrief }){
+    const client = State.clients.get(id);
+    const ev = client && (client.crisisEvents || []).find(e => e.id === eventId);
+    if (!ev) throw new Error('위기개입 기록을 찾을 수 없습니다.');
+    const t = (v) => (v || '').trim();
+    const clean = (steps || []).filter(x => x.time || t(x.note) || t(x.who)).map(x => ({
+      id: x.id || Utils.uid('cs'), date: x.date || ev.date, time: x.time || '',
+      type: CONSTANTS.CRISIS_STEP_TYPES.includes(x.type) ? x.type : CONSTANTS.CRISIS_STEP_TYPES[CONSTANTS.CRISIS_STEP_TYPES.length - 1],
+      who: t(x.who), note: t(x.note)
+    }));
+    if (clean.some(x => !x.time)) throw new Error('모든 단계에 시각을 입력해 주세요.');
+    clean.sort((a, b) => this.crisisStepTime(ev, a) - this.crisisStepTime(ev, b));
+    ev.steps = clean;
+    ev.outcome = CONSTANTS.CRISIS_OUTCOMES.includes(outcome) ? outcome : '';
+    ev.reportedTo = t(reportedTo); ev.reportedDate = reportedDate || ''; ev.debrief = t(debrief);
+    await Storage.saveEncrypted('clients', client);
+  },
+  // 첫 단계부터 마지막 단계까지의 소요 분(단계가 2개 미만이면 null)
+  crisisSpanMinutes(ev){
+    const steps = ev.steps || [];
+    if (steps.length < 2) return null;
+    return (this.crisisStepTime(ev, steps[steps.length - 1]) - this.crisisStepTime(ev, steps[0])) / 60000;
   },
   async removeCrisisEvent(id, eventId){
     const client = State.clients.get(id);
@@ -3258,7 +3298,7 @@ const Search = {
       (c.managementHistory || []).forEach(h => push(c, '관리수준 이력', h.reason));
       (c.emergencyContacts || []).forEach(ec => push(c, '보호자·비상연락처', [ec.name, ec.relation, ec.phone, ec.note].filter(Boolean).join(' · ')));
       (c.resourceLinks || []).forEach(r => push(c, '자원연계 현황', [r.type, r.name, r.contact, r.note, (CONSTANTS.REFERRAL_STATUSES[r.status] || {}).label, r.resultNote].filter(Boolean).join(' · ')));
-      (c.crisisEvents || []).forEach(e => push(c, '위기개입 기록', [e.type, e.description, e.action].filter(Boolean).join(' · ')));
+      (c.crisisEvents || []).forEach(e => push(c, '위기개입 기록', [e.type, e.description, e.action, e.outcome, e.debrief].concat((e.steps || []).map(x => x.type + ' ' + x.note)).filter(Boolean).join(' · ')));
       (c.medications || []).forEach(m => push(c, '복약 현황', [m.name, m.dose, m.hospital, m.note].filter(Boolean).join(' · ')));
       (c.caseConferences || []).forEach(cf => push(c, '사례회의 기록', [cf.attendees, cf.discussion, cf.decision].filter(Boolean).join(' · ')));
       (c.documents || []).forEach(d => push(c, '필수 서류', d.name));
@@ -3394,10 +3434,12 @@ const Stats = {
     const crisisByMonth = new Array(12).fill(0);
     const crisisTypes = {};
     const crisisClients = new Set();
-    let crisisTotal = 0;
+    let crisisTotal = 0, responseSpanSum = 0, responseSpanCount = 0;
     clients.forEach(c => (c.crisisEvents || []).forEach(ev => {
       if (!inYear(ev.date)) return;
       crisisTotal++;
+      const spanMin = Clients.crisisSpanMinutes(ev);
+      if (spanMin !== null){ responseSpanSum += spanMin; responseSpanCount++; }
       crisisClients.add(c.id);
       crisisByMonth[parseInt(ev.date.slice(5, 7), 10) - 1]++;
       crisisTypes[ev.type] = (crisisTypes[ev.type] || 0) + 1;
@@ -3479,6 +3521,7 @@ const Stats = {
     const level = this.monthlyReport(year);
     return {
       year, crisisTotal, crisisClientCount: crisisClients.size, crisisByMonth, crisisTypes,
+      avgResponseMinutes: responseSpanCount ? responseSpanSum / responseSpanCount : null, responseSpanCount,
       admissionCount, admittedClientCount: admittedClients.size, dischargeCount, kindCounts,
       avgStayDays: stayCount ? stayDaysSum / stayCount : null, stayCount, ongoing, readmitEligible, readmitted,
       scoreChange, planItemTotal, planItemCounts, closureTotal, closureOutcomes,
@@ -4018,6 +4061,7 @@ const UI = {
     document.getElementById('modalOverlay').classList.add('hidden');
     const box = document.getElementById('modalBox');
     box.innerHTML = '';
+    box.style.maxWidth = '';
     box.removeAttribute('aria-labelledby');
     const back = UI._modalReturnFocus;
     UI._modalReturnFocus = null;
@@ -4135,6 +4179,7 @@ const UI = {
         break;
       case 'servicePlanEditor': main.innerHTML = Views.servicePlanEditor(State.currentParams); Views.bindServicePlanEditor(State.currentParams); break;
       case 'servicePlanPrint': main.innerHTML = Views.servicePlanPrint(State.currentParams); Views.bindServicePlanPrint(State.currentParams); break;
+      case 'crisisReport': main.innerHTML = Views.crisisReport(State.currentParams); Views.bindCrisisReport(State.currentParams); break;
       case 'handoverSummary': main.innerHTML = Views.handoverSummary(State.currentParams.id); Views.bindHandoverSummary(State.currentParams.id); break;
       case 'caseloadSummary': main.innerHTML = Views.caseloadSummary(); Views.bindCaseloadSummary(); break;
       case 'soapList': main.innerHTML = Views.soapList(); Views.bindSoapList(); break;
@@ -4193,7 +4238,7 @@ const Views = {
       push(r.date, '', '🔗', '자원연계', [r.type, r.name].filter(Boolean).join(' · '));
       if (r.resultDate) push(r.resultDate, '', '🔗', '연계 결과', [r.name, (CONSTANTS.REFERRAL_STATUSES[r.status] || {}).label, r.resultNote].filter(Boolean).join(' · '));
     });
-    (c.crisisEvents || []).forEach(ev => push(ev.date, ev.time || '', '⚠', '위기개입: ' + ev.type, ev.description || ''));
+    (c.crisisEvents || []).forEach(ev => push(ev.date, ev.time || '', '⚠', '위기개입: ' + ev.type, [ev.description, (ev.steps || []).length ? '대응 경과 ' + ev.steps.length + '단계' : '', ev.outcome].filter(Boolean).join(' · ')));
     (c.medications || []).forEach(m => push(m.date, '', '💊', '복약 등록', [m.name, m.dose].filter(Boolean).join(' ')));
     (c.caseConferences || []).forEach(cf => push(cf.date, '', '🗂', '사례회의', cf.decision || cf.discussion || ''));
     (c.familySessions || []).forEach(fs => push(fs.date, '', '👪', '가족 상담: ' + fs.method, [Clients.familySessionParticipants(fs), (fs.topics || []).join('·')].filter(Boolean).join(' · ')));
@@ -5075,7 +5120,12 @@ const Views = {
           '<div class="row-title">' + ev.date + (ev.time ? ' ' + ev.time : '') + ' · <span class="badge badge-crisis">' + Utils.escapeHtml(ev.type) + '</span></div>' +
           (ev.description ? '<div class="row-sub">경위: ' + Utils.escapeHtml(ev.description) + '</div>' : '') +
           (ev.action ? '<div class="row-sub">조치: ' + Utils.escapeHtml(ev.action) + '</div>' : '') +
-          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-crisis="' + ev.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-crisis="' + ev.id + '">삭제</button></div></div>';
+          (ev.outcome ? '<div class="row-sub">결과: ' + Utils.escapeHtml(ev.outcome) + '</div>' : '') +
+          ((ev.steps || []).length ? '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:0.85rem;">대응 경과 ' + ev.steps.length + '단계' +
+            (Clients.crisisSpanMinutes(ev) !== null ? ' · 첫 단계부터 마지막 단계까지 ' + Utils.formatMinutes(Clients.crisisSpanMinutes(ev)) : '') + '</summary>' +
+            '<ol style="margin:6px 0 0;padding-left:20px;font-size:0.85rem;line-height:1.7;">' + ev.steps.map(st =>
+              '<li><strong>' + Utils.escapeHtml((st.date !== ev.date ? st.date.slice(5) + ' ' : '') + st.time) + '</strong> ' + Utils.escapeHtml(st.type) + (st.who ? ' (' + Utils.escapeHtml(st.who) + ')' : '') + (st.note ? ' — ' + Utils.escapeHtml(st.note) : '') + '</li>').join('') + '</ol></details>' : '') +
+          '</div><div class="row-actions"><button class="btn btn-sm btn-primary" data-crisis-response="' + ev.id + '">대응 경과</button><button class="btn btn-sm" data-crisis-report="' + ev.id + '">사후 보고서</button><button class="btn btn-sm" data-edit-crisis="' + ev.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-crisis="' + ev.id + '">삭제</button></div></div>';
       });
     }
     safetyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -5975,6 +6025,8 @@ const Views = {
       UI.renderCurrentView();
       Views.openCrisisFollowUpSuggestModal(id, crisisDate);
     };
+    document.querySelectorAll('[data-crisis-response]').forEach(el => { el.onclick = () => Views.openCrisisResponseModal(id, el.dataset.crisisResponse); });
+    document.querySelectorAll('[data-crisis-report]').forEach(el => { el.onclick = () => UI.navigate('crisisReport', { clientId: id, eventId: el.dataset.crisisReport }); });
     document.querySelectorAll('[data-del-crisis]').forEach(el => {
       el.onclick = () => UI.confirm('이 위기개입 기록을 삭제할까요?', async () => {
         const snap = Clients.snapshot(id);
@@ -7800,6 +7852,7 @@ const Views = {
 
     html += '<div class="panel"><div class="panel-title">' + icon('siren') + ' 위기개입 월별 추이 (' + year + '년 ' + o.crisisTotal + '건, ' + o.crisisClientCount + '명)</div>' +
       Views.renderBarChart(o.crisisByMonth.map((v, i) => ({ label: (i + 1) + '월', value: v }))) +
+      (o.avgResponseMinutes !== null ? '<p style="font-size:0.85rem;margin-top:6px;">대응 소요 시간(경과를 2단계 이상 기록한 ' + o.responseSpanCount + '건) 평균 ' + Utils.formatMinutes(o.avgResponseMinutes) + '</p>' : '') +
       (Object.keys(o.crisisTypes).length ? '<div class="divider"></div><p style="font-size:0.85rem;">유형별: ' + Object.keys(o.crisisTypes).map(k => e(k) + ' ' + o.crisisTypes[k] + '건').join(' · ') + '</p>' : '') + '</div>';
 
     html += '<div class="panel"><div class="panel-title">' + icon('building') + ' 입원</div><p style="font-size:0.88rem;line-height:1.9;">' +
@@ -8632,6 +8685,102 @@ const Views = {
         toast(Utils.formatSoapDate(src) + ' 기록을 불러왔습니다. 오늘 상황에 맞게 고쳐 쓰세요.');
       };
     });
+  },
+
+  // 위기 대응 경과 — 사건 하나에 대해 "언제 무엇을 했는지"를 시각순으로 적고, 결과·보고·사후 점검을 남긴다.
+  _crisisStepRowHtml(ev, st){
+    st = st || {};
+    const e = Utils.escapeHtml;
+    return '<div class="plan-card crisis-step-row" data-id="' + e(st.id || '') + '"><div class="form-grid">' +
+      '<div class="field"><label>날짜</label><input type="date" class="csDate" value="' + e(st.date || ev.date) + '"></div>' +
+      '<div class="field"><label>시각</label><input type="time" class="csTime" value="' + e(st.time || '') + '"></div>' +
+      '<div class="field"><label>단계</label><select class="csType">' + CONSTANTS.CRISIS_STEP_TYPES.map(t => '<option value="' + t + '"' + (st.type === t ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>담당·관여자</label><input type="text" class="csWho" value="' + e(st.who || '') + '" placeholder="예: 본인, 동료, 경찰, 보호자"></div>' +
+      '<div class="field full"><label>내용</label><input type="text" class="csNote" value="' + e(st.note || '') + '" placeholder="한 일, 확인한 내용, 대상자 반응 등"></div>' +
+      '</div><button type="button" class="btn btn-sm btn-danger csRemove">이 단계 삭제</button></div>';
+  },
+  openCrisisResponseModal(clientId, eventId){
+    const c = Clients.get(clientId);
+    const ev = c && (c.crisisEvents || []).find(x => x.id === eventId);
+    if (!ev) return;
+    const e = Utils.escapeHtml;
+    UI.openModal(
+      '<h3>위기 대응 경과 — ' + e(ev.date + (ev.time ? ' ' + ev.time : '') + ' ' + ev.type) + '</h3>' +
+      '<p class="help-text" style="margin-bottom:10px;">실제로 한 일을 시각과 함께 시간순으로 적습니다. 정렬은 저장할 때 시각순으로 자동 정리됩니다.</p>' +
+      '<div id="csSteps">' + (ev.steps || []).map(st => Views._crisisStepRowHtml(ev, st)).join('') + '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;"><button type="button" class="btn btn-sm" id="csAddBtn">＋ 단계 추가</button>' +
+      '<button type="button" class="btn btn-sm" id="csAddNowBtn">현재 시각으로 단계 추가</button></div>' +
+      '<div class="form-grid"><div class="field"><label>사건 결과</label><select id="csOutcome"><option value="">(선택 안 함)</option>' +
+      CONSTANTS.CRISIS_OUTCOMES.map(o => '<option value="' + o + '"' + (ev.outcome === o ? ' selected' : '') + '>' + o + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>보고 대상 (선택)</label><input type="text" id="csReportedTo" value="' + e(ev.reportedTo || '') + '" placeholder="예: 팀장, 광역센터"></div>' +
+      '<div class="field"><label>보고일 (선택)</label><input type="date" id="csReportedDate" value="' + e(ev.reportedDate || '') + '"></div>' +
+      '<div class="field full"><label>사후 점검·개선할 점</label><textarea id="csDebrief" style="min-height:70px;">' + e(ev.debrief || '') + '</textarea></div></div>' +
+      '<div class="error-msg hidden" id="csError" role="alert"></div>' +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;"><button class="btn" id="csCancel">취소</button><button class="btn btn-primary" id="csSave">저장</button></div>'
+    );
+    document.getElementById('modalBox').style.maxWidth = '760px';
+    const box = document.getElementById('csSteps');
+    const add = (st) => { box.insertAdjacentHTML('beforeend', Views._crisisStepRowHtml(ev, st)); A11y.enhance(box); const last = box.lastElementChild.querySelector('.csTime'); if (last) last.focus(); };
+    document.getElementById('csAddBtn').onclick = () => add({});
+    document.getElementById('csAddNowBtn').onclick = () => {
+      const n = new Date();
+      add({ date: Utils.todayStr(), time: String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0') });
+    };
+    box.addEventListener('click', (evt) => { const rm = evt.target.closest('.csRemove'); if (rm) rm.closest('.crisis-step-row').remove(); });
+    document.getElementById('csCancel').onclick = () => UI.closeModal();
+    document.getElementById('csSave').onclick = async () => {
+      try{
+        const v = (sel, root) => root.querySelector(sel).value;
+        await Clients.saveCrisisResponse(clientId, eventId, {
+          steps: Array.from(box.querySelectorAll('.crisis-step-row')).map(row => ({ id: row.dataset.id, date: v('.csDate', row), time: v('.csTime', row), type: v('.csType', row), who: v('.csWho', row), note: v('.csNote', row) })),
+          outcome: document.getElementById('csOutcome').value, reportedTo: document.getElementById('csReportedTo').value,
+          reportedDate: document.getElementById('csReportedDate').value, debrief: document.getElementById('csDebrief').value
+        });
+        UI.closeModal();
+        toast('위기 대응 경과를 저장했습니다.');
+        UI.renderCurrentView();
+      }catch(err){
+        const errBox = document.getElementById('csError');
+        errBox.textContent = err.message || '저장하지 못했습니다.';
+        errBox.classList.remove('hidden');
+      }
+    };
+  },
+  // 위기개입 사후 보고서 — 센터 내부 보고용으로 사건 개요, 시간순 대응 경과, 결과, 사후 점검을 한 장에 인쇄한다.
+  crisisReport(params){
+    const c = Clients.get(params.clientId);
+    const ev = c && (c.crisisEvents || []).find(x => x.id === params.eventId);
+    if (!ev) return '<p>위기개입 기록을 찾을 수 없습니다.</p><button class="btn" onclick="UI.navigate(\'clients\')">목록으로</button>';
+    const e = Utils.escapeHtml;
+    const dash = (v) => v ? e(v) : '-';
+    const steps = ev.steps || [];
+    const span = Clients.crisisSpanMinutes(ev);
+    let html = Views.printHeaderHtml('위기개입 사후 보고서: ' + c.id);
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('alertTriangle', { size: 22 }) + ' 위기개입 사후 보고서 — ' + e(c.id) + (c.alias ? ' <span style="color:var(--text-muted);font-weight:400;font-size:1rem;">' + e(c.alias) + '</span>' : '') + '</h1>' +
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="crisisReportPrintBtn">' + icon('printer') + ' 인쇄</button>' +
+      '<button class="btn btn-sm" id="crisisReportBackBtn">' + icon('arrowLeft') + ' 대상자 상세로</button></div></div>';
+    html += '<div class="panel"><div class="panel-title">사건 개요</div><table><tbody>' +
+      '<tr><th scope="row">대상자</th><td>' + e(c.id) + (c.alias ? ' (' + e(c.alias) + ')' : '') + '</td><th scope="row">관리 수준</th><td>' + ((CONSTANTS.MANAGEMENT_LEVELS[c.managementLevel] || {}).label || '-') + '</td></tr>' +
+      '<tr><th scope="row">발생 일시</th><td>' + e(ev.date + (ev.time ? ' ' + ev.time : '')) + '</td><th scope="row">유형</th><td>' + e(ev.type) + '</td></tr>' +
+      '<tr><th scope="row">사건 결과</th><td>' + dash(ev.outcome) + '</td><th scope="row">대응 소요</th><td>' + (span !== null ? Utils.formatMinutes(span) + ' (첫 단계~마지막 단계)' : '-') + '</td></tr>' +
+      '</tbody></table></div>';
+    html += '<div class="panel"><div class="panel-title">경위 및 조치</div>' +
+      '<p style="font-size:0.9rem;white-space:pre-line;"><strong>경위:</strong> ' + dash(ev.description) + '</p>' +
+      '<p style="font-size:0.9rem;white-space:pre-line;"><strong>조치:</strong> ' + dash(ev.action) + '</p></div>';
+    html += '<div class="panel"><div class="panel-title">시간순 대응 경과</div>' +
+      (steps.length ? '<table><thead><tr><th>일시</th><th>경과</th><th>단계</th><th>담당·관여자</th><th>내용</th></tr></thead><tbody>' + steps.map((st, i) => {
+        const gap = i ? Math.round((Clients.crisisStepTime(ev, st) - Clients.crisisStepTime(ev, steps[i - 1])) / 60000) : null;
+        return '<tr><td>' + e((st.date !== ev.date ? st.date + ' ' : '') + st.time) + '</td><td>' + (gap === null ? '시작' : '+' + Utils.formatMinutes(gap)) + '</td><td>' + e(st.type) + '</td><td>' + dash(st.who) + '</td><td style="white-space:pre-line;">' + dash(st.note) + '</td></tr>';
+      }).join('') + '</tbody></table>' : '<div class="empty-msg">기록된 대응 경과가 없습니다. 대상자 상세의 위기개입 기록에서 "대응 경과"를 입력해 주세요.</div>') + '</div>';
+    html += '<div class="panel"><div class="panel-title">보고 및 사후 점검</div>' +
+      '<p style="font-size:0.9rem;line-height:1.8;">보고 대상: ' + dash(ev.reportedTo) + ' · 보고일: ' + dash(ev.reportedDate) + '</p>' +
+      '<p style="font-size:0.9rem;white-space:pre-line;"><strong>사후 점검·개선할 점:</strong> ' + dash(ev.debrief) + '</p></div>';
+    html += Views.printSignatureHtml();
+    return html;
+  },
+  bindCrisisReport(params){
+    document.getElementById('crisisReportBackBtn').onclick = () => { Views._clientDetailTab = 'safety'; Views._clientDetailTabClientId = params.clientId; UI.navigate('clientDetail', { id: params.clientId }); };
+    document.getElementById('crisisReportPrintBtn').onclick = () => window.print();
   },
 
   // 연계 결과 기록 — 결과를 확인했으면 상태를 바꾸고, 아직 회신이 없으면 다음 확인일만 미룬다.
