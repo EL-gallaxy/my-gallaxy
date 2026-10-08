@@ -635,6 +635,45 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('상용구·자동작성 제거');
   });
 
+  await step('화면 구성: 메뉴·빠른 버튼·대상자 패널을 감추고 다시 보이게 할 수 있다(핵심 안전 패널은 제외)', async () => {
+    const cat = await page.evaluate(() => FeatureVisibility.panelCatalog().map(x => x.title));
+    assert(cat.includes('복약 현황') && cat.includes('사례회의 기록') && !cat.includes('위기개입 기록') && !cat.includes('위기 시 안전계획') && !cat.includes('위험도 평가 (구조화)'), '패널 목록이 다름: ' + cat.join(','));
+    await page.evaluate(async () => {
+      await FeatureVisibility.set('nav', 'training', true); await FeatureVisibility.set('quick', 'qbQuickRecord', true);
+      await FeatureVisibility.set('panels', '복약 현황', true); await FeatureVisibility.set('panels', '위기개입 기록', true);
+      FeatureVisibility.applyNav();
+    });
+    const r = await page.evaluate(() => {
+      const out = { navHidden: document.querySelector('.nav-btn[data-view="training"]').classList.contains('hidden'), navShown: !document.querySelector('.nav-btn[data-view="stats"]').classList.contains('hidden'), moreHas: UI.MOBILE_MORE_ITEMS.filter(i => !FeatureVisibility.isNavHidden(i.view)).some(i => i.view === 'training') };
+      Views._dirty = false; UI.navigate('dashboard', {});
+      out.quickHidden = document.getElementById('qbQuickRecord').classList.contains('user-hidden') && getComputedStyle(document.getElementById('qbQuickRecord')).display === 'none';
+      out.quickOther = getComputedStyle(document.getElementById('qbNewFollowUp')).display !== 'none';
+      UI.navigate('clientDetail', { id: 'CI1' });
+      const panels = Array.from(document.querySelectorAll('.detail-tab-group > .panel, .detail-tab-group > details'));
+      const find = (t) => panels.find(p => { const x = p.querySelector(':scope > .panel-title, :scope > summary'); return x && x.textContent.trim().startsWith(t); });
+      out.medHidden = !!find('복약 현황') && find('복약 현황').classList.contains('user-hidden');
+      out.crisisShown = !!find('위기개입 기록') && !find('위기개입 기록').classList.contains('user-hidden');
+      out.summaryShown = !document.querySelector('.detail-tab-group[data-tab-group="summary"]').classList.contains('user-hidden');
+      const q = UI.quickSwitchItems('교육').map(x => x.label);
+      out.switcher = !q.some(l => l.includes('교육·슈퍼비전'));
+      return out;
+    });
+    assert(r.navHidden && r.navShown && !r.moreHas && r.quickHidden && r.quickOther, '메뉴/빠른 버튼 감추기가 다름: ' + JSON.stringify(r));
+    assert(r.medHidden && r.crisisShown && r.summaryShown && r.switcher, '패널 감추기가 다름: ' + JSON.stringify(r));
+    // 인쇄할 때는 감춘 패널도 나온다
+    await page.emulateMedia({ media: 'print' });
+    const printShown = await page.evaluate(() => { const p = Array.from(document.querySelectorAll('.detail-tab-group > .panel, .detail-tab-group > details')).find(x => (x.querySelector(':scope > .panel-title, :scope > summary') || {}).textContent && x.querySelector(':scope > .panel-title, :scope > summary').textContent.trim().startsWith('복약 현황')); return getComputedStyle(p).display !== 'none'; });
+    await page.emulateMedia({ media: null });
+    assert(printShown, '인쇄에서 감춘 패널이 빠짐');
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('settings', {}); });
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(() => !!document.getElementById('featuresSection') && document.querySelectorAll('.featChk').length > 10), '설정에 화면 구성이 없음');
+    await page.evaluate(() => document.getElementById('featResetBtn').click());
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(() => !document.querySelector('.nav-btn[data-view="training"]').classList.contains('hidden') && FeatureVisibility.hidden.nav.length === 0 && FeatureVisibility.hidden.panels.length === 0), '모두 다시 표시가 동작하지 않음');
+    noNewErrors('화면 구성');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
@@ -853,6 +892,40 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     await page.waitForTimeout(200);
     assert(await page.evaluate(() => !!document.getElementById('errorReportSection') && !!document.getElementById('errCopyBtn')), '설정에 문제 보고가 없음');
     noNewErrors('오류 안내');
+  });
+
+  await step('인쇄물: 메뉴·버튼이 빠지고 주요 문서가 정해진 쪽수에 들어간다', async () => {
+    // 인쇄 화면에서는 메뉴·상단 막대·조작 버튼이 보이지 않아야 한다
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('yearSummary', {}); });
+    await page.waitForTimeout(250);
+    await page.emulateMedia({ media: 'print' });
+    const chrome = await page.evaluate(() => {
+      const shown = (sel) => Array.from(document.querySelectorAll(sel)).filter(el => getComputedStyle(el).display !== 'none' && el.getClientRects().length).map(el => el.id || el.className);
+      return { shell: Array.from(document.getElementById('appShell').children).filter(el => el.id !== 'appMain' && !el.classList.contains('skip-link') && getComputedStyle(el).display !== 'none' && el.getClientRects().length).map(el => el.tagName + '#' + el.id + '.' + el.className), buttons: shown('#ysPrintBtn, #ysBackBtn, #ysYearSelect, .page-header button, .page-header select') };
+    });
+    await page.emulateMedia({ media: null });
+    assert(chrome.shell.length === 0 && chrome.buttons.length === 0, '인쇄 화면에 메뉴/버튼이 남아 있음: ' + JSON.stringify(chrome));
+    // 쪽수 (A4, 여백 12/10mm)
+    const pages = async (view, params) => {
+      await page.evaluate(([v, p]) => { Views._dirty = false; UI.navigate(v, p); }, [view, params]);
+      await page.waitForTimeout(250);
+      await show();
+      const buf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '10mm', right: '10mm' } });
+      return (buf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+    };
+    const y = await page.evaluate(() => Utils.todayStr().slice(0, 4));
+    const plan = await page.evaluate(() => Clients.get('CI1').servicePlans[0].id);
+    const ev = await page.evaluate(() => Clients.get('CI1').crisisEvents[0].id);
+    const link = await page.evaluate(() => Clients.get('PL1').resourceLinks[0].id);
+    const limits = [['연말 활동 요약', 'yearSummary', { year: y }, 1], ['연계 의뢰서', 'referralLetter', { clientId: 'PL1', linkId: link }, 1], ['서비스계획서', 'servicePlanPrint', { clientId: 'CI1', planId: plan }, 1],
+      ['슈퍼비전 안건', 'supervisionAgenda', {}, 1], ['오늘의 방문 브리핑', 'dailyBriefing', {}, 1], ['위기개입 보고서', 'crisisReport', { clientId: 'CI1', eventId: ev }, 2], ['인계서', 'handoverSummary', { id: 'CI1' }, 2]];
+    const over = [];
+    for (const [label, view, params, max] of limits){
+      const n = await pages(view, params);
+      if (n > max) over.push(label + ' ' + n + '쪽(기준 ' + max + '쪽)');
+    }
+    assert(over.length === 0, '인쇄 쪽수가 기준을 넘음: ' + over.join(', '));
+    noNewErrors('인쇄물 점검');
   });
 
   await step('백업 파일에 모든 기록이 들어 있고 평문이 새지 않는다', async () => {

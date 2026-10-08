@@ -457,6 +457,7 @@
   .ys-label{font-size:0.78rem;color:var(--text-muted);}
   .ys-line{font-size:0.85rem;line-height:1.6;margin:3px 0;}
   @media print{ .ys{break-inside:avoid;} .ys-tiles{grid-template-columns:repeat(4,1fr);} .ys-num{font-size:1.05rem;} .ys-line{font-size:0.78rem;} }
+  @media screen{ .user-hidden{display:none !important;} }
   .lt-out{display:none;white-space:pre-line;}
   @media print{ .lt-out{display:block;margin-top:2px;} .lt-in, #ltTo, #ltDate, #ltReply, #ltContact{display:none !important;} #printLetterBtn, #backFromLetterBtn{display:none !important;} }
   @media print{ #monthEndCheck, #soapRefPanel, #briefingNotice, .detail-tab-group[data-tab-group="summary"], #quickSwitchBox{display:none !important;} }
@@ -1783,6 +1784,73 @@ const Health = {
       }
     }
     return n;
+  }
+};
+
+/* 화면 구성 — 쓰지 않는 메뉴·빠른 버튼·대상자 상세 패널을 화면에서만 감춘다. 기록은 그대로 남고, 인쇄에는 모두 나온다.
+   위기·안전에 관한 핵심 패널(위험도 평가, 안전계획, 위기 시 선호, 위기개입 기록, 비상연락처)은 감출 수 없다. */
+const FeatureVisibility = {
+  NAV: [
+    { view: 'followUps', label: '후속조치' }, { view: 'schedule', label: '일정' }, { view: 'resourceDirectory', label: '기관주소록' },
+    { view: 'search', label: '검색' }, { view: 'stats', label: '통계' }, { view: 'debriefings', label: '디브리핑' },
+    { view: 'selfCare', label: '자기돌봄' }, { view: 'training', label: '교육·슈퍼비전' }
+  ],
+  QUICK: [
+    { id: 'qbQuickRecord', label: '간단 기록' }, { id: 'qbQuickDebrief', label: '위기 빠른 기록' },
+    { id: 'qbNewFollowUp', label: '후속조치 등록' }, { id: 'qbNewSchedule', label: '일정 등록' }
+  ],
+  hidden: { nav: [], quick: [], panels: [] },
+  async init(){
+    const saved = (await Storage.getSetting('hiddenFeatures')) || {};
+    this.hidden = { nav: saved.nav || [], quick: saved.quick || [], panels: saved.panels || [] };
+  },
+  has(group, key){ return this.hidden[group].includes(key); },
+  async set(group, key, hide){
+    const list = this.hidden[group].filter(x => x !== key);
+    if (hide) list.push(key);
+    this.hidden[group] = list;
+    await Storage.setSetting('hiddenFeatures', this.hidden);
+  },
+  async reset(){
+    this.hidden = { nav: [], quick: [], panels: [] };
+    await Storage.setSetting('hiddenFeatures', this.hidden);
+  },
+  isNavHidden(view){ return this.has('nav', view) || (view === 'resourceDirectory' && SimpleMode.isSimple()); },
+  applyNav(){
+    document.querySelectorAll('.nav-btn[data-view]').forEach(btn => btn.classList.toggle('hidden', this.isNavHidden(btn.dataset.view)));
+  },
+  // 대상자 상세에서 감출 수 있는 패널 목록 — 첫 대상자의 상세 화면 마크업을 읽어 만든다(위기·안전 핵심 패널과 요약은 제외).
+  panelCatalog(){
+    const first = Clients.list()[0];
+    if (!first) return [];
+    const keep = { tab: Views._clientDetailTab, id: Views._clientDetailTabClientId };
+    let html = '';
+    try{ html = Views.clientDetail(first.id); }finally{ Views._clientDetailTab = keep.tab; Views._clientDetailTabClientId = keep.id; }
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const tabLabels = { basic: '기본정보', history: '이력관리', safety: '위기·안전', soap: 'SOAP', plan: '서비스계획', timeline: '통합 타임라인' };
+    const out = [];
+    doc.querySelectorAll('.detail-tab-group').forEach(g => {
+      if (g.dataset.tabGroup === 'summary') return;
+      g.querySelectorAll(':scope > .panel, :scope > details').forEach(p => {
+        if (p.classList.contains('panel-safety-critical')) return;
+        const t = p.querySelector(':scope > .panel-title, :scope > summary');
+        const title = t ? t.textContent.trim().replace(/\s+/g, ' ') : '';
+        if (title) out.push({ tab: tabLabels[g.dataset.tabGroup] || g.dataset.tabGroup, title });
+      });
+    });
+    return out;
+  },
+  // 화면을 그린 뒤 호출 — 빠른 버튼과 대상자 상세 패널에 감춤 표시를 붙인다.
+  applyToMain(main){
+    this.QUICK.forEach(q => { const el = main.querySelector('#' + q.id); if (el) el.classList.toggle('user-hidden', this.has('quick', q.id)); });
+    if (State.currentView === 'clientDetail' && this.hidden.panels.length){
+      main.querySelectorAll('.detail-tab-group > .panel, .detail-tab-group > details').forEach(p => {
+        if (p.classList.contains('panel-safety-critical')) return;
+        const t = p.querySelector(':scope > .panel-title, :scope > summary');
+        const title = t ? t.textContent.trim().replace(/\s+/g, ' ') : '';
+        p.classList.toggle('user-hidden', !!title && this.hidden.panels.some(h => title.startsWith(h)));
+      });
+    }
   }
 };
 
@@ -4168,7 +4236,7 @@ const Backup = {
     await Storage.setSetting('backupDirtySince', null);
   },
 
-  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'thresholds', 'retentionYears', 'seedClientIds', 'authMode', 'masterWrap', 'recoveryWrap'],
+  SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'thresholds', 'retentionYears', 'hiddenFeatures', 'seedClientIds', 'authMode', 'masterWrap', 'recoveryWrap'],
   overdueCached: false,
 
   // 첨부 제외 백업 — 대상자 기록은 안에 첨부파일이 함께 암호화되어 있어서, 지금 메모리에 풀려 있는 기록에서
@@ -4542,8 +4610,7 @@ const UI = {
   // 간소화 모드에서는 상단 고정 네비게이션(뷰마다 다시 그리지 않는 정적
   // 마크업)의 "기관주소록" 항목도 함께 숨긴다.
   applySimpleModeNav(){
-    const btn = document.getElementById('navResourceDirectory');
-    if (btn) btn.classList.toggle('hidden', SimpleMode.isSimple());
+    FeatureVisibility.applyNav();
   },
 
   showFatal(msg){
@@ -4638,7 +4705,7 @@ const UI = {
     const clients = Clients.list().filter(c => has(c.id) || has(c.alias))
       .sort((a, b) => (a.status === 'closed') - (b.status === 'closed') || a.id.localeCompare(b.id)).slice(0, 8)
       .map(c => ({ kind: '대상자', label: c.id + (c.alias ? ' (' + c.alias + ')' : '') + (c.status === 'closed' ? ' · 종결' : ''), run: () => UI.navigate('clientDetail', { id: c.id }) }));
-    const views = UI.QUICK_VIEWS.filter(v => has(v.label)).map(v => ({ kind: '화면', label: v.label, run: () => UI.navigate(v.view, {}) }));
+    const views = UI.QUICK_VIEWS.filter(v => has(v.label) && !FeatureVisibility.isNavHidden(v.view)).map(v => ({ kind: '화면', label: v.label, run: () => UI.navigate(v.view, {}) }));
     return (q ? clients.concat(views, actions) : views.slice(0, 6).concat(actions, clients)).slice(0, 12);
   },
   openQuickSwitcher(){
@@ -4703,7 +4770,7 @@ const UI = {
     UI.openModal(
       '<h3>' + icon('more') + ' 더보기</h3>' +
       '<div style="display:flex;flex-direction:column;gap:4px;">' +
-      UI.MOBILE_MORE_ITEMS.map(item =>
+      UI.MOBILE_MORE_ITEMS.filter(item => !FeatureVisibility.isNavHidden(item.view)).map(item =>
         '<button class="btn" data-more-view="' + item.view + '" style="width:100%;justify-content:flex-start;text-align:left;">' + icon(item.icon) + ' ' + item.label + '</button>'
       ).join('') +
       '</div>'
@@ -4851,6 +4918,7 @@ const UI = {
     }catch(err){
       UI.showRenderError(main, err);
     }
+    try{ FeatureVisibility.applyToMain(main); }catch(err){ UI.logError(err, '화면 구성'); }
     try{ A11y.enhance(main); }catch(err){ UI.logError(err, '접근성 보정'); }
   }
 };
@@ -9569,7 +9637,7 @@ const Views = {
       ['backupSection', '데이터 백업 및 복원'], ['autoBackupSection', '자동 백업'], ['printSettingsSection', '인쇄 문서 설정'],
       ['tourSection', '앱 둘러보기'], ['simpleModeSection', '간소화 모드'],
       ['dashboardWidgetsSection', '대시보드 위젯 표시'], ['themeSection', '화면 테마'],
-      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['thresholdSection', '점검 기준 일수'], ['retentionSection', '기록 보관·파기'], ['healthSection', '데이터 건강검진'], ['errorReportSection', '문제 보고'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
+      ['fontSizeSection', '글자 크기'], ['autoLockSection', '자동 잠금 시간'], ['thresholdSection', '점검 기준 일수'], ['retentionSection', '기록 보관·파기'], ['featuresSection', '화면 구성'], ['healthSection', '데이터 건강검진'], ['errorReportSection', '문제 보고'], ['recoverySection', '복구 코드'], ['passwordSection', '비밀번호 변경']
     ];
     html += '<div class="panel" style="display:flex;gap:8px;flex-wrap:wrap;">' +
       SETTINGS_SECTIONS.map(([id, label]) => '<button class="btn btn-sm" data-scroll="' + id + '">' + label + '</button>').join('') +
@@ -9693,6 +9761,19 @@ const Views = {
           : '<div class="empty-msg">보관기간이 지난 종결 대상자가 없습니다.</div>') + '</div>';
     }
 
+    {
+      const chip = (group, key, label) => '<label class="chip-check' + (FeatureVisibility.has(group, key) ? '' : ' checked') + '"><input type="checkbox" class="featChk" data-group="' + group + '" data-key="' + Utils.escapeHtml(key) + '"' + (FeatureVisibility.has(group, key) ? '' : ' checked') + '>' + Utils.escapeHtml(label) + '</label>';
+      const cat = FeatureVisibility.panelCatalog();
+      const tabs = Array.from(new Set(cat.map(x => x.tab)));
+      html += '<div class="panel" id="featuresSection"><div class="panel-title">' + icon('sliders') + ' 화면 구성</div>' +
+        '<p class="help-text" style="margin-bottom:10px;">쓰지 않는 기능을 화면에서만 감춥니다. 체크를 풀면 감춰지고, 기록은 그대로 남으며 인쇄에는 모두 나옵니다. 위기·안전 핵심 패널과 대시보드, 대상자, SOAP 기록, 설정 메뉴는 감출 수 없습니다.</p>' +
+        '<p style="font-weight:600;font-size:0.9rem;margin:8px 0 4px;">메뉴</p><div class="checkbox-group">' + FeatureVisibility.NAV.map(n => chip('nav', n.view, n.label)).join('') + '</div>' +
+        '<p style="font-weight:600;font-size:0.9rem;margin:12px 0 4px;">대시보드 빠른 버튼</p><div class="checkbox-group">' + FeatureVisibility.QUICK.map(q => chip('quick', q.id, q.label)).join('') + '</div>' +
+        '<p style="font-weight:600;font-size:0.9rem;margin:12px 0 4px;">대상자 상세 패널</p>' +
+        (cat.length ? tabs.map(t => '<p class="help-text" style="margin:6px 0 2px;">' + Utils.escapeHtml(t) + '</p><div class="checkbox-group">' + cat.filter(x => x.tab === t).map(x => chip('panels', x.title, x.title)).join('') + '</div>').join('') : '<p class="help-text">대상자가 한 명이라도 등록되면 패널 목록이 나타납니다.</p>') +
+        '<div style="margin-top:12px;"><button class="btn btn-sm" id="featResetBtn">모두 다시 표시</button></div></div>';
+    }
+
     html += '<div class="panel" id="healthSection"><div class="panel-title">' + icon('shield') + ' 데이터 건강검진</div>' +
       '<p class="help-text" style="margin-bottom:8px;">오래 쓰면 쌓이기 쉬운 문제(존재하지 않는 대상자를 가리키는 기록, 이상한 날짜, 방치된 임시저장 등)를 찾아 보여 줍니다. 검사만 하며 자동으로 고치지 않습니다. 삭제는 버튼을 눌렀을 때만 실행되니 먼저 백업을 받아 두세요.</p>' +
       '<button class="btn btn-sm btn-primary" id="healthRunBtn">검사하기</button><div id="healthResult" style="margin-top:10px;" aria-live="polite"></div></div>';
@@ -9789,6 +9870,14 @@ const Views = {
       const off = document.getElementById('abOffBtn');
       if (off) off.onclick = () => UI.confirm('자동 백업을 끌까요? 이미 저장된 백업 파일은 폴더에 그대로 남습니다.', async () => { await AutoBackup.disable(); toast('자동 백업을 껐습니다.'); UI.renderCurrentView(); });
     }
+    document.querySelectorAll('.featChk').forEach(chk => {
+      chk.addEventListener('change', async () => {
+        chk.closest('.chip-check').classList.toggle('checked', chk.checked);
+        await FeatureVisibility.set(chk.dataset.group, chk.dataset.key, !chk.checked);
+        FeatureVisibility.applyNav();
+      });
+    });
+    document.getElementById('featResetBtn').onclick = async () => { await FeatureVisibility.reset(); FeatureVisibility.applyNav(); toast('모든 기능을 다시 표시합니다.'); UI.renderCurrentView(); };
     document.getElementById('healthRunBtn').onclick = () => {
       const groups = Health.run();
       const box = document.getElementById('healthResult');
@@ -10747,6 +10836,7 @@ async function initApp(){
   await DashboardPrefs.init();
   await Thresholds.init();
   await Retention.init();
+  await FeatureVisibility.init();
   await SimpleMode.init();
   UI.applySimpleModeNav();
 
