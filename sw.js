@@ -22,7 +22,31 @@ self.addEventListener('activate', (event) => {
 });
 
 // Cache-first, network-refresh-in-background: 오프라인에서도 즉시 열리고,
-// 온라인일 때는 다음 방문을 위해 최신 버전으로 캐시를 갱신한다.
+// 온라인일 때는 다음 방문을 위해 최신 버전으로 캐시를 갱신한다. 앱 화면(HTML)이
+// 캐시된 것과 달라졌다면 열려 있는 창에 APP_UPDATED 메시지를 보내, 화면이
+// "새 버전이 있습니다" 안내를 띄울 수 있게 한다(새로고침하면 갱신된 캐시로 열림).
+async function notifyAppUpdated(){
+  const clients = await self.clients.matchAll({ type: 'window' });
+  clients.forEach((client) => client.postMessage({ type: 'APP_UPDATED' }));
+}
+
+async function refreshFromNetwork(request, cachedCopy){
+  try{
+    const response = await fetch(request);
+    if (!response || response.status !== 200) return response;
+    const isAppPage = new URL(request.url).pathname.endsWith('.html');
+    const changed = isAppPage && cachedCopy
+      ? (await cachedCopy.text()) !== (await response.clone().text())
+      : false;
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(request, response.clone());
+    if (changed) await notifyAppUpdated();
+    return response;
+  }catch(err){
+    return undefined;
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
@@ -30,14 +54,10 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      const networkFetch = fetch(event.request).then((response) => {
-        if (response && response.status === 200){
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      }).catch(() => cached);
-      return cached || networkFetch;
+      // respondWith가 cached의 본문을 소비하므로, 비교용 복사본을 먼저 만들어 둔다.
+      const refresh = refreshFromNetwork(event.request, cached ? cached.clone() : null);
+      event.waitUntil(refresh);
+      return cached || refresh.then((response) => response || Response.error());
     })
   );
 });

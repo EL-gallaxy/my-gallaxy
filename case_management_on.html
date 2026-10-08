@@ -857,6 +857,32 @@ function toastUndo(msg, onUndo){
   setTimeout(() => el.remove(), 6000);
 }
 
+// 서비스 워커가 새 버전을 내려받아 캐시를 갱신했을 때 한 번만 띄우는 안내.
+// 새로고침하면 갱신된 캐시로 열린다. 작성 중인 내용이 날아가지 않도록 시점은
+// 사용자가 고른다(자동 새로고침 없음).
+function showUpdateBanner(){
+  if (document.getElementById('updateBanner')) return;
+  const el = document.createElement('div');
+  el.id = 'updateBanner';
+  el.className = 'toast';
+  el.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
+  const span = document.createElement('span');
+  span.textContent = '새 버전이 있습니다. 작성 중인 내용은 저장한 뒤 새로고침하세요.';
+  const reloadBtn = document.createElement('button');
+  reloadBtn.textContent = '새로고침';
+  reloadBtn.className = 'btn btn-sm btn-primary';
+  reloadBtn.onclick = () => location.reload();
+  const laterBtn = document.createElement('button');
+  laterBtn.textContent = '나중에';
+  laterBtn.className = 'btn-link';
+  laterBtn.style.cssText = 'color:#fff;text-decoration:underline;background:none;border:none;cursor:pointer;font-size:inherit;padding:0;';
+  laterBtn.onclick = () => el.remove();
+  el.appendChild(span);
+  el.appendChild(reloadBtn);
+  el.appendChild(laterBtn);
+  document.getElementById('toastContainer').appendChild(el);
+}
+
 function copyToClipboard(text){
   const done = () => toast('복사되었습니다.');
   const fail = () => {
@@ -7208,7 +7234,16 @@ document.addEventListener('DOMContentLoaded', initApp);
 // 영향이 없으므로 조용히 무시한다.
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')){
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      // 앱을 오래 켜 둔 경우에도 새 버전을 알아챌 수 있도록, 창이 다시 보일 때와
+      // 30분마다 한 번씩 확인한다(요청은 서비스 워커가 캐시와 비교한다).
+      const check = () => { reg.update().catch(() => {}); fetch(location.pathname).catch(() => {}); };
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+      setInterval(check, 30 * 60 * 1000);
+    }).catch(() => {});
+  });
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'APP_UPDATED') showUpdateBanner();
   });
 }
 </script>
