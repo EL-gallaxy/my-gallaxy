@@ -149,6 +149,45 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('월말 마감 점검');
   });
 
+  await step('SOAP 작성 화면에 대상자 참고 패널이 뜨고, 이상한 날짜는 저장 전에 되묻는다', async () => {
+    const r = await page.evaluate(async () => {
+      await Clients.saveRecoveryProfile('ME1', { general: {}, crisis: { helpful: '참고용 도움말', unwanted: '참고용 금지' } });
+      await Clients.addMedication('ME1', { name: '참고약', dose: '5mg', date: Utils.todayStr(), nextRxDate: Utils.addDaysStr(Utils.todayStr(), 20) });
+      const html = Views.soapReferenceHtml('ME1', '');
+      const today = Utils.todayStr();
+      return {
+        html: html.includes('참고용 도움말') && html.includes('참고약') && html.includes('다음 처방일'),
+        empty: Views.soapReferenceHtml('', '').includes('대상자를 고르면'),
+        future: Views.soapDateWarnings({ date: Utils.addDaysStr(today, 3), pDate: '' }).length,
+        old: Views.soapDateWarnings({ date: Utils.addDaysStr(today, -90), pDate: '' }).length,
+        backward: Views.soapDateWarnings({ date: today, pDate: Utils.addDaysStr(today, -1) }).length,
+        far: Views.soapDateWarnings({ date: today, pDate: Utils.addDaysStr(today, 500) }).length,
+        ok: Views.soapDateWarnings({ date: today, pDate: Utils.addDaysStr(today, 7) }).length
+      };
+    });
+    assert(r.html && r.empty, '대상자 참고 내용이 다름: ' + JSON.stringify(r));
+    assert(r.future === 1 && r.old === 1 && r.backward === 1 && r.far === 1 && r.ok === 0, '날짜 점검이 다름: ' + JSON.stringify(r));
+    // 화면에서: 미래 날짜로 임시저장하면 확인 창이 뜨고, 취소하면 저장되지 않는다
+    await page.evaluate(() => UI.navigate('soapEditor', { prefillClientId: 'ME1' }));
+    await page.waitForTimeout(200);
+    const shown = await page.evaluate(() => document.getElementById('soapRefBody').textContent.includes('참고용 도움말'));
+    assert(shown, '작성 화면에 대상자 참고 패널이 보이지 않음');
+    await page.evaluate(() => {
+      document.getElementById('soapDate').value = Utils.addDaysStr(Utils.todayStr(), 5);
+      document.getElementById('soapS').value = '미래날짜 점검';
+      document.getElementById('saveDraftBtn').click();
+    });
+    await page.waitForTimeout(200);
+    const asked = await page.evaluate(() => (document.querySelector('#modalBox') || {}).textContent || '');
+    assert(asked.includes('오늘보다 뒤'), '날짜 확인 창이 뜨지 않음');
+    await page.evaluate(() => document.getElementById('confirmNoBtn').click());
+    await page.waitForTimeout(150);
+    const saved = await page.evaluate(() => SoapModule.list().some(x => x.S === '미래날짜 점검'));
+    assert(!saved, '취소했는데 저장됨');
+    await page.evaluate(() => { Views._draftCache = null; });
+    noNewErrors('대상자 참고·날짜 점검');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],

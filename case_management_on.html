@@ -452,7 +452,7 @@
 
   /* signature lines shown only when printing */
   .print-signature{display:none;}
-  @media print{ #monthEndCheck{display:none !important;} }
+  @media print{ #monthEndCheck, #soapRefPanel{display:none !important;} }
   @media print{
     .print-signature{display:flex !important;gap:18px 40px;flex-wrap:wrap;margin-top:32px;padding-top:16px;border-top:1px solid #999;}
     .print-signature .sig-line{flex:1 1 250px;white-space:nowrap;font-size:0.85rem;color:#333;}
@@ -4314,7 +4314,7 @@ const UI = {
   },
   confirm(message, onYes){
     UI.openModal(
-      '<h3>확인</h3><p style="color:var(--text-muted);margin-bottom:18px;">' + Utils.escapeHtml(message) + '</p>' +
+      '<h3>확인</h3><p style="color:var(--text-muted);margin-bottom:18px;white-space:pre-line;">' + Utils.escapeHtml(message) + '</p>' +
       '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
       '<button class="btn" id="confirmNoBtn">취소</button>' +
       '<button class="btn btn-danger" id="confirmYesBtn">확인</button>' +
@@ -7056,6 +7056,7 @@ const Views = {
       html += '<div class="example-banner">🔗 관련 후속조치: ' + Utils.escapeHtml(params.relatedFollowUp.text) + ' (완료 처리됨)</div>';
     }
 
+    html += '<details class="panel no-print-ref" id="soapRefPanel"' + (soap.clientId ? ' open' : '') + '><summary class="panel-title">' + icon('shield') + ' 대상자 참고 (경고신호·위기 시 선호·복약)</summary><div id="soapRefBody">' + Views.soapReferenceHtml(soap.clientId, soap.id) + '</div></details>';
     html += '<div class="panel"><div class="form-grid">';
     html += '<div class="field"><label>대상자</label>' + Views.clientPickerHtml(soap.clientId, 'soapClientPicker') +
       (soap.id ? '' : '<button type="button" class="btn-link" id="copyPrevSoapBtn" style="margin-top:6px;text-align:left;">지난 기록 불러오기</button>') + '</div>';
@@ -7123,6 +7124,50 @@ const Views = {
     return html;
   },
 
+  // 기록을 쓰는 동안 그 사람의 안전·복약 정보를 화면 전환 없이 볼 수 있게 하는 요약. 입력된 값을 그대로 보여 줄 뿐 판단하지 않는다.
+  soapReferenceHtml(clientId, currentSoapId){
+    const c = clientId && Clients.get(clientId);
+    if (!c) return '<div class="help-text">대상자를 고르면 경고신호·위기 시 선호·복약 정보가 여기에 표시됩니다.</div>';
+    const e = Utils.escapeHtml;
+    const row = (label, v) => v ? '<p style="font-size:0.85rem;white-space:pre-line;margin:3px 0;"><strong>' + label + '</strong> ' + e(v) + '</p>' : '';
+    const sp = c.safetyPlan || {}, cp = (c.recoveryProfile && c.recoveryProfile.crisis) || {};
+    const prev = SoapModule.list().filter(x => x.clientId === clientId && x.id !== currentSoapId && x.status === 'final').sort((a, b) => b.date.localeCompare(a.date))[0];
+    const meds = (c.medications || []).slice().reverse().sort((a, b) => b.date.localeCompare(a.date));
+    const latestMedDate = meds.length ? meds[0].date : '';
+    const curMeds = meds.filter(m => m.date === latestMedDate);
+    const nextRx = curMeds.map(m => m.nextRxDate).filter(Boolean).sort()[0] || '';
+    let pending = 0;
+    State.followUps.forEach(f => { if (f.clientId === clientId && f.status === 'pending') pending++; });
+    const lv = CONSTANTS.MANAGEMENT_LEVELS[c.managementLevel];
+    let body = row('관리수준', lv ? lv.label : '') +
+      row('마지막 상담', prev ? prev.date + ' · ' + prev.contactType : '') +
+      row('경고신호', sp.warningSigns) +
+      row('도움이 되는 것', cp.helpful) + row('원치 않는 개입', cp.unwanted) +
+      row('연락 원하는 사람', cp.wantContact) + row('연락 원치 않는 사람', cp.noContact) +
+      row('복약', curMeds.map(m => [m.name, m.dose].filter(Boolean).join(' ')).join(', ') + (nextRx ? ' (다음 처방일 ' + nextRx + ')' : '')) +
+      row('미완료 후속조치', pending ? pending + '건' : '');
+    return body || '<div class="help-text">참고할 안전·복약 정보가 아직 입력되지 않았습니다.</div>';
+  },
+
+  // 저장 전 날짜 점검 — 오타로 보이는 날짜만 한 번 되묻는다. 막지는 않는다(과거 기록 입력은 정상일 수 있음).
+  soapDateWarnings(soap){
+    const today = Utils.todayStr(), w = [];
+    if (soap.date){
+      if (soap.date > today) w.push('상담 날짜(' + soap.date + ')가 오늘보다 뒤입니다.');
+      else if (soap.date < Utils.addDaysStr(today, -60)) w.push('상담 날짜(' + soap.date + ')가 60일보다 더 이전입니다.');
+    }
+    if (soap.pDate){
+      if (soap.date && soap.pDate < soap.date) w.push('다음 상담·조치 예정일(' + soap.pDate + ')이 상담 날짜보다 앞입니다.');
+      else if (soap.pDate > Utils.addDaysStr(today, 366)) w.push('다음 상담·조치 예정일(' + soap.pDate + ')이 1년 넘게 뒤입니다.');
+    }
+    return w;
+  },
+  confirmSoapDates(soap, proceed){
+    const w = Views.soapDateWarnings(soap);
+    if (!w.length) return proceed();
+    UI.confirm(w.join('\n') + '\n그대로 저장할까요?', proceed);
+  },
+
   _readSoapForm(){
     const soap = Views._draftCache;
     soap.clientId = Views.resolveClientPickerValue(document.getElementById('soapClientPicker').value);
@@ -7165,6 +7210,15 @@ const Views = {
       if (!cid || !Clients.get(cid)){ toast('먼저 대상자를 선택해 주세요.', 'error'); return; }
       Views.openCopyPreviousModal(cid);
     };
+
+    const refreshRef = () => {
+      const body = document.getElementById('soapRefBody');
+      if (!body) return;
+      const cid = Views.resolveClientPickerValue(document.getElementById('soapClientPicker').value);
+      body.innerHTML = Views.soapReferenceHtml(cid, params.soapId);
+      if (cid && Clients.get(cid)) document.getElementById('soapRefPanel').open = true;
+    };
+    document.getElementById('soapClientPicker').addEventListener('change', refreshRef);
 
     const scheduleAutosave = () => {
       // Guards against a stray input/change event firing from a detached
@@ -7224,31 +7278,34 @@ const Views = {
     document.getElementById('saveDraftBtn').onclick = async () => {
       try{
         const soap = Views._readSoapForm();
-        await SoapModule.save(soap, false);
-        cancelAutosave();
-        Views._draftCache = null;
-        toast('임시저장했습니다.');
-        UI.navigate('clientDetail', { id: soap.clientId });
+        Views.confirmSoapDates(soap, async () => {
+          try{
+            await SoapModule.save(soap, false);
+            cancelAutosave();
+            Views._draftCache = null;
+            toast('임시저장했습니다.');
+            UI.navigate('clientDetail', { id: soap.clientId });
+          }catch(e){ toast(e.message || '저장에 실패했습니다.', 'error'); }
+        });
       }catch(e){ toast(e.message || '저장에 실패했습니다.', 'error'); }
     };
     document.getElementById('saveFinalBtn').onclick = async () => {
       try{
         const soap = Views._readSoapForm();
-        if (!soap.A || !soap.A.trim()){
-          UI.confirm('A(사정) 내용이 비어 있습니다. 그대로 최종저장할까요?', async () => {
+        const doSave = async () => {
+          try{
             await SoapModule.save(soap, true);
             cancelAutosave();
             Views._draftCache = null;
             toast('SOAP 기록을 저장했습니다.');
             UI.navigate('clientDetail', { id: soap.clientId });
-          });
-          return;
-        }
-        await SoapModule.save(soap, true);
-        cancelAutosave();
-        Views._draftCache = null;
-        toast('SOAP 기록을 저장했습니다.');
-        UI.navigate('clientDetail', { id: soap.clientId });
+          }catch(e){ toast(e.message || '저장에 실패했습니다.', 'error'); }
+        };
+        const afterDates = () => {
+          if (!soap.A || !soap.A.trim()) UI.confirm('A(사정) 내용이 비어 있습니다. 그대로 최종저장할까요?', doSave);
+          else doSave();
+        };
+        Views.confirmSoapDates(soap, afterDates);
       }catch(e){ toast(e.message || '저장에 실패했습니다.', 'error'); }
     };
     const delBtn = document.getElementById('deleteSoapBtn');
