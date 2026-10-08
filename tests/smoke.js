@@ -678,6 +678,95 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('재로그인');
   });
 
+  await step('후속조치 일괄 처리, 접촉 계획 일정 제안, 데이터 건강검진, 연말 활동 요약이 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      const today = Utils.todayStr();
+      // --- 일괄 처리
+      const ids = [];
+      for (let i = 0; i < 4; i++) ids.push((await FollowUps.add({ clientId: 'PL1', type: '기타', text: '일괄' + i, dueDate: Utils.addDaysStr(today, i === 0 ? -20 : 3) })).id);
+      const done1 = await FollowUps.bulkComplete([ids[0]]);
+      const done2 = await FollowUps.bulkComplete([ids[0]]);
+      const p7 = await FollowUps.bulkPostpone([ids[1], ids[2]], { days: 7 });
+      const skipped = await FollowUps.bulkPostpone([ids[0]], { days: 7 });
+      const late = await FollowUps.add({ clientId: 'PL1', type: '기타', text: '많이 밀림', dueDate: Utils.addDaysStr(today, -30) });
+      await FollowUps.bulkPostpone([late.id], { days: 7 });
+      const byDate = await FollowUps.bulkPostpone([ids[3]], { date: Utils.addDaysStr(today, 40) });
+      const snaps = await FollowUps.bulkRemove([ids[3]]);
+      await FollowUps.restoreSnapshot(snaps[0]);
+      const res = { done1, done2, p7, skipped, due1: FollowUps.get(ids[1]).dueDate === Utils.addDaysStr(today, 10), lateDue: FollowUps.get(late.id).dueDate === Utils.addDaysStr(today, 7), dateOk: FollowUps.get(ids[3]).dueDate === Utils.addDaysStr(today, 40), restored: !!FollowUps.get(ids[3]), byDate };
+      // --- 접촉 계획 일정 제안
+      await Clients.add({ id: 'SC1', alias: '일정제안', managementLevel: 'maintenance', registrationDate: Utils.addDaysStr(today, -100) });
+      await Clients.update('SC1', { contactPlanPerMonth: 4 });
+      const nextM = (() => { const d = new Date(); const n = new Date(d.getFullYear(), d.getMonth() + 1, 1); return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0'); })();
+      const dates = Clients.suggestContactDates(Clients.get('SC1'), nextM, 4);
+      const wk = dates.every(ds => { const dow = new Date(ds + 'T00:00:00').getDay(); return dow !== 0 && dow !== 6; });
+      await Schedules.add({ clientId: 'SC1', date: dates[0], contactType: '방문' });
+      const sf = Clients.planShortfall(Clients.get('SC1'), nextM);
+      const again = Clients.suggestContactDates(Clients.get('SC1'), nextM, 4);
+      const noPlan = Clients.planShortfall(Clients.get('PL1').contactPlanPerMonth ? { id: 'x', contactPlanPerMonth: 0 } : Clients.get('PL1'), nextM).need;
+      res.sched = { n: dates.length, wk, uniq: new Set(dates).size === dates.length, avoidsTaken: !again.includes(dates[0]), sfPlanned: sf.planned, noPlan };
+      // --- 건강검진
+      await State.followUps.set('orph1', { id: 'orph1', clientId: 'NOPE', type: '기타', text: '고아', dueDate: today, status: 'pending' });
+      await Storage.saveEncrypted('followUps', State.followUps.get('orph1'));
+      const bad = SoapModule.createBlank({ clientId: 'PL1' }); bad.date = '2031-01-01'; bad.S = '이상한날짜'; await SoapModule.save(bad, true);
+      const emptyDraft = SoapModule.createBlank({ clientId: 'PL1' }); await SoapModule.save(emptyDraft, false);
+      const groups = Health.run();
+      const g = (k) => groups.find(x => x.key === k);
+      res.health = { orphan: g('orphans').items.some(i => i.text.includes('NOPE')), dates: g('dates').items.some(i => i.text.includes('2031-01-01')), empty: g('empty').items.some(i => !!i.del), clean: !g('orphans').items.some(i => i.text.includes('PL1')) };
+      const removed = await Health.fix('orphans');
+      res.health.fixed = removed >= 1 && !State.followUps.has('orph1');
+      res.health.untouched = SoapModule.get(bad.id) !== undefined;
+      // --- 연말 요약
+      const html = Views.yearSummary({ year: today.slice(0, 4) });
+      res.year = { has: html.includes('활동 요약') && html.includes('위기개입과 디브리핑') && html.includes('서비스 성과') && html.includes('미등록'), noUndefined: !html.includes('undefined') && !html.includes('NaN') };
+      return res;
+    });
+    assert(r.done1 === 1 && r.done2 === 0 && r.p7 === 2 && r.skipped === 0 && r.due1 && r.lateDue && r.dateOk && r.restored, '후속조치 일괄 처리가 다름: ' + JSON.stringify(r));
+    assert(r.sched.n === 4 && r.sched.wk && r.sched.uniq && r.sched.avoidsTaken && r.sched.sfPlanned === 1 && r.sched.noPlan === 0, '일정 제안이 다름: ' + JSON.stringify(r.sched));
+    assert(r.health.orphan && r.health.dates && r.health.empty && r.health.clean && r.health.fixed && r.health.untouched, '건강검진이 다름: ' + JSON.stringify(r.health));
+    assert(r.year.has && r.year.noUndefined, '연말 요약 내용이 다름: ' + JSON.stringify(r.year));
+    // 화면: 일괄 선택 → 완료
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('followUps', { filter: 'upcoming' }); });
+    await page.waitForTimeout(250);
+    const ui = await page.evaluate(async () => {
+      const first = document.querySelectorAll('.fuSel');
+      const total = first.length;
+      const upBefore = FollowUps.upcoming().length;
+      document.getElementById('fuSelAll').click();
+      const afterAll = document.getElementById('fuSelCount').textContent;
+      const enabled = !document.getElementById('fuBulk7').disabled;
+      document.querySelectorAll('.fuSel').forEach((b, i) => { if (i > 1){ b.checked = false; b.dispatchEvent(new Event('change')); } });
+      const two = document.getElementById('fuSelCount').textContent;
+      document.getElementById('fuBulkDone').click();
+      await new Promise(r => setTimeout(r, 400));
+      return { total, afterAll, enabled, two, dropped: upBefore - FollowUps.upcoming().length };
+    });
+    assert(ui.total >= 3 && ui.enabled && ui.two === '2건 선택' && ui.dropped === 2, '일괄 선택 화면이 다름: ' + JSON.stringify(ui));
+    // 화면: 대상자 화면의 일정 제안 창, 설정의 건강검진, 연말 요약 화면
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('clientDetail', { id: 'SC1' }); });
+    await page.waitForTimeout(250);
+    await page.evaluate(() => document.getElementById('planSchedBtn').click());
+    await page.waitForTimeout(150);
+    const modalTxt = await page.evaluate(() => (document.getElementById('modalBox') || {}).textContent || '');
+    assert(modalTxt.includes('월 접촉 계획으로 일정 만들기') && modalTxt.includes('더 필요한 횟수'), '일정 제안 창이 열리지 않음');
+    const before = await page.evaluate(() => Schedules.list().filter(x => x.clientId === 'SC1').length);
+    await page.evaluate(() => document.getElementById('psMonth').selectedIndex = 1);
+    await page.evaluate(() => document.getElementById('psMonth').dispatchEvent(new Event('change')));
+    await page.evaluate(() => document.getElementById('psOk').click());
+    await page.waitForTimeout(250);
+    const after = await page.evaluate(() => Schedules.list().filter(x => x.clientId === 'SC1').length);
+    assert(after > before, '제안한 일정이 등록되지 않음: ' + before + '→' + after);
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('settings', {}); });
+    await page.waitForTimeout(250);
+    await page.evaluate(() => document.getElementById('healthRunBtn').click());
+    const hr = await page.evaluate(() => document.getElementById('healthResult').textContent);
+    assert(hr.includes('검사 결과') || hr.includes('문제가 발견되지'), '건강검진 결과가 표시되지 않음');
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('yearSummary', {}); });
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(() => document.getElementById('appMain').textContent.includes('활동 요약') && !!document.getElementById('ysPrintBtn')), '연말 요약 화면이 없음');
+    noNewErrors('일괄 처리·일정 제안·건강검진·연말 요약');
+  });
+
   await step('기록이 가득 찬 상태에서 모든 화면·탭·필터가 오류 없이 그려진다', async () => {
     const result = await page.evaluate(() => {
       const bad = [];
@@ -692,7 +781,7 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
       const soap = SoapModule.list()[0], deb = Debriefings.list().find(d => d.kind === 'crisisUnreg'), plan = Clients.get('CI1').servicePlans[0], ev = Clients.get('CI1').crisisEvents[0];
       const link = (Clients.get('PL1').resourceLinks || [])[0];
       const clientIds = Clients.list().map(c => c.id);
-      ['dashboard', 'clients', 'followUps', 'schedule', 'resourceDirectory', 'stats', 'outcomes', 'debriefings', 'supervisionAgenda', 'selfCare', 'training', 'settings', 'tour', 'caseloadSummary', 'dailyBriefing'].forEach(v => go(v, v));
+      ['dashboard', 'clients', 'followUps', 'schedule', 'resourceDirectory', 'stats', 'outcomes', 'yearSummary', 'debriefings', 'supervisionAgenda', 'selfCare', 'training', 'settings', 'tour', 'caseloadSummary', 'dailyBriefing'].forEach(v => go(v, v));
       ['all', 'draft', 'final'].forEach(f => go('soapList:' + f, 'soapList', { filter: f }));
       ['all', 'today', 'overdue', 'upcoming', 'done'].forEach(f => { go('followUps:' + f, 'followUps', { filter: f }); go('schedule:' + f, 'schedule', { filter: f }); });
       go('schedule:날짜', 'schedule', { selectedDate: Utils.todayStr() });
