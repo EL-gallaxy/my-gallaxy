@@ -454,7 +454,7 @@
   .print-signature{display:none;}
   .lt-out{display:none;white-space:pre-line;}
   @media print{ .lt-out{display:block;margin-top:2px;} .lt-in, #ltTo, #ltDate, #ltReply, #ltContact{display:none !important;} #printLetterBtn, #backFromLetterBtn{display:none !important;} }
-  @media print{ #monthEndCheck, #soapRefPanel{display:none !important;} }
+  @media print{ #monthEndCheck, #soapRefPanel, #briefingNotice{display:none !important;} }
   @media print{
     .print-signature{display:flex !important;gap:18px 40px;flex-wrap:wrap;margin-top:32px;padding-top:16px;border-top:1px solid #999;}
     .print-signature .sig-line{flex:1 1 250px;white-space:nowrap;font-size:0.85rem;color:#333;}
@@ -2775,7 +2775,7 @@ const Debriefings = {
     return {
       id: '', kind: prefill.kind || 'crisisUnreg', date: Utils.todayStr(), time: '', clientId: '', eventId: '', subjectNote: '',
       crisisType: '', route: '', outcome: '', participants: '', facts: '', wentWell: '', toImprove: '', staffImpact: '',
-      review: [], actions: '', followUpsRegisteredAt: '', forSupervision: false, supervisionQuestion: '', supervisionDone: false,
+      review: [], actions: '', followUpsRegisteredAt: '', forSupervision: false, supervisionQuestion: '', supervisionDone: false, supervisionAdvice: '', supervisionNoteId: '',
       createdAt: '', updatedAt: ''
     };
   },
@@ -2807,7 +2807,7 @@ const Debriefings = {
     const isNew = !d.id;
     if (isNew){ d.id = Utils.uid('dbf'); d.createdAt = now; }
     d.updatedAt = now;
-    ['subjectNote', 'participants', 'facts', 'wentWell', 'toImprove', 'staffImpact', 'supervisionQuestion', 'crisisType', 'route', 'outcome'].forEach(k => { d[k] = t(d[k]); });
+    ['subjectNote', 'participants', 'facts', 'wentWell', 'toImprove', 'staffImpact', 'supervisionQuestion', 'supervisionAdvice', 'crisisType', 'route', 'outcome'].forEach(k => { d[k] = t(d[k]); });
     d.actions = t(d.actions).split('\n').map(x => x.trim()).filter(Boolean).join('\n');
     d.review = (d.review || []).filter(x => this.REVIEW_ITEMS.includes(x));
     if (d.kind === 'crisisUnreg'){ d.clientId = ''; d.eventId = ''; d.review = []; }
@@ -2858,11 +2858,22 @@ const Debriefings = {
     State.debriefings.delete(id);
     await Storage.idbDelete('debriefings', id);
   },
-  async setSupervisionDone(id, done){
+  // 슈퍼비전에서 다룬 것으로 표시한다. 들은 조언을 적었다면 교육·슈퍼비전 기록에도 한 건 남긴다(이미 남겼다면 그 기록을 고친다).
+  async setSupervisionDone(id, done, advice){
     const d = State.debriefings.get(id);
-    if (!d) return;
+    if (!d) return null;
     d.supervisionDone = !!done;
+    if (advice !== undefined) d.supervisionAdvice = (advice || '').trim();
+    let note = null;
+    if (done && d.supervisionAdvice){
+      const body = (d.supervisionQuestion ? '질문: ' + d.supervisionQuestion + '\n\n' : '') + '조언: ' + d.supervisionAdvice;
+      const title = '슈퍼비전: ' + d.date + ' ' + (Debriefings.KINDS[d.kind] || '디브리핑');
+      const existing = d.supervisionNoteId && SelfCare.get(d.supervisionNoteId);
+      if (existing) note = await SelfCare.update(existing.id, { date: existing.date, category: 'supervision', stressLevel: existing.stressLevel, title, note: body });
+      else { note = await SelfCare.add({ date: Utils.todayStr(), category: 'supervision', title, note: body }); d.supervisionNoteId = note.id; }
+    }
     await Storage.saveEncrypted('debriefings', d);
+    return note;
   },
   // 월·연 단위 건수 — 위기개입은 등록/미등록을 나눠 센다. (등록 대상자 위기개입은 대상자 상세의 위기개입 기록과 겹칠 수 있다)
   counts(prefix){
@@ -3990,6 +4001,24 @@ const CSV = {
     ]);
     this.download('clients_' + Utils.todayStr() + '.csv', this.build(headers, rows));
   },
+  // 소요 시간·디브리핑·미등록 위기개입 — 월간/연간 보고서 CSV에 공통으로 붙는 항목
+  reportExtraRows(report){
+    const rows = [];
+    const types = Object.keys(report.durationByType || {});
+    rows.push(['소요 시간을 적은 상담 기록 수', report.durationRecorded || 0]);
+    types.forEach(t => {
+      const d = report.durationByType[t];
+      rows.push(['소요 시간 - ' + t + ' 기록 수', d.count], ['소요 시간 - ' + t + ' 합계(분)', d.minutes], ['소요 시간 - ' + t + ' 평균(분)', Math.round(d.minutes / d.count)]);
+    });
+    if (types.length) rows.push(['소요 시간 합계(분)', report.durationTotal]);
+    const dc = report.debriefCounts || { crisisReg: 0, crisisUnreg: 0, counsel: 0, other: 0 };
+    rows.push(['디브리핑 - 위기개입(미등록 대상자)', dc.crisisUnreg], ['디브리핑 - 위기개입(등록 대상자)', dc.crisisReg], ['디브리핑 - 상담·방문', dc.counsel], ['디브리핑 - 기타', dc.other]);
+    const u = Debriefings.unregStats(report.month || report.year);
+    Object.keys(u.byType).forEach(k => rows.push(['미등록 위기개입 유형: ' + k, u.byType[k]]));
+    Object.keys(u.byRoute).forEach(k => rows.push(['미등록 위기개입 경로: ' + k, u.byRoute[k]]));
+    Object.keys(u.byOutcome).forEach(k => rows.push(['미등록 위기개입 결과: ' + k, u.byOutcome[k]]));
+    return rows;
+  },
   exportMonthlyReport(report){
     const headers = ['항목', '값'];
     const rows = [
@@ -4012,6 +4041,7 @@ const CSV = {
       .concat([['자원연계 - 상태 미기록', (report.referralStatusCounts || {}).none || 0]]);
     Object.keys(report.contactTypeCounts).forEach(k => rows.push([k + ' 상담', report.contactTypeCounts[k]]));
     Object.keys(report.closureReasonCounts).forEach(k => rows.push(['종결사유: ' + k, report.closureReasonCounts[k]]));
+    this.reportExtraRows(report).forEach(r => rows.push(r));
     this.download('monthly_report_' + report.month + '.csv', this.build(headers, rows));
   },
   exportAnnualReport(report){
@@ -4036,6 +4066,7 @@ const CSV = {
       .concat([['자원연계 - 상태 미기록', (report.referralStatusCounts || {}).none || 0]]);
     Object.keys(report.contactTypeCounts).forEach(k => rows.push([k + ' 상담', report.contactTypeCounts[k]]));
     Object.keys(report.closureReasonCounts).forEach(k => rows.push(['종결사유: ' + k, report.closureReasonCounts[k]]));
+    this.reportExtraRows(report).forEach(r => rows.push(r));
     report.monthlyBreakdown.forEach(m => rows.push([m.month + ' 상담건수', m.count]));
     this.download('annual_report_' + report.year + '.csv', this.build(headers, rows));
   },
@@ -7954,6 +7985,14 @@ const Views = {
       return html;
     }
 
+    {
+      const pend = Debriefings.pendingList().length, load = Debriefings.crisisLoad(Utils.todayStr().slice(0, 7));
+      if (pend || load >= CONSTANTS.CRISIS_LOAD_MONTHLY){
+        html += '<div class="panel no-print-ref" id="briefingNotice"><div class="panel-title">' + icon('messageSquare') + ' 먼저 챙길 것</div>' +
+          (pend ? '<p style="font-size:0.88rem;margin:4px 0;">디브리핑을 아직 쓰지 않은 위기 사건이 <strong>' + pend + '건</strong> 있습니다. <button class="btn btn-sm" data-goto-view="debriefings">디브리핑 열기</button></p>' : '') +
+          (load >= CONSTANTS.CRISIS_LOAD_MONTHLY ? '<p style="font-size:0.88rem;margin:4px 0;">이번 달 위기 응대가 <strong>' + load + '건</strong>입니다. 오늘 일정이 빠듯하지 않은지 살펴보세요.</p>' : '') + '</div>';
+      }
+    }
     items.forEach(it => {
       const c = Clients.get(it.clientId);
       if (!c) return;
@@ -7972,6 +8011,8 @@ const Views = {
         brp.helpfulComm ? '도움이 되는 방식: ' + brp.helpfulComm : '', brp.avoidComm ? '피할 것: ' + brp.avoidComm : ''
       ].filter(Boolean).map(Utils.escapeHtml).join(' / ');
 
+      const bcp = (c.recoveryProfile && c.recoveryProfile.crisis) || {};
+      const briefingCrisisPref = [bcp.helpful ? '위기 때 도움이 되는 것: ' + bcp.helpful : '', bcp.unwanted ? '원치 않는 개입: ' + bcp.unwanted : ''].filter(Boolean).map(Utils.escapeHtml).join(' / ');
       html += '<div class="panel"' + (hasFlags ? ' style="border-color:var(--warn);background:var(--warn-soft);"' : '') + '>' +
         '<div class="list-row-main" data-goto-client="' + c.id + '" style="cursor:pointer;">' +
         '<div class="row-title">' + (it.time ? it.time + ' · ' : '') + Utils.escapeHtml(c.id) + (c.alias ? ' (' + Utils.escapeHtml(c.alias) + ')' : '') + ' ' + Views.managementBadge(c.managementLevel) + '</div>' +
@@ -7982,6 +8023,8 @@ const Views = {
         (vs.note ? '<p style="font-size:0.85rem;margin:0 0 6px;">' + Utils.escapeHtml(vs.note) + '</p>' : '') +
         (recentCrisis ? '<p style="font-size:0.85rem;margin:0 0 6px;">⚠ 최근 위기개입: ' + recentCrisis.date + (recentCrisis.time ? ' ' + recentCrisis.time : '') + ' · ' + Utils.escapeHtml(recentCrisis.type) + '</p>' : '') +
         '<p style="font-size:0.85rem;margin:0 0 6px;">🛟 안전계획: ' + (hasSafetyPlan ? '있음' : '없음') + '</p>' +
+        (sp.warningSigns ? '<p style="font-size:0.85rem;margin:0 0 6px;white-space:pre-line;"><strong>경고신호:</strong> ' + Utils.escapeHtml(sp.warningSigns) + '</p>' : '') +
+        (briefingCrisisPref ? '<p style="font-size:0.85rem;margin:0 0 6px;">🤝 ' + briefingCrisisPref + '</p>' : '') +
         (briefingPrefs ? '<p style="font-size:0.85rem;margin:0;">💬 당사자 선호: ' + briefingPrefs + '</p>' : '') +
         '</div>';
     });
@@ -7992,6 +8035,7 @@ const Views = {
   bindDailyBriefing(){
     document.getElementById('briefingDateInput').onchange = (e) => { Views._briefingDate = e.target.value; UI.renderCurrentView(); };
     document.getElementById('printBriefingBtn').onclick = () => window.print();
+    document.querySelectorAll('[data-goto-view]').forEach(el => { el.onclick = () => UI.navigate(el.dataset.gotoView, {}); });
     document.querySelectorAll('[data-goto-client]').forEach(el => { el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient }); });
   },
 
@@ -8270,6 +8314,20 @@ const Views = {
       '<button class="tab-btn' + (mode === 'year' ? ' active' : '') + '" id="reportModeYearBtn">연간</button>' +
       '</div>';
   },
+  debriefReportHtml(r){
+    let html = '';
+    if (r.debriefCounts.total){
+      const dc = r.debriefCounts;
+      html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">디브리핑 기록 (해당월)</p>' +
+        Views.renderBarChart([
+          { label: '위기개입 · 미등록 대상자', value: dc.crisisUnreg, color: 'var(--danger)' },
+          { label: '위기개입 · 등록 대상자', value: dc.crisisReg, color: 'var(--warn)' },
+          { label: '상담·방문', value: dc.counsel, color: 'var(--accent)' },
+          { label: '기타', value: dc.other, color: 'var(--draft)' }
+        ]) + (dc.crisisUnreg ? (() => { const u = Debriefings.unregStats(r.month); const line = (t, m) => '<p style="font-size:0.85rem;margin-top:6px;"><strong>' + t + '</strong> ' + Object.keys(m).map(k => Utils.escapeHtml(k) + ' ' + m[k] + '건').join(' · ') + '</p>'; return line('미등록 위기개입 유형:', u.byType) + line('경로:', u.byRoute) + line('결과:', u.byOutcome); })() : '') + '<p class="help-text">등록 대상자 위기개입은 대상자 상세의 위기개입 기록과 같은 사건일 수 있어 합산하지 않았습니다. 미등록 대상자 위기개입은 이 기록에만 남습니다.</p>';
+    }
+    return html;
+  },
   durationReportHtml(r){
     const types = Object.keys(r.durationByType);
     let html = '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">접촉유형별 소요 시간 (시간을 적은 기록 기준)</p>';
@@ -8369,16 +8427,7 @@ const Views = {
 
     html += '</div>';
     html += Views.printSignatureHtml();
-    if (r.debriefCounts.total){
-      const dc = r.debriefCounts;
-      html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">디브리핑 기록 (해당월)</p>' +
-        Views.renderBarChart([
-          { label: '위기개입 · 미등록 대상자', value: dc.crisisUnreg, color: 'var(--danger)' },
-          { label: '위기개입 · 등록 대상자', value: dc.crisisReg, color: 'var(--warn)' },
-          { label: '상담·방문', value: dc.counsel, color: 'var(--accent)' },
-          { label: '기타', value: dc.other, color: 'var(--draft)' }
-        ]) + (dc.crisisUnreg ? (() => { const u = Debriefings.unregStats(r.month); const line = (t, m) => '<p style="font-size:0.85rem;margin-top:6px;"><strong>' + t + '</strong> ' + Object.keys(m).map(k => Utils.escapeHtml(k) + ' ' + m[k] + '건').join(' · ') + '</p>'; return line('미등록 위기개입 유형:', u.byType) + line('경로:', u.byRoute) + line('결과:', u.byOutcome); })() : '') + '<p class="help-text">등록 대상자 위기개입은 대상자 상세의 위기개입 기록과 같은 사건일 수 있어 합산하지 않았습니다. 미등록 대상자 위기개입은 이 기록에만 남습니다.</p>';
-    }
+    html += Views.debriefReportHtml(r);
     html += Views.durationReportHtml(r);
     html += Views.monthEndCheckHtml(monthStr);
     return html;
@@ -8445,6 +8494,8 @@ const Views = {
 
     html += '</div>';
     html += Views.printSignatureHtml();
+    html += Views.debriefReportHtml(r);
+    html += Views.durationReportHtml(r);
     return html;
   },
 
@@ -8922,6 +8973,7 @@ const Views = {
       (d.followUpsRegisteredAt ? '<div class="help-text">이미 ' + e(Utils.formatDateTime(d.followUpsRegisteredAt)) + '에 등록했습니다. 다시 체크하면 같은 내용이 한 번 더 등록됩니다.</div>' : '') + '</div>' +
       '<div class="field full"><label class="chip-check' + (d.forSupervision ? ' checked' : '') + '"><input type="checkbox" id="dbSup"' + (d.forSupervision ? ' checked' : '') + '>슈퍼비전에 가져갈 안건으로 표시</label></div>' +
       ta('dbSupQ', '슈퍼비전에서 묻고 싶은 것', d.supervisionQuestion) +
+      ta('dbAdvice', '슈퍼비전에서 들은 조언', d.supervisionAdvice, '적고 "슈퍼비전에서 다룸"을 누르면 교육·슈퍼비전 기록에도 한 건 남습니다.') +
       '</div></div>';
     html += '<div class="error-msg hidden" id="dbError" role="alert"></div>' +
       '<div style="display:flex;gap:10px;margin-bottom:30px;"><button class="btn btn-primary" id="dbSaveBtn">저장</button>' +
@@ -8937,7 +8989,7 @@ const Views = {
     d.crisisType = v('dbCrisisType'); d.route = v('dbRoute'); d.outcome = v('dbOutcome'); d.participants = v('dbPeople');
     d.facts = v('dbFacts'); d.wentWell = v('dbWell'); d.toImprove = v('dbImprove'); d.staffImpact = v('dbStaff');
     d.review = Array.from(document.querySelectorAll('.dbReview:checked')).map(x => x.value);
-    d.actions = v('dbActions'); d.forSupervision = document.getElementById('dbSup').checked; d.supervisionQuestion = v('dbSupQ');
+    d.actions = v('dbActions'); d.forSupervision = document.getElementById('dbSup').checked; d.supervisionQuestion = v('dbSupQ'); d.supervisionAdvice = v('dbAdvice');
     return d;
   },
   bindDebriefEditor(params){
@@ -8974,10 +9026,15 @@ const Views = {
     };
     const doneBtn = document.getElementById('dbDoneBtn');
     if (doneBtn) doneBtn.onclick = async () => {
-      const cur = Debriefings.get(Views._debriefDraft.id);
-      await Debriefings.setSupervisionDone(cur.id, !cur.supervisionDone);
-      toast(!cur.supervisionDone ? '슈퍼비전에서 다룬 것으로 표시했습니다.' : '다시 안건으로 돌렸습니다.');
-      UI.navigate('debriefEditor', { debriefId: cur.id });
+      const errBox = document.getElementById('dbError');
+      try{
+        const cur = Debriefings.get(Views._debriefDraft.id);
+        const d = Views._readDebriefForm();
+        await Debriefings.save(d, false);
+        const note = await Debriefings.setSupervisionDone(cur.id, !cur.supervisionDone, d.supervisionAdvice);
+        toast(!cur.supervisionDone ? (note ? '슈퍼비전에서 다룬 것으로 표시하고 교육·슈퍼비전 기록에 남겼습니다.' : '슈퍼비전에서 다룬 것으로 표시했습니다.') : '다시 안건으로 돌렸습니다.');
+        UI.navigate('debriefEditor', { debriefId: cur.id });
+      }catch(err){ errBox.textContent = err.message || '저장하지 못했습니다.'; errBox.classList.remove('hidden'); }
     };
     const convBtn = document.getElementById('dbConvertBtn');
     if (convBtn) convBtn.onclick = () => {

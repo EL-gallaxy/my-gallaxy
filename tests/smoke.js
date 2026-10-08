@@ -373,6 +373,42 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('미등록 통계·전환·안건·부담');
   });
 
+  await step('보고서 CSV·연간 보고서·오늘의 브리핑·슈퍼비전 결과 기록 연결이 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      const m = Utils.todayStr().slice(0, 7), y = m.slice(0, 4);
+      const rows = CSV.reportExtraRows(Stats.monthlyReport(m)).map(x => x.join('='));
+      const yrows = CSV.reportExtraRows(Stats.annualReport(y)).map(x => x.join('='));
+      // 슈퍼비전 결과 기록
+      const d = Debriefings.blank({ kind: 'crisisUnreg' });
+      Object.assign(d, { subjectNote: '안건건', facts: '내용', forSupervision: true, supervisionQuestion: '어떻게 할까요' });
+      await Debriefings.save(d, false);
+      const notesBefore = SelfCare.list().filter(n => n.category === 'supervision').length;
+      const note = await Debriefings.setSupervisionDone(d.id, true, '경계를 분명히 하세요');
+      const again = await Debriefings.setSupervisionDone(d.id, true, '경계를 분명히, 기록은 짧게');
+      const notesAfter = SelfCare.list().filter(n => n.category === 'supervision');
+      const done = Debriefings.get(d.id);
+      // 브리핑
+      const today = Utils.todayStr();
+      await Clients.update('PL1', { safetyPlan: { warningSigns: '브리핑경고신호' } });
+      await Schedules.add({ clientId: 'PL1', date: today, contactType: '방문' });
+      Views._briefingDate = today;
+      const briefing = Views.dailyBriefing();
+      UI.navigate('stats', {});
+      return { hasDur: rows.some(x => x.startsWith('소요 시간을 적은 상담 기록 수=')), hasDeb: rows.some(x => x.startsWith('디브리핑 - 위기개입(미등록 대상자)=')), hasUnreg: rows.some(x => x.startsWith('미등록 위기개입 유형:')), yDeb: yrows.some(x => x.startsWith('디브리핑 - 위기개입(미등록 대상자)=')),
+        noteMade: !!note && note.category === 'supervision', sameNote: again.id === note.id, notesAdded: notesAfter.length - notesBefore, noteText: notesAfter.find(n => n.id === note.id).note, linked: done.supervisionNoteId === note.id && done.supervisionDone,
+        briefing: briefing.includes('브리핑경고신호') && briefing.includes('먼저 챙길 것') };
+    });
+    assert(r.hasDur && r.hasDeb && r.hasUnreg && r.yDeb, '보고서 CSV에 새 항목이 빠짐: ' + JSON.stringify(r));
+    assert(r.noteMade && r.sameNote && r.notesAdded === 1 && r.linked && r.noteText.includes('기록은 짧게') && r.noteText.includes('어떻게 할까요'), '슈퍼비전 결과 기록 연결이 다름: ' + JSON.stringify(r));
+    assert(r.briefing, '오늘의 브리핑에 경고신호/먼저 챙길 것이 없음');
+    await page.evaluate(() => { Views._reportMode = 'year'; UI.navigate('stats', {}); });
+    await page.waitForTimeout(250);
+    const annual = await page.evaluate(() => document.getElementById('appMain').textContent);
+    assert(annual.includes('디브리핑 기록') && annual.includes('접촉유형별 소요 시간'), '연간 보고서에 디브리핑/소요 시간이 없음');
+    await page.evaluate(() => { Views._reportMode = 'month'; });
+    noNewErrors('보고서·브리핑·슈퍼비전 연결');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
