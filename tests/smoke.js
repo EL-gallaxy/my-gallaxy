@@ -31,6 +31,7 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error' && m.text().startsWith('[앱 오류]')) pageErrors.push(m.text()); });
   const noNewErrors = (label) => { assert(pageErrors.length === 0, label + ' 중 화면 오류: ' + pageErrors.splice(0).join(' | ')); };
 
   const app = url + '/case_management_on.html';
@@ -675,6 +676,76 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     const after = await page.evaluate(() => ({ c: Clients.list().length, s: SoapModule.list().length, f: FollowUps.list().length }));
     assert(JSON.stringify(before) === JSON.stringify(after), '다시 로그인한 뒤 기록 수가 다름: ' + JSON.stringify(before) + ' → ' + JSON.stringify(after));
     noNewErrors('재로그인');
+  });
+
+  await step('기록이 가득 찬 상태에서 모든 화면·탭·필터가 오류 없이 그려진다', async () => {
+    const result = await page.evaluate(() => {
+      const bad = [];
+      const go = (label, view, params, pre) => {
+        Views._dirty = false;
+        if (pre) pre();
+        try{ UI.navigate(view, params || {}); }catch(e){ bad.push(label + ': 예외 ' + e.message); return; }
+        const main = document.getElementById('appMain');
+        if (document.getElementById('renderErrorPanel')) bad.push(label + ': ' + document.querySelector('#renderErrorPanel pre').textContent);
+        else if (main.textContent.trim().length < 20) bad.push(label + ': 빈 화면');
+      };
+      const soap = SoapModule.list()[0], deb = Debriefings.list().find(d => d.kind === 'crisisUnreg'), plan = Clients.get('CI1').servicePlans[0], ev = Clients.get('CI1').crisisEvents[0];
+      const link = (Clients.get('PL1').resourceLinks || [])[0];
+      const clientIds = Clients.list().map(c => c.id);
+      ['dashboard', 'clients', 'followUps', 'schedule', 'resourceDirectory', 'stats', 'outcomes', 'debriefings', 'supervisionAgenda', 'selfCare', 'training', 'settings', 'tour', 'caseloadSummary', 'dailyBriefing'].forEach(v => go(v, v));
+      ['all', 'draft', 'final'].forEach(f => go('soapList:' + f, 'soapList', { filter: f }));
+      ['all', 'today', 'overdue', 'upcoming', 'done'].forEach(f => { go('followUps:' + f, 'followUps', { filter: f }); go('schedule:' + f, 'schedule', { filter: f }); });
+      go('schedule:날짜', 'schedule', { selectedDate: Utils.todayStr() });
+      [Utils.todayStr().slice(0, 4), String(parseInt(Utils.todayStr().slice(0, 4), 10) - 1)].forEach(y => go('outcomes:' + y, 'outcomes', { year: y }));
+      ['month', 'year'].forEach(m => go('stats:' + m, 'stats', {}, () => { Views._reportMode = m; }));
+      Views._reportMode = 'month';
+      ['soap', 'universal'].forEach(m => go('search:' + m, 'search', {}, () => { Views._searchMode = m; }));
+      Views._searchMode = 'soap';
+      clientIds.forEach(id => {
+        ['summary', 'basic', 'history', 'safety', 'soap', 'plan', 'timeline'].forEach(t => go('clientDetail:' + id + ':' + t, 'clientDetail', { id }, () => { Views._clientDetailTab = t; Views._clientDetailTabClientId = id; }));
+        go('handover:' + id, 'handoverSummary', { id });
+        go('soapEditor새글:' + id, 'soapEditor', { prefillClientId: id });
+      });
+      if (soap) go('soapEditor:기존', 'soapEditor', { soapId: soap.id });
+      if (deb) go('debriefEditor:기존', 'debriefEditor', { debriefId: deb.id });
+      ['crisisUnreg', 'crisisReg', 'counsel', 'other'].forEach(k => go('debriefEditor:' + k, 'debriefEditor', { kind: k }));
+      go('debriefEditor:사건', 'debriefEditor', { clientId: 'CI1', eventId: ev.id });
+      go('servicePlanEditor', 'servicePlanEditor', { clientId: 'CI1', planId: plan.id });
+      go('servicePlanEditor새글', 'servicePlanEditor', { clientId: 'CI1' });
+      go('servicePlanPrint', 'servicePlanPrint', { clientId: 'CI1', planId: plan.id });
+      go('crisisReport', 'crisisReport', { clientId: 'CI1', eventId: ev.id });
+      if (link) go('referralLetter', 'referralLetter', { clientId: 'PL1', linkId: link.id });
+      Views._clientDetailTab = 'summary';
+      return { bad, count: UI.errorLog.length };
+    });
+    assert(result.bad.length === 0, '화면 그리기 실패 ' + result.bad.length + '건: ' + result.bad.slice(0, 4).join(' | '));
+    noNewErrors('전체 화면 점검');
+  });
+
+  await step('화면 그리기 오류가 나면 안내와 복사 버튼이 나오고 다른 화면은 계속 쓸 수 있다', async () => {
+    const r = await page.evaluate(() => {
+      Views._dirty = false;
+      const orig = Views.stats;
+      Views.stats = () => { throw new Error('시험용 오류'); };
+      const logBefore = UI.errorLog.length;
+      const origConsole = console.error; console.error = () => {};
+      UI.navigate('stats', {});
+      console.error = origConsole;
+      const panel = document.getElementById('renderErrorPanel');
+      const shown = !!panel && panel.textContent.includes('시험용 오류') && !!document.getElementById('renderErrCopyBtn');
+      const report = UI.errorReportText();
+      const logged = UI.errorLog.length === logBefore + 1;
+      Views.stats = orig;
+      UI.errorLog = [];
+      document.getElementById('renderErrHomeBtn').click();
+      return { shown, logged, report: report.includes('시험용 오류') && report.includes('오류 보고'), after: State.currentView, errPanelGone: !document.getElementById('renderErrorPanel') };
+    });
+    assert(r.shown && r.logged && r.report, '오류 안내가 다름: ' + JSON.stringify(r));
+    assert(r.after === 'dashboard' && r.errPanelGone, '오류 후 다른 화면으로 이동하지 못함');
+    await page.evaluate(() => UI.navigate('settings', {}));
+    await page.waitForTimeout(200);
+    assert(await page.evaluate(() => !!document.getElementById('errorReportSection') && !!document.getElementById('errCopyBtn')), '설정에 문제 보고가 없음');
+    noNewErrors('오류 안내');
   });
 
   await step('백업 파일에 모든 기록이 들어 있고 평문이 새지 않는다', async () => {
