@@ -190,10 +190,48 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     assert(!r.leaked, '백업 파일에 암호화되지 않은 내용이 들어 있음');
   });
 
+  await step('가벼운 백업(첨부 제외)은 훨씬 작고 기록은 그대로이며, 복원하면 첨부만 비게 된다', async () => {
+    const r = await page.evaluate(async () => {
+      const c = Clients.get('CI1');
+      c.documents = [{ id: 'docci', name: '동의서', receivedDate: '', attachments: [{ id: 'attci', filename: 'scan.jpg', mimeType: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,' + 'A'.repeat(600000) }] }];
+      await Storage.saveEncrypted('clients', c);
+      const stats = Backup.attachmentStats();
+      const full = JSON.stringify(await Backup.exportAll());
+      const lightData = await Backup.exportAll({ excludeAttachments: true });
+      const light = JSON.stringify(lightData);
+      const row = lightData.clients.find(x => x.id === 'CI1');
+      const dec = await CryptoModule.decryptJSON(Auth.cryptoKey, row.iv, row.cipher);
+      return { fullKB: Math.round(full.length / 1024), lightKB: Math.round(light.length / 1024), flag: !!lightData.attachmentsExcluded, emptied: dec.documents[0].attachments[0].dataUrl === '', kept: dec.documents[0].attachments[0].filename === 'scan.jpg', statsCount: stats.count, soapsKept: lightData.soaps.length };
+    });
+    assert(r.flag && r.emptied && r.kept, '가벼운 백업의 첨부 처리가 잘못됨: ' + JSON.stringify(r));
+    assert(r.lightKB * 3 < r.fullKB, '가벼운 백업이 충분히 작지 않음: ' + r.fullKB + 'KB → ' + r.lightKB + 'KB');
+    assert(r.statsCount === 1, '첨부 현황 집계가 다름: ' + r.statsCount);
+    // 가벼운 백업 파일로 복원 → 다시 로그인 → 기록은 남고 첨부 본문만 빈다
+    await page.evaluate(async () => {
+      const data = await Backup.exportAll({ excludeAttachments: true });
+      await Backup.importFromFile(new File([JSON.stringify(data)], 'light.json', { type: 'application/json' }));
+    });
+    await page.reload();
+    await page.waitForSelector('#loginPw', { state: 'visible' });
+    await page.fill('#loginPw', PASSWORD);
+    await page.click('#loginSubmitBtn');
+    await page.waitForSelector('#appShell:not(.hidden)');
+    await page.waitForFunction(() => document.getElementById('appMain').textContent.length > 50);
+    const after = await page.evaluate(() => ({ clients: Clients.list().length, soaps: SoapModule.list().length, att: Clients.get('CI1').documents[0].attachments[0] }));
+    assert(after.clients >= 2 && after.soaps >= 2, '복원 후 기록이 사라짐: ' + JSON.stringify(after));
+    assert(after.att.dataUrl === '' && after.att.filename === 'scan.jpg', '복원 후 첨부 상태가 다름');
+    await page.evaluate(() => UI.navigate('clientDetail', { id: 'CI1' }));
+    await page.waitForTimeout(200);
+    await show();
+    const ph = await page.evaluate(() => document.getElementById('appMain').textContent.includes('(파일 없음)'));
+    assert(ph, '비어 있는 첨부가 "파일 없음"으로 표시되지 않음');
+    noNewErrors('가벼운 백업 복원');
+  });
+
   await step('핵심 화면에 접근성 심각 위반이 없다 (라이트·다크)', async () => {
     for (const scheme of ['light', 'dark']){
       await page.emulateMedia({ colorScheme: scheme });
-      for (const [v, params] of [['dashboard', {}], ['clientDetail', { id: 'CI1' }], ['outcomes', {}], ['soapEditor', { prefillClientId: 'CI1' }]]){
+      for (const [v, params] of [['dashboard', {}], ['clientDetail', { id: 'CI1' }], ['outcomes', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['settings', {}]]){
         await page.evaluate(([name, p]) => UI.navigate(name, p), [v, params]);
         await page.waitForTimeout(150);
         await show();
