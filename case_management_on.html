@@ -2616,7 +2616,7 @@ const SelfCare = {
     await Storage.saveEncrypted('selfCareNotes', entry);
     return entry;
   },
-  async update(id, { date, category, title, note }){
+  async update(id, { date, category, stressLevel, title, note }){
     const existing = State.selfCareNotes.get(id);
     if (!existing) throw new Error('기록을 찾을 수 없습니다.');
     note = (note || '').trim();
@@ -2624,6 +2624,7 @@ const SelfCare = {
     const entry = Object.assign({}, existing, {
       date: date || existing.date,
       category: CONSTANTS.SELFCARE_CATEGORIES[category] ? category : existing.category,
+      stressLevel: CONSTANTS.STRESS_LEVELS[stressLevel] ? stressLevel : (existing.stressLevel || 'none'),
       title: (title || '').trim(),
       note
     });
@@ -6085,6 +6086,7 @@ const Views = {
      어디에도 집계되지 않는다. */
   selfCarePage(){
     const notes = SelfCare.list().filter(n => (n.category || 'selfcare') === 'selfcare');
+    const editing = State.currentParams.editId ? SelfCare.get(State.currentParams.editId) : null;
 
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('heart', { size: 22 }) + ' 자기돌봄 메모</h1></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">대상자 관리와 무관하게, 소진·감정 상태를 스스로 기록하는 공간입니다. 교육·연수나 슈퍼비전·자문 기록은 "📚 교육·슈퍼비전" 메뉴를 이용하세요. 통계나 리포트 어디에도 집계되지 않고, 오직 본인만 확인합니다.</p>';
@@ -6095,39 +6097,58 @@ const Views = {
     } else {
       notes.forEach(n => {
         const st = CONSTANTS.STRESS_LEVELS[n.stressLevel] || CONSTANTS.STRESS_LEVELS.none;
-        html += '<div class="list-row"><div class="list-row-main">' +
+        html += '<div class="list-row"' + (editing && editing.id === n.id ? ' style="outline:2px solid var(--accent);outline-offset:-2px;"' : '') + '><div class="list-row-main">' +
           '<div class="row-title">' + Utils.escapeHtml(n.title || '(제목 없음)') + '</div>' +
           '<div class="row-sub">' + n.date + ((n.stressLevel && n.stressLevel !== 'none') ? ' · <span class="badge ' + st.badgeClass + '">소진도 ' + st.label + '</span>' : '') + '</div>' +
           '<div class="row-sub" style="white-space:pre-line;margin-top:4px;">' + Utils.escapeHtml(n.note) + '</div>' +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
+          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-selfcare="' + n.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-selfcare="' + n.id + '">삭제</button></div></div>';
       });
     }
     html += '</div>';
 
-    html += '<div class="panel"><div class="panel-title">새 기록 추가</div><div class="form-grid">' +
-      '<div class="field full"><label>제목</label><input type="text" id="scTitle" maxlength="100" placeholder="예: 힘들었던 하루, 감사한 일"></div>' +
-      '<div class="field"><label>날짜</label><input type="date" id="scDate" value="' + Utils.todayStr() + '"></div>' +
+    const selStress = editing ? (editing.stressLevel || 'none') : 'none';
+    html += '<div class="panel" id="scFormPanel"><div class="panel-title">' + (editing ? '기록 수정' : '새 기록 추가') + '</div><div class="form-grid">' +
+      '<div class="field full"><label>제목</label><input type="text" id="scTitle" maxlength="100" placeholder="예: 힘들었던 하루, 감사한 일" value="' + Utils.escapeHtml(editing ? (editing.title || '') : '') + '"></div>' +
+      '<div class="field"><label>날짜</label><input type="date" id="scDate" value="' + (editing ? editing.date : Utils.todayStr()) + '"></div>' +
       '<div class="field"><label>소진도(선택)</label><select id="scStress">' +
-      Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '">' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>' +
-      '<div class="field full"><label>내용</label><textarea id="scNote" style="min-height:100px;" placeholder="오늘 힘들었던 점, 스스로에게 필요한 것 등을 자유롭게 적어보세요."></textarea></div></div>' +
-      '<button class="btn btn-sm btn-primary" id="addSelfCareBtn">＋ 기록하기</button></div>';
+      Object.keys(CONSTANTS.STRESS_LEVELS).map(k => '<option value="' + k + '"' + (selStress === k ? ' selected' : '') + '>' + CONSTANTS.STRESS_LEVELS[k].label + '</option>').join('') + '</select></div>' +
+      '<div class="field full"><label>내용</label><textarea id="scNote" style="min-height:100px;" placeholder="오늘 힘들었던 점, 스스로에게 필요한 것 등을 자유롭게 적어보세요.">' + Utils.escapeHtml(editing ? editing.note : '') + '</textarea></div></div>' +
+      '<div style="display:flex;gap:8px;">' +
+      '<button class="btn btn-sm btn-primary" id="addSelfCareBtn">' + (editing ? '저장' : '＋ 기록하기') + '</button>' +
+      (editing ? '<button class="btn btn-sm" id="cancelSelfCareEditBtn">취소</button>' : '') +
+      '</div></div>';
 
     return html;
   },
   bindSelfCarePage(){
+    const editId = State.currentParams.editId && SelfCare.get(State.currentParams.editId) ? State.currentParams.editId : null;
+    // navigate()가 렌더 직후 스크롤을 맨 위로 되돌리므로 한 프레임 뒤에 폼으로 이동한다.
+    if (editId) requestAnimationFrame(() => { const p = document.getElementById('scFormPanel'); if (p) p.scrollIntoView({ block: 'start' }); });
     document.getElementById('addSelfCareBtn').onclick = async () => {
       const note = document.getElementById('scNote').value;
       if (!note.trim()){ toast('내용을 입력해 주세요.', 'error'); return; }
-      await SelfCare.add({
+      const fields = {
         date: document.getElementById('scDate').value,
         category: 'selfcare',
         stressLevel: document.getElementById('scStress').value,
         title: document.getElementById('scTitle').value,
         note
-      });
-      toast('기록했습니다.');
-      UI.renderCurrentView();
+      };
+      if (editId){
+        await SelfCare.update(editId, fields);
+        toast('수정했습니다.');
+        UI.navigate('selfCare');
+      } else {
+        await SelfCare.add(fields);
+        toast('기록했습니다.');
+        UI.renderCurrentView();
+      }
     };
+    const cancelEditBtn = document.getElementById('cancelSelfCareEditBtn');
+    if (cancelEditBtn) cancelEditBtn.onclick = () => UI.navigate('selfCare');
+    document.querySelectorAll('[data-edit-selfcare]').forEach(el => {
+      el.onclick = () => UI.navigate('selfCare', { editId: el.dataset.editSelfcare });
+    });
     document.querySelectorAll('[data-del-selfcare]').forEach(el => {
       el.onclick = () => UI.confirm('이 기록을 삭제할까요?', async () => {
         const snap = SelfCare.snapshot(el.dataset.delSelfcare);
