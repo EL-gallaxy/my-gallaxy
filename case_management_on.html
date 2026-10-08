@@ -463,7 +463,7 @@
     #weekPrevBtn, #weekNextBtn, #weekTodayBtn, .calendar-grid, .week-grid,
     #genABtn, #regenABtn, #copyABtn, #copyAllBtn, #printSoapBtn, #printClientBtn,
     #saveDraftBtn, #saveFinalBtn, #deleteSoapBtn, #deleteClientBtn, #soapBackBtn, #backToClientsBtn,
-    #clNewSoap, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
+    #clNewSoap, #addFamilySessionBtn, #clNewPlan, #addPlanItemBtn, #addPlanReviewBtn, #savePlanBtn, #cancelPlanBtn, #clQuickRecord, #qbQuickRecord, .snippet-bar, #copyPrevSoapBtn, #clNewFollowUp, #clNewSchedule, #saveMseGoalsBtn, #saveRegInfoBtn, #saveIntakeBtn, #closeClientBtn,
     #reopenClientBtn, #addAdmissionBtn, #addResourceBtn, #addCrisisBtn, #addMedicationBtn,
     #addContactBtn, #addConferenceBtn, #addAssessmentBtn, #addDocBtn, #docNameInput, #addFamilyBtn,
     #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
@@ -1150,6 +1150,14 @@ const CONSTANTS = {
   // 퇴원 예정일이 이 일수 안으로 다가오면 대시보드에서 퇴원 후 연계 준비를 짚어준다.
   ADMISSION_DISCHARGE_SOON_DAYS: 14,
   SOAP_SUBJECTS: { client: '본인', family: '가족·보호자' },
+  // 가족 상담 기록 — 보호자·가족을 대상으로 한 상담·교육을 SOAP과 별도로 구조화해 남긴다.
+  FAMILY_SESSION_METHODS: ['전화', '방문', '내소', '가족교육·집단', '기타'],
+  FAMILY_TOPICS: ['질병 이해', '약물·부작용', '위기 대처·응급 연락', '의사소통 방법', '돌봄 부담·휴식', '지원 자원·제도 안내', '권리·법적 절차', '기타'],
+  FAMILY_BURDEN_LEVELS: {
+    low:    { label: '낮음', badgeClass: 'badge-temporary' },
+    medium: { label: '중간', badgeClass: 'badge-intensive' },
+    high:   { label: '높음', badgeClass: 'badge-crisis' }
+  },
   CRISIS_EVENT_TYPES: ['자살시도', '자해', '응급입원 동행', '112 신고', '119 신고', '타해 위험', '기타'],
   CONTACT_RELATIONS: ['배우자', '부모', '자녀', '형제자매', '기타 보호자', '기타'],
   ASSESSMENT_SCALES: ['GAF (전반적 기능평가)', 'K-MMSE (간이정신상태검사)', 'K-BDI (벡 우울척도)', 'BPRS (간이정신병리평가척도)', 'PHQ-9 (우울 선별)', 'GAD-7 (불안 선별)', 'C-SSRS (자살 위험 선별)', '기타'],
@@ -1710,6 +1718,70 @@ const Clients = {
       results.push({ clientId: c.id, alias: c.alias, plan, overdue: plan.nextReviewDate < today });
     });
     return results.sort((a, b) => a.plan.nextReviewDate.localeCompare(b.plan.nextReviewDate));
+  },
+
+  // 가족 상담 기록 — 참여자는 등록된 보호자·비상연락처에서 고르고(이름은 저장 시점의 표기를
+  // 함께 남겨 연락처가 나중에 지워져도 기록은 남는다), 그 외 참여자는 직접 적는다.
+  _cleanFamilySession(client, d, prev){
+    const t = (v) => (v || '').trim();
+    if (!d.date) throw new Error('날짜를 입력해 주세요.');
+    const contacts = client.emergencyContacts || [];
+    const participants = (d.participantIds || []).map(pid => {
+      const ec = contacts.find(x => x.id === pid);
+      if (ec) return { id: pid, label: (ec.name || '(이름 미입력)') + (ec.relation ? '(' + ec.relation + ')' : '') };
+      const old = prev && (prev.participants || []).find(x => x.id === pid);
+      return old || null;
+    }).filter(Boolean);
+    const other = t(d.otherParticipants);
+    if (!participants.length && !other) throw new Error('참여한 가족을 선택하거나 직접 입력해 주세요.');
+    return {
+      date: d.date,
+      method: CONSTANTS.FAMILY_SESSION_METHODS.includes(d.method) ? d.method : CONSTANTS.FAMILY_SESSION_METHODS[0],
+      participants, otherParticipants: other,
+      topics: (d.topics || []).filter(x => CONSTANTS.FAMILY_TOPICS.includes(x)),
+      burden: CONSTANTS.FAMILY_BURDEN_LEVELS[d.burden] ? d.burden : '',
+      concerns: t(d.concerns), strengths: t(d.strengths), intervention: t(d.intervention), agreement: t(d.agreement),
+      nextDate: d.nextDate || ''
+    };
+  },
+  // 다음 가족 연락 예정일이 있으면 "보호자 연락" 후속조치를 하나 만들고(처음 한 번),
+  // 이후 예정일을 고치면 아직 미완료인 그 후속조치의 기한도 같이 바꾼다.
+  async _syncFamilyFollowUp(client, session){
+    const fu = session.followUpId ? FollowUps.get(session.followUpId) : null;
+    if (session.nextDate && !fu){
+      const created = await FollowUps.add({ clientId: client.id, type: '보호자 연락', text: session.agreement || '가족 상담 후속 연락', dueDate: session.nextDate });
+      session.followUpId = created.id;
+    } else if (fu && fu.status === 'pending' && session.nextDate && fu.dueDate !== session.nextDate){
+      await FollowUps.update(fu.id, { clientId: fu.clientId, type: fu.type, text: fu.text, dueDate: session.nextDate, memo: fu.memo });
+    }
+  },
+  async addFamilySession(id, data){
+    const client = State.clients.get(id);
+    if (!client) throw new Error('대상자를 찾을 수 없습니다.');
+    const session = Object.assign({ id: Utils.uid('fs') }, this._cleanFamilySession(client, data, null));
+    await this._syncFamilyFollowUp(client, session);
+    client.familySessions = client.familySessions || [];
+    client.familySessions.push(session);
+    await Storage.saveEncrypted('clients', client);
+    return session;
+  },
+  async updateFamilySession(id, sid, data){
+    const client = State.clients.get(id);
+    const session = client && (client.familySessions || []).find(x => x.id === sid);
+    if (!session) throw new Error('가족 상담 기록을 찾을 수 없습니다.');
+    Object.assign(session, this._cleanFamilySession(client, data, session));
+    await this._syncFamilyFollowUp(client, session);
+    await Storage.saveEncrypted('clients', client);
+    return session;
+  },
+  async removeFamilySession(id, sid){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.familySessions = (client.familySessions || []).filter(x => x.id !== sid);
+    await Storage.saveEncrypted('clients', client);
+  },
+  familySessionParticipants(fs){
+    return (fs.participants || []).map(x => x.label).concat(fs.otherParticipants ? [fs.otherParticipants] : []).join(', ');
   },
 
   async addAdmission(id, { type, date, hospital, note, kind, expectedDischarge }){
@@ -3040,6 +3112,7 @@ const Search = {
       (c.riskAssessments || []).forEach(r => push(c, '위험도 평가', [(CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note].filter(Boolean).join(' · ')));
       (c.reassessments || []).forEach(r => push(c, '정기 재사정', r.note));
       (c.servicePlans || []).forEach(pl => (pl.items || []).forEach(i => push(c, '서비스계획', [i.area, i.goal, i.service, i.provider].filter(Boolean).join(' · '))));
+      (c.familySessions || []).forEach(fs => push(c, '가족 상담', [Clients.familySessionParticipants(fs), (fs.topics || []).join('·'), fs.concerns, fs.intervention, fs.agreement].filter(Boolean).join(' · ')));
       (c.admissions || []).forEach(a => push(c, '입퇴원 이력', [a.type, a.kind, a.hospital, a.note].filter(Boolean).join(' · ')));
       (c.tags || []).forEach(t => push(c, '특성 태그', t));
     });
@@ -3105,6 +3178,9 @@ const Stats = {
 
     const subjectCounts = { client: 0, family: 0 };
     soapsInMonth.forEach(s => { subjectCounts[s.subject === 'family' ? 'family' : 'client']++; });
+    // 가족 상담 기록(별도 양식)은 SOAP 상담 구분과 겹쳐 세지 않도록 따로 센다.
+    let familySessionCount = 0;
+    clients.forEach(c => (c.familySessions || []).forEach(fs => { if ((fs.date || '').startsWith(monthStr)) familySessionCount++; }));
 
     const closureReasonCounts = {};
     closures.forEach(c => { closureReasonCounts[c.closedReason || '기타'] = (closureReasonCounts[c.closedReason || '기타'] || 0) + 1; });
@@ -3135,7 +3211,7 @@ const Stats = {
       levelImprovedCount, levelWorsenedCount,
       totalSoaps: soapsInMonth.length,
       contactTypeCounts,
-      subjectCounts
+      subjectCounts, familySessionCount
     };
   },
 
@@ -3219,7 +3295,8 @@ const CSV = {
       ['관리수준 강화(악화) 건수', report.levelWorsenedCount || 0],
       ['해당월 총 상담건수', report.totalSoaps],
       ['본인 상담', report.subjectCounts.client || 0],
-      ['가족·보호자 상담', report.subjectCounts.family || 0]
+      ['가족·보호자 상담', report.subjectCounts.family || 0],
+      ['가족 상담 기록(별도 양식)', report.familySessionCount || 0]
     ];
     Object.keys(report.contactTypeCounts).forEach(k => rows.push([k + ' 상담', report.contactTypeCounts[k]]));
     Object.keys(report.closureReasonCounts).forEach(k => rows.push(['종결사유: ' + k, report.closureReasonCounts[k]]));
@@ -3240,7 +3317,8 @@ const CSV = {
       ['관리수준 강화(악화) 건수', report.levelWorsenedCount || 0],
       ['연간 총 상담건수', report.totalSoaps],
       ['본인 상담', report.subjectCounts.client || 0],
-      ['가족·보호자 상담', report.subjectCounts.family || 0]
+      ['가족·보호자 상담', report.subjectCounts.family || 0],
+      ['가족 상담 기록(별도 양식)', report.familySessionCount || 0]
     ];
     Object.keys(report.contactTypeCounts).forEach(k => rows.push([k + ' 상담', report.contactTypeCounts[k]]));
     Object.keys(report.closureReasonCounts).forEach(k => rows.push(['종결사유: ' + k, report.closureReasonCounts[k]]));
@@ -3838,6 +3916,7 @@ const Views = {
     (c.crisisEvents || []).forEach(ev => push(ev.date, ev.time || '', '⚠', '위기개입: ' + ev.type, ev.description || ''));
     (c.medications || []).forEach(m => push(m.date, '', '💊', '복약 등록', [m.name, m.dose].filter(Boolean).join(' ')));
     (c.caseConferences || []).forEach(cf => push(cf.date, '', '🗂', '사례회의', cf.decision || cf.discussion || ''));
+    (c.familySessions || []).forEach(fs => push(fs.date, '', '👪', '가족 상담: ' + fs.method, [Clients.familySessionParticipants(fs), (fs.topics || []).join('·')].filter(Boolean).join(' · ')));
     (c.servicePlans || []).forEach(pl => {
       push(pl.date, '', '🗒', '서비스계획 수립', (CONSTANTS.PLAN_STATUSES[pl.status] || {}).label + ' · 계획 항목 ' + (pl.items || []).length + '개');
       (pl.reviews || []).forEach(r => push(r.date, '', '🔁', '서비스계획 점검', r.note));
@@ -4790,6 +4869,42 @@ const Views = {
       '<div class="field full"><label>메모(선택)</label><input type="text" id="ecNote"></div></div>' +
       '<button class="btn btn-sm" id="addContactBtn">＋ 보호자 연락처 추가</button></details>';
 
+    // 가족 상담 기록 — 보호자·가족 대상 상담/교육을 SOAP과 별도로 구조화해 남긴다(월간·연간 보고서에 따로 집계).
+    const familySessions = (c.familySessions || []).slice().reverse().sort((a, b) => b.date.localeCompare(a.date));
+    safetyHtml += '<details class="panel"' + (familySessions.length ? ' open' : '') + '><summary class="panel-title">' + icon('users') + ' 가족 상담 기록</summary>';
+    if (familySessions.length === 0){
+      safetyHtml += '<div class="empty-msg">기록된 가족 상담이 없습니다.</div>';
+    } else {
+      familySessions.forEach(fs => {
+        const bl = CONSTANTS.FAMILY_BURDEN_LEVELS[fs.burden];
+        const line = (label, v) => v ? '<div class="row-sub" style="white-space:pre-line;">' + label + ': ' + Utils.escapeHtml(v) + '</div>' : '';
+        safetyHtml += '<div class="list-row"><div class="list-row-main">' +
+          '<div class="row-title">' + fs.date + ' · ' + Utils.escapeHtml(fs.method) + ' · ' + Utils.escapeHtml(Clients.familySessionParticipants(fs)) +
+          (bl ? ' <span class="badge ' + bl.badgeClass + '">돌봄 부담 ' + bl.label + '</span>' : '') + '</div>' +
+          ((fs.topics || []).length ? '<div class="row-sub">상담·교육 주제: ' + fs.topics.map(Utils.escapeHtml).join(' · ') + '</div>' : '') +
+          line('호소·요구', fs.concerns) + line('가족의 강점·자원', fs.strengths) + line('제공한 정보·개입', fs.intervention) + line('합의·결정', fs.agreement) +
+          (fs.nextDate ? '<div class="row-sub">다음 가족 연락 예정일: ' + fs.nextDate + '</div>' : '') +
+          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-fsession="' + fs.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-fsession="' + fs.id + '">삭제</button></div></div>';
+      });
+    }
+    safetyHtml += '<div class="divider"></div><div class="form-grid">' +
+      '<div class="field"><label>날짜</label><input type="date" id="fsDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field"><label>상담 방식</label><select id="fsMethod">' + CONSTANTS.FAMILY_SESSION_METHODS.map(m => '<option value="' + m + '">' + m + '</option>').join('') + '</select></div>' +
+      '<div class="field full"><label id="fsPartLabel">참여한 가족</label><div class="checkbox-group" role="group" aria-labelledby="fsPartLabel">' +
+      (emergencyContacts.length ? emergencyContacts.map(ec => '<label class="chip-check"><input type="checkbox" class="fsPartChk" value="' + ec.id + '">' + Utils.escapeHtml((ec.name || '(이름 미입력)') + (ec.relation ? '(' + ec.relation + ')' : '')) + '</label>').join('') : '<span class="help-text">위 "보호자·비상연락처"에 등록하면 여기서 고를 수 있습니다.</span>') +
+      '</div></div>' +
+      '<div class="field full"><label>그 외 참여자 (직접 입력)</label><input type="text" id="fsOther" placeholder="예: 이모, 이웃"></div>' +
+      '<div class="field full"><label id="fsTopicLabel">상담·교육 주제 (복수 선택)</label><div class="checkbox-group" role="group" aria-labelledby="fsTopicLabel">' +
+      CONSTANTS.FAMILY_TOPICS.map(tp => '<label class="chip-check"><input type="checkbox" class="fsTopicChk" value="' + tp + '">' + tp + '</label>').join('') + '</div></div>' +
+      '<div class="field"><label>돌봄 부담 정도 (실무자 판단)</label><select id="fsBurden"><option value="">(선택 안 함)</option>' + Object.keys(CONSTANTS.FAMILY_BURDEN_LEVELS).map(k => '<option value="' + k + '">' + CONSTANTS.FAMILY_BURDEN_LEVELS[k].label + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label>다음 가족 연락 예정일</label><input type="date" id="fsNext"></div>' +
+      '<div class="field full"><label>가족이 호소한 어려움·요구</label><textarea id="fsConcerns" style="min-height:60px;"></textarea></div>' +
+      '<div class="field full"><label>가족의 강점·지지 자원</label><textarea id="fsStrengths" style="min-height:50px;"></textarea></div>' +
+      '<div class="field full"><label>제공한 정보·교육·개입</label><textarea id="fsIntervention" style="min-height:60px;"></textarea></div>' +
+      '<div class="field full"><label>합의·결정 사항</label><textarea id="fsAgreement" style="min-height:50px;"></textarea></div></div>' +
+      '<p class="help-text" style="margin-bottom:10px;">다음 가족 연락 예정일을 입력하면 "보호자 연락" 후속조치가 한 번 등록되고, 예정일을 고치면 아직 완료하지 않은 그 후속조치의 기한도 함께 바뀝니다.</p>' +
+      '<button class="btn btn-sm" id="addFamilySessionBtn">＋ 가족 상담 기록 추가</button></details>';
+
     // 사례회의(수퍼비전) 기록 — 팀 단위로 논의된 내용과 결정사항을 SOAP과 별개로 남긴다.
     // 이 아래 세 패널(사례회의/사정도구/서류)은 신입 직원에게 당장 급하지
     // 않은 고급 기능이라 간소화 모드에서 숨긴다.
@@ -5000,7 +5115,7 @@ const Views = {
     const tabDefs = [
       { key: 'basic', label: '기본정보', count: 0 },
       { key: 'history', label: '이력관리', count: admissions.length + resourceLinks.length + medications.length + assessments.length + documents.length },
-      { key: 'safety', label: '위기·안전', count: crisisEvents.length + emergencyContacts.length + familyLinks.length + caseConferences.length },
+      { key: 'safety', label: '위기·안전', count: crisisEvents.length + emergencyContacts.length + familyLinks.length + caseConferences.length + familySessions.length },
       { key: 'soap', label: 'SOAP', count: pendingFus.length },
       { key: 'plan', label: '서비스계획', count: plans.length }
     ];
@@ -5243,6 +5358,19 @@ const Views = {
       { attr: 'data-edit-doc', list: 'documents', btn: 'addDocBtn', done: '서류 항목 이름을 수정했습니다.',
         fill: d => { set('docNameInput', d.name); },
         read: () => { need(val('docNameInput').trim(), '서류 이름을 입력해 주세요.'); return { name: val('docNameInput').trim() }; } },
+      { attr: 'data-edit-fsession', list: 'familySessions', btn: 'addFamilySessionBtn', done: '가족 상담 기록을 수정했습니다.',
+        fill: fs => {
+          const contacts = (Clients.get(id).emergencyContacts || []).map(ec => ec.id);
+          // 이미 삭제된 연락처의 참여자는 체크할 칸이 없으므로 "그 외 참여자"에 이름을 옮겨 적어 보존한다.
+          const orphans = (fs.participants || []).filter(x => !contacts.includes(x.id)).map(x => x.label);
+          set('fsDate', fs.date); set('fsMethod', fs.method); set('fsBurden', fs.burden); set('fsNext', fs.nextDate);
+          set('fsOther', [fs.otherParticipants].concat(orphans).filter(Boolean).join(', '));
+          set('fsConcerns', fs.concerns); set('fsStrengths', fs.strengths); set('fsIntervention', fs.intervention); set('fsAgreement', fs.agreement);
+          document.querySelectorAll('.fsPartChk').forEach(chk => { chk.checked = (fs.participants || []).some(x => x.id === chk.value); chk.closest('.chip-check').classList.toggle('checked', chk.checked); });
+          document.querySelectorAll('.fsTopicChk').forEach(chk => { chk.checked = (fs.topics || []).includes(chk.value); chk.closest('.chip-check').classList.toggle('checked', chk.checked); });
+        },
+        read: () => Views._readFamilySession(),
+        save: (itemId, patch) => Clients.updateFamilySession(id, itemId, patch) },
       { attr: 'data-edit-family', list: 'familyLinks', btn: 'addFamilyBtn', done: '가족 관계를 수정했습니다.',
         hint: '연결된 대상자는 바꿀 수 없고, 관계와 메모만 수정됩니다(상대방 쪽에도 함께 반영).',
         fill: fl => { set('famRelation', fl.relation); set('famNote', fl.note); },
@@ -5770,6 +5898,38 @@ const Views = {
       el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient });
     });
 
+    const readFamilySession = () => ({
+      date: document.getElementById('fsDate').value,
+      method: document.getElementById('fsMethod').value,
+      participantIds: Array.from(document.querySelectorAll('.fsPartChk:checked')).map(el => el.value),
+      otherParticipants: document.getElementById('fsOther').value,
+      topics: Array.from(document.querySelectorAll('.fsTopicChk:checked')).map(el => el.value),
+      burden: document.getElementById('fsBurden').value,
+      concerns: document.getElementById('fsConcerns').value,
+      strengths: document.getElementById('fsStrengths').value,
+      intervention: document.getElementById('fsIntervention').value,
+      agreement: document.getElementById('fsAgreement').value,
+      nextDate: document.getElementById('fsNext').value
+    });
+    Views._readFamilySession = readFamilySession;
+    document.querySelectorAll('.fsTopicChk, .fsPartChk').forEach(chk => {
+      chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
+    });
+    document.getElementById('addFamilySessionBtn').onclick = async () => {
+      try{
+        const fs = await Clients.addFamilySession(id, readFamilySession());
+        toast('가족 상담 기록을 추가했습니다.' + (fs.followUpId ? ' 후속조치도 등록했습니다.' : ''));
+        UI.renderCurrentView();
+      }catch(e){ toast(e.message, 'error'); }
+    };
+    document.querySelectorAll('[data-del-fsession]').forEach(el => {
+      el.onclick = () => UI.confirm('이 가족 상담 기록을 삭제할까요? (이미 등록된 후속조치는 그대로 남습니다.)', async () => {
+        const snap = Clients.snapshot(id);
+        await Clients.removeFamilySession(id, el.dataset.delFsession);
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
     Views._bindItemEdits(id);
 
     let editingTag = null;
@@ -7105,7 +7265,8 @@ const Views = {
     html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">본인/가족·보호자 상담 구분</p>' +
       Views.renderBarChart([
         { label: '본인', value: r.subjectCounts.client || 0 },
-        { label: '가족·보호자', value: r.subjectCounts.family || 0 }
+        { label: '가족·보호자', value: r.subjectCounts.family || 0 },
+        { label: '가족 상담 기록', value: r.familySessionCount || 0 }
       ]);
 
     const reasonKeys = Object.keys(r.closureReasonCounts);
@@ -7164,7 +7325,8 @@ const Views = {
     html += '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">본인/가족·보호자 상담 구분</p>' +
       Views.renderBarChart([
         { label: '본인', value: r.subjectCounts.client || 0 },
-        { label: '가족·보호자', value: r.subjectCounts.family || 0 }
+        { label: '가족·보호자', value: r.subjectCounts.family || 0 },
+        { label: '가족 상담 기록', value: r.familySessionCount || 0 }
       ]);
 
     const reasonKeys = Object.keys(r.closureReasonCounts);
