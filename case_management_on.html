@@ -1487,6 +1487,33 @@ const Clients = {
     await Storage.saveEncrypted('clients', client);
   },
 
+  // 대상자 상세의 목록형 항목(목표·복약·비상연락처 등)을 제자리에서 고친다.
+  // listKey는 client 안의 배열 이름이고, patch의 값으로 해당 항목만 덮어쓴다.
+  async updateItem(id, listKey, itemId, patch){
+    const client = State.clients.get(id);
+    if (!client) throw new Error('대상자를 찾을 수 없습니다.');
+    const item = (client[listKey] || []).find(x => x.id === itemId);
+    if (!item) throw new Error('항목을 찾을 수 없습니다.');
+    Object.assign(item, patch);
+    await Storage.saveEncrypted('clients', client);
+  },
+  // 가족 관계는 상대방 쪽에도 같은 pairId의 역관계가 있으므로 함께 맞춘다.
+  async updateFamilyLink(id, linkId, { relation, note }){
+    const client = State.clients.get(id);
+    const link = client && (client.familyLinks || []).find(l => l.id === linkId);
+    if (!link) throw new Error('항목을 찾을 수 없습니다.');
+    link.relation = relation;
+    link.note = (note || '').trim();
+    await Storage.saveEncrypted('clients', client);
+    const related = State.clients.get(link.relatedClientId);
+    const back = related && (related.familyLinks || []).find(l => l.pairId === link.pairId);
+    if (back){
+      back.relation = CONSTANTS.FAMILY_RELATIONS[relation] || relation;
+      back.note = link.note;
+      await Storage.saveEncrypted('clients', related);
+    }
+  },
+
   async addAdmission(id, { type, date, hospital, note }){
     const client = State.clients.get(id);
     if (!client) return;
@@ -3973,7 +4000,7 @@ const Views = {
               '<select class="goalStatusSelect" data-goal="' + g.id + '">' +
               Object.keys(CONSTANTS.GOAL_STATUSES).map(k => '<option value="' + k + '"' + (k === g.status ? ' selected' : '') + '>' + CONSTANTS.GOAL_STATUSES[k].label + '</option>').join('') +
               '</select>' +
-              '<button class="btn btn-sm btn-danger" data-del-goal="' + g.id + '">삭제</button></div></div>';
+              '<button class="btn btn-sm" data-edit-goal="' + g.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-goal="' + g.id + '">삭제</button></div></div>';
           });
         });
       }
@@ -4002,7 +4029,7 @@ const Views = {
           historyHtml += '<div class="list-row"><div class="list-row-main">' +
             '<div class="row-title">' + r.date + '</div>' +
             (r.note ? '<div class="row-sub">' + Utils.escapeHtml(r.note) + '</div>' : '') +
-            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-reassess="' + r.id + '">삭제</button></div></div>';
+            '</div><div class="row-actions"><button class="btn btn-sm" data-edit-reassess="' + r.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-reassess="' + r.id + '">삭제</button></div></div>';
         });
       }
       historyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4061,7 +4088,7 @@ const Views = {
           '<div class="row-title">' + r.date + ' · <span class="badge ' + li.badgeClass + '">' + li.label + '</span></div>' +
           (checkedFactors.length ? '<div class="row-sub">해당 항목: ' + checkedFactors.map(Utils.escapeHtml).join(', ') + '</div>' : '<div class="row-sub">해당하는 위험 요인 없음</div>') +
           (r.note ? '<div class="row-sub">메모: ' + Utils.escapeHtml(r.note) + '</div>' : '') +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-risk="' + r.id + '">삭제</button></div></div>';
+          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-risk="' + r.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-risk="' + r.id + '">삭제</button></div></div>';
       });
     }
     safetyHtml += '<div class="divider"></div>' +
@@ -4109,7 +4136,7 @@ const Views = {
           '<div class="row-title">' + ev.date + (ev.time ? ' ' + ev.time : '') + ' · <span class="badge badge-crisis">' + Utils.escapeHtml(ev.type) + '</span></div>' +
           (ev.description ? '<div class="row-sub">경위: ' + Utils.escapeHtml(ev.description) + '</div>' : '') +
           (ev.action ? '<div class="row-sub">조치: ' + Utils.escapeHtml(ev.action) + '</div>' : '') +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-crisis="' + ev.id + '">삭제</button></div></div>';
+          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-crisis="' + ev.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-crisis="' + ev.id + '">삭제</button></div></div>';
       });
     }
     safetyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4132,7 +4159,7 @@ const Views = {
         historyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.type) + (a.hospital ? ' · ' + Utils.escapeHtml(a.hospital) : '') + '</div>' +
           (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-admission="' + a.id + '">삭제</button></div></div>';
+          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-admission="' + a.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-admission="' + a.id + '">삭제</button></div></div>';
       });
     }
     historyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4155,7 +4182,7 @@ const Views = {
           historyHtml += '<div class="list-row"><div class="list-row-main">' +
             '<div class="row-title">' + r.date + ' · ' + Utils.escapeHtml(r.type) + (r.name ? ' · ' + Utils.escapeHtml(r.name) : '') + '</div>' +
             '<div class="row-sub">' + [r.contact, r.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
-            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
+            '</div><div class="row-actions"><button class="btn btn-sm" data-edit-resource="' + r.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
         });
       }
       historyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4183,7 +4210,7 @@ const Views = {
           '<div class="row-sub">' + [m.hospital, m.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') +
           (m.nextRxDate ? (([m.hospital, m.note].filter(Boolean).length ? ' · ' : '') + '다음 처방(진료) 예정일: ' + m.nextRxDate) : '') + '</div>' +
           (m.sideEffects ? '<div class="row-sub" style="color:var(--danger);">⚠ 부작용/특이사항: ' + Utils.escapeHtml(m.sideEffects) + '</div>' : '') +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-medication="' + m.id + '">삭제</button></div></div>';
+          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-medication="' + m.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-medication="' + m.id + '">삭제</button></div></div>';
       });
     }
     historyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4206,7 +4233,7 @@ const Views = {
         safetyHtml += '<div class="list-row"><div class="list-row-main">' +
           '<div class="row-title">' + Utils.escapeHtml(ec.name || '(이름 미입력)') + ' · ' + Utils.escapeHtml(ec.relation) + '</div>' +
           '<div class="row-sub">' + [ec.phone, ec.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-contact="' + ec.id + '">삭제</button></div></div>';
+          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-contact="' + ec.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-contact="' + ec.id + '">삭제</button></div></div>';
       });
     }
     safetyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4231,7 +4258,7 @@ const Views = {
             '<div class="row-title">' + cf.date + (cf.attendees ? ' · 참석자: ' + Utils.escapeHtml(cf.attendees) : '') + '</div>' +
             (cf.discussion ? '<div class="row-sub">논의내용: ' + Utils.escapeHtml(cf.discussion) + '</div>' : '') +
             (cf.decision ? '<div class="row-sub">결정사항: ' + Utils.escapeHtml(cf.decision) + '</div>' : '') +
-            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-conference="' + cf.id + '">삭제</button></div></div>';
+            '</div><div class="row-actions"><button class="btn btn-sm" data-edit-conference="' + cf.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-conference="' + cf.id + '">삭제</button></div></div>';
         });
       }
       safetyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4254,7 +4281,7 @@ const Views = {
           historyHtml += '<div class="list-row"><div class="list-row-main">' +
             '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.scale) + (a.score ? ' — ' + Utils.escapeHtml(a.score) + '점' : '') + '</div>' +
             (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
-            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-assessment="' + a.id + '">삭제</button></div></div>';
+            '</div><div class="row-actions"><button class="btn btn-sm" data-edit-assessment="' + a.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-assessment="' + a.id + '">삭제</button></div></div>';
         });
       }
       historyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4313,7 +4340,7 @@ const Views = {
           historyHtml += '<div class="list-row"><div class="list-row-main">' +
             '<div class="row-title">' + cs.date + ' · ' + Utils.escapeHtml(cs.agency) + ' <span class="badge ' + (cs.granted ? 'badge-final' : 'badge-crisis') + '">' + (cs.granted ? '동의' : '미동의') + '</span></div>' +
             (cs.note ? '<div class="row-sub">' + Utils.escapeHtml(cs.note) + '</div>' : '') +
-            '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-consent="' + cs.id + '">삭제</button></div></div>';
+            '</div><div class="row-actions"><button class="btn btn-sm" data-edit-consent="' + cs.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-consent="' + cs.id + '">삭제</button></div></div>';
         });
       }
       historyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4335,7 +4362,7 @@ const Views = {
         safetyHtml += '<div class="list-row"><div class="list-row-main" data-goto-client="' + fl.relatedClientId + '" style="cursor:pointer;">' +
           '<div class="row-title">' + Utils.escapeHtml(fl.relatedClientId) + (relatedClient && relatedClient.alias ? ' (' + Utils.escapeHtml(relatedClient.alias) + ')' : '') + ' · ' + Utils.escapeHtml(fl.relation) + '</div>' +
           (fl.note ? '<div class="row-sub">' + Utils.escapeHtml(fl.note) + '</div>' : '') +
-          '</div><div class="row-actions"><button class="btn btn-sm btn-danger" data-del-family="' + fl.id + '">삭제</button></div></div>';
+          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-family="' + fl.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-family="' + fl.id + '">삭제</button></div></div>';
       });
     }
     safetyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -4409,6 +4436,112 @@ const Views = {
     html += Views.printSignatureHtml();
     return html;
   },
+  // 대상자 상세의 "수정" 버튼 공통 처리 — 항목의 수정 버튼을 누르면 아래 입력
+  // 폼에 기존 값이 채워지고 추가 버튼이 "저장"으로 바뀐다(취소 버튼 포함).
+  // 저장하면 그 항목만 덮어쓰고, 폼이 없는 화면(간소화 모드 등)은 건너뛴다.
+  _bindItemEdits(id){
+    const val = (el) => document.getElementById(el).value;
+    const set = (el, v) => { document.getElementById(el).value = (v == null ? '' : v); };
+    const need = (cond, msg) => { if (!cond) throw new Error(msg); };
+    const specs = [
+      { attr: 'data-edit-goal', list: 'goals', btn: 'addGoalBtn', done: '목표를 수정했습니다.',
+        fill: g => { set('goalTerm', g.term); set('goalText', g.text); },
+        read: () => { need(val('goalText').trim(), '목표 내용을 입력해 주세요.'); return { term: val('goalTerm') === 'short' ? 'short' : 'long', text: val('goalText').trim() }; } },
+      { attr: 'data-edit-admission', list: 'admissions', btn: 'addAdmissionBtn', done: '입퇴원 기록을 수정했습니다.',
+        fill: a => { set('admType', a.type); set('admDate', a.date); set('admHospital', a.hospital); set('admNote', a.note); },
+        read: () => { need(val('admDate'), '날짜를 입력해 주세요.'); return { type: val('admType'), date: val('admDate'), hospital: val('admHospital').trim(), note: val('admNote').trim() }; } },
+      { attr: 'data-edit-resource', list: 'resourceLinks', btn: 'addResourceBtn', done: '자원연계를 수정했습니다.',
+        fill: r => { set('resType', r.type); set('resName', r.name); set('resContact', r.contact); set('resDate', r.date); set('resNote', r.note); },
+        read: () => { need(val('resName').trim(), '기관/자원명을 입력해 주세요.'); return { type: val('resType'), name: val('resName').trim(), contact: val('resContact').trim(), date: val('resDate') || Utils.todayStr(), note: val('resNote').trim() }; } },
+      { attr: 'data-edit-medication', list: 'medications', btn: 'addMedicationBtn', done: '복약 정보를 수정했습니다.',
+        fill: m => { set('medName', m.name); set('medDose', m.dose); set('medHospital', m.hospital); set('medDate', m.date); set('medNextRx', m.nextRxDate); set('medSideEffects', m.sideEffects); set('medNote', m.note); },
+        read: () => { need(val('medName').trim(), '약물명을 입력해 주세요.'); return { name: val('medName').trim(), dose: val('medDose').trim(), hospital: val('medHospital').trim(), date: val('medDate') || Utils.todayStr(), nextRxDate: val('medNextRx'), sideEffects: val('medSideEffects').trim(), note: val('medNote').trim() }; } },
+      { attr: 'data-edit-contact', list: 'emergencyContacts', btn: 'addContactBtn', done: '보호자 연락처를 수정했습니다.',
+        fill: ec => { set('ecName', ec.name); set('ecRelation', ec.relation); set('ecPhone', ec.phone); set('ecNote', ec.note); },
+        read: () => { need(val('ecName').trim() || val('ecPhone').trim(), '이름 또는 연락처를 입력해 주세요.'); return { name: val('ecName').trim(), relation: val('ecRelation'), phone: val('ecPhone').trim(), note: val('ecNote').trim() }; } },
+      { attr: 'data-edit-conference', list: 'caseConferences', btn: 'addConferenceBtn', done: '사례회의 기록을 수정했습니다.',
+        fill: cf => { set('confDate', cf.date); set('confAttendees', cf.attendees); set('confDiscussion', cf.discussion); set('confDecision', cf.decision); },
+        read: () => { need(val('confDate'), '날짜를 입력해 주세요.'); return { date: val('confDate'), attendees: val('confAttendees').trim(), discussion: val('confDiscussion').trim(), decision: val('confDecision').trim() }; } },
+      { attr: 'data-edit-crisis', list: 'crisisEvents', btn: 'addCrisisBtn', done: '위기개입 기록을 수정했습니다.',
+        fill: ev => { set('crisisType', ev.type); set('crisisDate', ev.date); set('crisisTime', ev.time); set('crisisDescription', ev.description); set('crisisAction', ev.action); },
+        read: () => ({ type: val('crisisType'), date: val('crisisDate') || Utils.todayStr(), time: val('crisisTime'), description: val('crisisDescription').trim(), action: val('crisisAction').trim() }) },
+      { attr: 'data-edit-assessment', list: 'assessments', btn: 'addAssessmentBtn', done: '사정도구 점수를 수정했습니다.',
+        fill: a => {
+          const known = CONSTANTS.ASSESSMENT_SCALES.includes(a.scale) && a.scale !== '기타';
+          set('assessScale', known ? a.scale : '기타');
+          set('assessCustomScale', known ? '' : a.scale);
+          document.getElementById('assessCustomWrap').classList.toggle('hidden', known);
+          set('assessScore', a.score); set('assessDate', a.date); set('assessNote', a.note);
+        },
+        read: () => {
+          const scale = val('assessScale') === '기타' ? (val('assessCustomScale').trim() || '기타') : val('assessScale');
+          return { scale, score: val('assessScore').trim(), date: val('assessDate') || Utils.todayStr(), note: val('assessNote').trim() };
+        } },
+      { attr: 'data-edit-risk', list: 'riskAssessments', btn: 'addRiskBtn', done: '위험도 평가를 수정했습니다.',
+        fill: r => {
+          set('riskDate', r.date); set('riskLevel', r.level); set('riskNote', r.note);
+          document.querySelectorAll('.riskFactorChk').forEach(chk => { chk.checked = !!(r.factors && r.factors[chk.dataset.factor]); });
+        },
+        read: () => {
+          const factors = {};
+          document.querySelectorAll('.riskFactorChk').forEach(chk => { factors[chk.dataset.factor] = chk.checked; });
+          return { date: val('riskDate') || Utils.todayStr(), level: val('riskLevel'), factors, note: val('riskNote').trim() };
+        } },
+      { attr: 'data-edit-consent', list: 'consents', btn: 'addConsentBtn', done: '정보공유 동의 이력을 수정했습니다.',
+        fill: cs => { set('consentDate', cs.date); set('consentGranted', cs.granted ? 'yes' : 'no'); set('consentAgency', cs.agency); set('consentNote', cs.note); },
+        read: () => { need(val('consentAgency').trim(), '공유 대상 기관·목적을 입력해 주세요.'); return { date: val('consentDate') || Utils.todayStr(), granted: val('consentGranted') !== 'no', agency: val('consentAgency').trim(), note: val('consentNote').trim() }; } },
+      { attr: 'data-edit-reassess', list: 'reassessments', btn: 'addReassessBtn', done: '재사정 기록을 수정했습니다.',
+        fill: r => { set('reassessDate', r.date); set('reassessNote', r.note); },
+        read: () => ({ date: val('reassessDate') || Utils.todayStr(), note: val('reassessNote').trim() }) },
+      { attr: 'data-edit-family', list: 'familyLinks', btn: 'addFamilyBtn', done: '가족 관계를 수정했습니다.',
+        hint: '연결된 대상자는 바꿀 수 없고, 관계와 메모만 수정됩니다(상대방 쪽에도 함께 반영).',
+        fill: fl => { set('famRelation', fl.relation); set('famNote', fl.note); },
+        read: () => ({ relation: val('famRelation'), note: val('famNote') }),
+        save: (itemId, patch) => Clients.updateFamilyLink(id, itemId, patch) }
+    ];
+
+    specs.forEach(sp => {
+      const btn = document.getElementById(sp.btn);
+      if (!btn) return;
+      const addLabel = btn.textContent;
+      const addHandler = btn.onclick;
+      let editingId = null;
+      let cancelBtn = null;
+      btn.onclick = async (e) => {
+        if (!editingId) return addHandler && addHandler.call(btn, e);
+        try{
+          const patch = sp.read();
+          if (sp.save) await sp.save(editingId, patch);
+          else await Clients.updateItem(id, sp.list, editingId, patch);
+          toast(sp.done);
+          UI.renderCurrentView();
+        }catch(err){
+          toast(err.message || '저장하지 못했습니다.', 'error');
+        }
+      };
+      document.querySelectorAll('[' + sp.attr + ']').forEach(el => {
+        el.onclick = () => {
+          const client = Clients.get(id);
+          const item = ((client && client[sp.list]) || []).find(x => x.id === el.getAttribute(sp.attr));
+          if (!item) return;
+          sp.fill(item);
+          editingId = item.id;
+          btn.textContent = '저장';
+          if (!cancelBtn){
+            cancelBtn = document.createElement('button');
+            cancelBtn.className = 'btn btn-sm';
+            cancelBtn.style.marginLeft = '8px';
+            cancelBtn.textContent = '취소';
+            cancelBtn.onclick = () => UI.renderCurrentView();
+            btn.after(cancelBtn);
+          }
+          if (sp.hint) toast(sp.hint);
+          btn.scrollIntoView({ block: 'center' });
+        };
+      });
+    });
+  },
+
   bindClientDetail(id){
     document.querySelectorAll('.detail-tab-btn').forEach(btn => {
       btn.onclick = () => {
@@ -4854,6 +4987,8 @@ const Views = {
     document.querySelectorAll('#appMain [data-goto-client]').forEach(el => {
       el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient });
     });
+
+    Views._bindItemEdits(id);
 
     document.getElementById('addTagBtn').onclick = async () => {
       const input = document.getElementById('newTagInput');
