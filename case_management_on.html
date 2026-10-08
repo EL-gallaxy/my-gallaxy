@@ -173,6 +173,8 @@
     border:1px solid var(--border-strong);background:var(--surface);color:var(--text);
   }
   .lock-btn:hover{background:var(--danger-soft);border-color:var(--danger);color:var(--danger);}
+  .lock-btn.backup-chip{margin-bottom:8px;border-color:var(--warn);background:var(--warn-soft);color:var(--warn-text);}
+  .lock-btn.backup-chip:hover{background:var(--warn-soft);border-color:var(--warn);color:var(--warn-text);text-decoration:underline;}
 
   .recent-clients{padding:0 18px 10px 18px;}
   .recent-clients .recent-title{font-size:0.72rem;color:var(--text-faint);margin-bottom:6px;}
@@ -576,6 +578,7 @@
       <button class="nav-btn" id="navMoreBtn" type="button"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16"/></svg> <span class="nav-label">더보기</span></button>
     </nav>
     <div id="recentClientsBox" class="recent-clients"></div>
+    <button class="lock-btn backup-chip hidden" id="backupChipBtn" type="button"></button>
     <button class="lock-btn" id="lockNowBtn"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="1.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg> <span class="nav-label">잠금</span></button>
   </header>
   <main id="appMain" tabindex="-1"></main>
@@ -1011,6 +1014,7 @@ const Storage = {
     }));
   },
   idbPut(storeName, value){
+    if (Backup.DATA_STORES.includes(storeName)) Backup.markDirty();
     return this._tx(storeName, 'readwrite').then(store => new Promise((resolve, reject) => {
       const req = store.put(value);
       req.onsuccess = () => resolve();
@@ -1018,6 +1022,7 @@ const Storage = {
     }));
   },
   idbDelete(storeName, key){
+    if (Backup.DATA_STORES.includes(storeName)) Backup.markDirty();
     return this._tx(storeName, 'readwrite').then(store => new Promise((resolve, reject) => {
       const req = store.delete(key);
       req.onsuccess = () => resolve();
@@ -1113,6 +1118,10 @@ const CONSTANTS = {
   CLOSURE_REASONS: ['자립/목표 달성', '타 기관 이관', '장기 입원', '관할지역 전출', '사망', '연락두절', '본인 거부', '기타'],
   RESOURCE_TYPES: ['정신재활시설(주간재활 등)', '직업재활시설', '정신의료기관', '사회복지관', '자활센터', '주거지원', '기타'],
   ADMISSION_TYPES: ['입원', '퇴원'],
+  // 정신건강복지법상 입원 형태 — 입원 기록에만 붙는다.
+  ADMISSION_KINDS: ['자의입원', '동의입원', '보호입원', '행정입원', '응급입원', '기타·미상'],
+  // 퇴원 예정일이 이 일수 안으로 다가오면 대시보드에서 퇴원 후 연계 준비를 짚어준다.
+  ADMISSION_DISCHARGE_SOON_DAYS: 14,
   SOAP_SUBJECTS: { client: '본인', family: '가족·보호자' },
   CRISIS_EVENT_TYPES: ['자살시도', '자해', '응급입원 동행', '112 신고', '119 신고', '타해 위험', '기타'],
   CONTACT_RELATIONS: ['배우자', '부모', '자녀', '형제자매', '기타 보호자', '기타'],
@@ -1350,7 +1359,7 @@ const FontSize = {
 const DashboardPrefs = {
   WIDGETS: {
     crisis: icon('siren') + ' 위기관리 대상자 현황', overdue: icon('alertTriangle') + ' 기한 초과 후속조치', gap: icon('clock') + ' 미접촉 대상자',
-    medRenewal: icon('pill') + ' 복약 갱신 임박', reassessment: icon('clipboardList') + ' 정기 재사정 필요', safetyGap: icon('shield') + ' 안전 정보 공백 점검',
+    inpatient: icon('building') + ' 입원 중 대상자', medRenewal: icon('pill') + ' 복약 갱신 임박', reassessment: icon('clipboardList') + ' 정기 재사정 필요', safetyGap: icon('shield') + ' 안전 정보 공백 점검',
     today: icon('clock') + ' 오늘 할 일', draft: icon('edit') + ' 미완성 SOAP', recent: '최근 기록', dataManage: '데이터 관리'
   },
   hidden: {},
@@ -1555,15 +1564,47 @@ const Clients = {
     }
   },
 
-  async addAdmission(id, { type, date, hospital, note }){
+  // 입원 형태(kind)와 퇴원 예정일은 "입원" 기록에만 의미가 있으므로, 퇴원 기록에는 비워 둔다.
+  admissionExtras(type, kind, expectedDischarge, date){
+    const isIn = (type || '입원') === '입원';
+    if (isIn && expectedDischarge && date && expectedDischarge < date) throw new Error('퇴원 예정일이 입원일보다 빠를 수 없습니다.');
+    return {
+      kind: isIn && CONSTANTS.ADMISSION_KINDS.includes(kind) ? kind : '',
+      expectedDischarge: isIn ? (expectedDischarge || '') : ''
+    };
+  },
+  async addAdmission(id, { type, date, hospital, note, kind, expectedDischarge }){
     const client = State.clients.get(id);
     if (!client) return;
     client.admissions = client.admissions || [];
-    client.admissions.push({
-      id: Utils.uid('adm'), type: type || '입원', date: date || Utils.todayStr(),
+    const when = date || Utils.todayStr();
+    client.admissions.push(Object.assign({
+      id: Utils.uid('adm'), type: type || '입원', date: when,
       hospital: (hospital || '').trim(), note: (note || '').trim()
-    });
+    }, this.admissionExtras(type, kind, expectedDischarge, when)));
     await Storage.saveEncrypted('clients', client);
+  },
+  // 가장 최근 입퇴원 기록이 "입원"이면 현재 입원 중으로 본다(같은 날짜면 나중에 입력한 기록이 우선).
+  currentAdmission(client){
+    const latest = (client.admissions || []).slice().reverse().sort((a, b) => b.date.localeCompare(a.date))[0];
+    return latest && latest.type === '입원' ? latest : null;
+  },
+  getInpatients(){
+    const today = Utils.todayStr();
+    const dayDiff = (from, to) => Math.round((new Date(to) - new Date(from)) / 86400000);
+    const soonLimit = CONSTANTS.ADMISSION_DISCHARGE_SOON_DAYS;
+    const results = [];
+    this.list().forEach(c => {
+      if (c.status === 'closed') return;
+      const a = this.currentAdmission(c);
+      if (!a) return;
+      const toDischarge = a.expectedDischarge ? dayDiff(today, a.expectedDischarge) : null;
+      results.push({
+        clientId: c.id, alias: c.alias, admission: a, admittedDays: Math.max(0, dayDiff(a.date, today)),
+        toDischarge, overdue: toDischarge !== null && toDischarge < 0, soon: toDischarge !== null && toDischarge >= 0 && toDischarge <= soonLimit
+      });
+    });
+    return results.sort((x, y) => (x.admission.expectedDischarge || '9999').localeCompare(y.admission.expectedDischarge || '9999'));
   },
   async removeAdmission(id, admissionId){
     const client = State.clients.get(id);
@@ -2827,7 +2868,7 @@ const Search = {
       (c.assessments || []).forEach(a => push(c, '사정도구 점수', [a.scale, a.score, a.note].filter(Boolean).join(' · ')));
       (c.riskAssessments || []).forEach(r => push(c, '위험도 평가', [(CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note].filter(Boolean).join(' · ')));
       (c.reassessments || []).forEach(r => push(c, '정기 재사정', r.note));
-      (c.admissions || []).forEach(a => push(c, '입퇴원 이력', [a.type, a.hospital, a.note].filter(Boolean).join(' · ')));
+      (c.admissions || []).forEach(a => push(c, '입퇴원 이력', [a.type, a.kind, a.hospital, a.note].filter(Boolean).join(' · ')));
       (c.tags || []).forEach(t => push(c, '특성 태그', t));
     });
     return results;
@@ -3108,6 +3149,25 @@ const CSV = {
    moves the file themselves.
    ========================================================================= */
 const Backup = {
+  DATA_STORES: ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes'],
+  // 마지막 백업 이후 기록이 바뀌었는지 추적한다. undefined = 아직 추적 전(이 기능이
+  // 생기기 전부터 쓰던 경우 — 바뀌었을 수 있다고 본다), null = 백업 후 변경 없음,
+  // 날짜 문자열 = 백업 후 처음 바뀐 시각.
+  dirtySince: undefined,
+  statusCached: { never: false, days: 0, overdue: false, changed: false },
+  async init(){
+    this.dirtySince = await Storage.getSetting('backupDirtySince');
+  },
+  markDirty(){
+    if (this.dirtySince) return;
+    this.dirtySince = new Date().toISOString();
+    Storage.setSetting('backupDirtySince', this.dirtySince).catch(() => {});
+  },
+  async clearDirty(){
+    this.dirtySince = null;
+    await Storage.setSetting('backupDirtySince', null);
+  },
+
   SETTINGS_KEYS: ['authSalt', 'authIterations', 'authVerifierIV', 'authVerifierCipher', 'autoLockMinutes', 'seedClientIds'],
   overdueCached: false,
 
@@ -3127,15 +3187,35 @@ const Backup = {
     const data = await this.exportAll();
     CSV.download('case_management_on_backup_' + Utils.todayStr() + '.json', JSON.stringify(data, null, 2), 'application/json');
     await Storage.setSetting('lastBackupAt', new Date().toISOString());
-    this.overdueCached = false;
+    await this.clearDirty();
+    await this.refresh();
   },
 
-  REMINDER_THRESHOLD_DAYS: 14,
-  async isBackupOverdue(){
+  // 백업이 필요한지 판단한다: 한 번도 안 했고 기록이 있거나, 마지막 백업 후
+  // 이 일수가 지났고 그 사이 바뀐 기록이 있을 때. 바뀐 게 없으면 재촉하지 않는다.
+  REMINDER_THRESHOLD_DAYS: 7,
+  async status(){
     const lastBackupAt = await Storage.getSetting('lastBackupAt');
-    if (!lastBackupAt) return true;
-    const daysSince = (Date.now() - new Date(lastBackupAt).getTime()) / 86400000;
-    return daysSince >= this.REMINDER_THRESHOLD_DAYS;
+    if (!lastBackupAt){
+      const hasData = State.clients.size > 0 || State.soaps.size > 0;
+      return { never: true, days: null, overdue: hasData, changed: hasData };
+    }
+    const days = Math.floor((Date.now() - new Date(lastBackupAt).getTime()) / 86400000);
+    const changed = this.dirtySince !== null;
+    return { never: false, days, overdue: changed && days >= this.REMINDER_THRESHOLD_DAYS, changed };
+  },
+  async refresh(){
+    this.statusCached = await this.status();
+    this.overdueCached = this.statusCached.overdue;
+    UI.renderBackupChip();
+  },
+  // 앱을 켜 둔 채로 며칠이 지나도 알아채도록 창이 다시 보일 때와 1시간마다 다시 확인한다.
+  _watching: false,
+  startWatcher(){
+    if (this._watching) return;
+    this._watching = true;
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') Backup.refresh(); });
+    setInterval(() => Backup.refresh(), 60 * 60 * 1000);
   },
 
   async importFromFile(file){
@@ -3158,6 +3238,8 @@ const Backup = {
     for (const row of (data.schedules || [])) await Storage.idbPut('schedules', row);
     for (const row of (data.resourceDirectory || [])) await Storage.idbPut('resourceDirectory', row);
     for (const row of (data.selfCareNotes || [])) await Storage.idbPut('selfCareNotes', row);
+    // 복원한 직후의 상태는 그 백업 파일과 같으므로 "변경 없음"으로 돌려놓는다.
+    await this.clearDirty();
   }
 };
 
@@ -3425,6 +3507,19 @@ const UI = {
   // 모바일 하단 바가 "핵심 4개 + 더보기"로 접힐 때, 더보기 안의 화면을 보고
   // 있으면 더보기 버튼 자체도 활성 표시가 되도록 여기 나열해 둔다.
   NAV_SECONDARY_VIEWS: ['schedule', 'resourceDirectory', 'search', 'stats', 'selfCare', 'training', 'settings'],
+  // 백업이 필요하면 어느 화면에서든 보이는 작은 버튼을 띄운다(누르면 바로 백업 파일 저장).
+  renderBackupChip(){
+    const btn = document.getElementById('backupChipBtn');
+    if (!btn) return;
+    const st = Backup.statusCached;
+    btn.classList.toggle('hidden', !st.overdue);
+    if (!st.overdue) return;
+    const label = st.never ? '백업 필요' : '백업 ' + st.days + '일 경과';
+    btn.innerHTML = icon('database') + ' <span class="nav-label">' + label + '</span>';
+    btn.title = (st.never ? '아직 백업한 적이 없습니다.' : '마지막 백업 후 ' + st.days + '일이 지났고 그 사이 기록이 바뀌었습니다.') + ' 누르면 지금 백업 파일을 저장합니다.';
+    btn.setAttribute('aria-label', label + ' — 지금 백업 파일 저장');
+  },
+
   renderSidebarActive(){
     document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.view === State.currentView);
@@ -3511,7 +3606,7 @@ const Views = {
       events.push({ date, time: time || '', icon, label, sub: sub || '', soapId: soapId || '' });
     };
     push(c.registrationDate, '', '📝', '등록', c.referralSource ? '의뢰경로: ' + c.referralSource : '');
-    (c.admissions || []).forEach(a => push(a.date, '', a.type === '퇴원' ? '🚪' : '🏥', a.type, a.hospital || ''));
+    (c.admissions || []).forEach(a => push(a.date, '', a.type === '퇴원' ? '🚪' : '🏥', a.type + (a.kind ? '(' + a.kind + ')' : ''), a.hospital || ''));
     (c.resourceLinks || []).forEach(r => push(r.date, '', '🔗', '자원연계', [r.type, r.name].filter(Boolean).join(' · ')));
     (c.crisisEvents || []).forEach(ev => push(ev.date, ev.time || '', '⚠', '위기개입: ' + ev.type, ev.description || ''));
     (c.medications || []).forEach(m => push(m.date, '', '💊', '복약 등록', [m.name, m.dose].filter(Boolean).join(' ')));
@@ -3653,6 +3748,7 @@ const Views = {
     const upcomingCount = Views.scheduleCombinedItems().filter(it => it.status === 'planned' && it.date >= today).length;
     const contactGaps = Clients.contactGapList();
     const medRenewals = Clients.getUpcomingMedicationRenewals(CONSTANTS.MEDICATION_RENEWAL_ALERT_DAYS);
+    const inpatients = Clients.getInpatients();
     const crisisClients = Clients.list().filter(c => c.managementLevel === 'crisis' && c.status !== 'closed');
     const reassessGaps = Clients.reassessmentGapList();
     const safetyGaps = Clients.safetyGapList();
@@ -3667,8 +3763,10 @@ const Views = {
     }
 
     if (Backup.overdueCached){
+      const bst = Backup.statusCached;
       html += '<div class="example-banner" style="border-color:var(--warn);background:var(--warn-soft);">' +
-        '<span>⏰ 최근 ' + Backup.REMINDER_THRESHOLD_DAYS + '일 이상 백업하지 않았습니다. 데이터는 이 브라우저에만 저장되어 있으니, 지금 백업해 두는 것을 권장합니다.</span>' +
+        '<span>⏰ ' + (bst.never ? '아직 백업한 적이 없습니다.' : '마지막 백업 후 ' + bst.days + '일이 지났고, 그 사이 기록이 바뀌었습니다.') +
+        ' 데이터는 이 브라우저에만 저장되어 있으니, 지금 백업 파일을 저장해 두세요.</span>' +
         '<button class="btn btn-sm" id="backupNowBannerBtn">지금 백업하기</button></div>';
     }
 
@@ -3687,6 +3785,7 @@ const Views = {
       '<button class="summary-card upcoming" data-goto="schedule" data-filter="upcoming"><div class="num">' + upcomingCount + '</div><div class="label">' + icon('calendar', { size: 15 }) + ' 예정 일정</div></button>' +
       (hide('gap') ? '' : '<button class="summary-card gap" data-scroll="gapSection"><div class="num">' + contactGaps.length + '</div><div class="label">' + icon('clock', { size: 15 }) + ' 미접촉 대상자</div></button>') +
       (hide('crisis') ? '' : '<button class="summary-card overdue" data-scroll="crisisSection"><div class="num">' + crisisClients.length + '</div><div class="label">' + icon('siren', { size: 15 }) + ' 위기관리 대상자</div></button>') +
+      (hide('inpatient') ? '' : '<button class="summary-card gap" data-scroll="inpatientSection"><div class="num">' + inpatients.length + '</div><div class="label">' + icon('building', { size: 15 }) + ' 입원 중 대상자</div></button>') +
       (hide('medRenewal') ? '' : '<button class="summary-card overdue" data-scroll="medRenewalSection"><div class="num">' + medRenewals.length + '</div><div class="label">' + icon('pill', { size: 15 }) + ' 복약 갱신 임박</div></button>') +
       (hide('reassessment') ? '' : '<button class="summary-card gap" data-scroll="reassessmentSection"><div class="num">' + reassessGaps.length + '</div><div class="label">' + icon('clipboardList', { size: 15 }) + ' 정기 재사정 필요</div></button>') +
       (hide('safetyGap') ? '' : '<button class="summary-card overdue" data-scroll="safetyGapSection"><div class="num">' + safetyGaps.length + '</div><div class="label">' + icon('shield', { size: 15 }) + ' 안전 정보 공백</div></button>') +
@@ -3780,6 +3879,19 @@ const Views = {
       if (p.count === 0){ clearLabels.push(p.clearLabel); return; }
       html += '<div class="panel" id="' + p.id + '"><div class="panel-title">' + p.title + '</div>' + p.body() + '</div>';
     });
+    // 입원 중 대상자 — "이상"이 아니라 현황이므로 점검 목록과 달리 있을 때만 보여준다.
+    if (!hide('inpatient') && inpatients.length){
+      html += '<div class="panel" id="inpatientSection"><div class="panel-title">' + icon('building') + ' 입원 중 대상자 (퇴원 예정 ' + CONSTANTS.ADMISSION_DISCHARGE_SOON_DAYS + '일 이내는 퇴원 후 연계 준비)</div>';
+      inpatients.forEach(r => {
+        html += '<div class="gap-row" data-goto-client="' + r.clientId + '" style="cursor:pointer;">' +
+          '<strong>' + Utils.escapeHtml(r.clientId) + '</strong>' + (r.alias ? ' (' + Utils.escapeHtml(r.alias) + ')' : '') +
+          (r.admission.kind ? ' <span class="badge badge-draft">' + Utils.escapeHtml(r.admission.kind) + '</span>' : '') +
+          (r.overdue ? ' <span class="badge badge-crisis">⏰ 퇴원 예정일 경과</span>' : r.soon ? ' <span class="badge badge-pending">⏳ 퇴원 임박</span>' : '') +
+          '<br><span style="font-size:0.82rem;">' + (r.admission.hospital ? Utils.escapeHtml(r.admission.hospital) + ' · ' : '') + '입원 ' + (r.admittedDays + 1) + '일째' +
+          (r.admission.expectedDischarge ? ' · 퇴원 예정일: ' + r.admission.expectedDischarge : ' · 퇴원 예정일 미입력') + '</span></div>';
+      });
+      html += '</div>';
+    }
     if (clearLabels.length){
       html += '<div class="panel" style="display:flex;align-items:center;gap:10px;background:var(--good-soft);border-color:var(--good);">' +
         '<span style="color:var(--good);">' + icon('shield') + '</span>' +
@@ -4326,12 +4438,23 @@ const Views = {
     // 이력이며, 앱이 입원 여부를 추정하거나 진단을 다루지 않는다.
     const admissions = (c.admissions || []).slice().sort((a, b) => b.date.localeCompare(a.date));
     historyHtml += '<details class="panel"' + (admissions.length ? ' open' : '') + '><summary class="panel-title">' + icon('building') + ' 입퇴원 이력</summary>';
+    const curAdm = Clients.currentAdmission(c);
+    if (curAdm){
+      const admDays = Math.max(0, Math.round((new Date(Utils.todayStr()) - new Date(curAdm.date)) / 86400000));
+      const toDis = curAdm.expectedDischarge ? Math.round((new Date(curAdm.expectedDischarge) - new Date(Utils.todayStr())) / 86400000) : null;
+      historyHtml += '<div class="example-banner" style="border-color:var(--warn);background:var(--warn-soft);"><span>🏥 <strong>현재 입원 중</strong>' +
+        (curAdm.kind ? ' (' + Utils.escapeHtml(curAdm.kind) + ')' : '') + (curAdm.hospital ? ' · ' + Utils.escapeHtml(curAdm.hospital) : '') +
+        ' · 입원 ' + (admDays + 1) + '일째' +
+        (toDis === null ? '' : ' · 퇴원 예정 ' + curAdm.expectedDischarge + (toDis < 0 ? ' (' + (-toDis) + '일 경과)' : toDis === 0 ? ' (오늘)' : ' (D-' + toDis + ')')) +
+        '</span></div>';
+    }
     if (admissions.length === 0){
       historyHtml += '<div class="empty-msg">기록된 입퇴원 이력이 없습니다.</div>';
     } else {
       admissions.forEach(a => {
         historyHtml += '<div class="list-row"><div class="list-row-main">' +
-          '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.type) + (a.hospital ? ' · ' + Utils.escapeHtml(a.hospital) : '') + '</div>' +
+          '<div class="row-title">' + a.date + ' · ' + Utils.escapeHtml(a.type) + (a.kind ? ' (' + Utils.escapeHtml(a.kind) + ')' : '') + (a.hospital ? ' · ' + Utils.escapeHtml(a.hospital) : '') + '</div>' +
+          (a.expectedDischarge ? '<div class="row-sub">퇴원 예정일: ' + a.expectedDischarge + '</div>' : '') +
           (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
           '</div><div class="row-actions"><button class="btn btn-sm" data-edit-admission="' + a.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-admission="' + a.id + '">삭제</button></div></div>';
       });
@@ -4340,6 +4463,9 @@ const Views = {
       '<div class="field"><label>구분</label><select id="admType">' +
       CONSTANTS.ADMISSION_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select></div>' +
       '<div class="field"><label>날짜</label><input type="date" id="admDate" value="' + Utils.todayStr() + '"></div>' +
+      '<div class="field" id="admKindWrap"><label>입원 형태</label><select id="admKind">' +
+      '<option value="">(선택 안 함)</option>' + CONSTANTS.ADMISSION_KINDS.map(k => '<option value="' + k + '">' + k + '</option>').join('') + '</select></div>' +
+      '<div class="field" id="admExpectedWrap"><label>퇴원 예정일(선택)</label><input type="date" id="admExpectedDischarge"></div>' +
       '<div class="field"><label>병원(선택)</label><input type="text" id="admHospital"></div>' +
       '<div class="field"><label>메모(선택)</label><input type="text" id="admNote"></div></div>' +
       '<button class="btn btn-sm" id="addAdmissionBtn">＋ 입퇴원 기록 추가</button></details>';
@@ -4623,8 +4749,18 @@ const Views = {
         fill: g => { set('goalTerm', g.term); set('goalText', g.text); },
         read: () => { need(val('goalText').trim(), '목표 내용을 입력해 주세요.'); return { term: val('goalTerm') === 'short' ? 'short' : 'long', text: val('goalText').trim() }; } },
       { attr: 'data-edit-admission', list: 'admissions', btn: 'addAdmissionBtn', done: '입퇴원 기록을 수정했습니다.',
-        fill: a => { set('admType', a.type); set('admDate', a.date); set('admHospital', a.hospital); set('admNote', a.note); },
-        read: () => { need(val('admDate'), '날짜를 입력해 주세요.'); return { type: val('admType'), date: val('admDate'), hospital: val('admHospital').trim(), note: val('admNote').trim() }; } },
+        fill: a => {
+          set('admType', a.type); set('admDate', a.date); set('admKind', a.kind); set('admExpectedDischarge', a.expectedDischarge);
+          set('admHospital', a.hospital); set('admNote', a.note);
+          document.getElementById('admType').dispatchEvent(new Event('change'));
+        },
+        read: () => {
+          need(val('admDate'), '날짜를 입력해 주세요.');
+          return Object.assign(
+            { type: val('admType'), date: val('admDate'), hospital: val('admHospital').trim(), note: val('admNote').trim() },
+            Clients.admissionExtras(val('admType'), val('admKind'), val('admExpectedDischarge'), val('admDate'))
+          );
+        } },
       { attr: 'data-edit-resource', list: 'resourceLinks', btn: 'addResourceBtn', done: '자원연계를 수정했습니다.',
         fill: r => { set('resType', r.type); set('resName', r.name); set('resContact', r.contact); set('resDate', r.date); set('resNote', r.note); },
         read: () => { need(val('resName').trim(), '기관/자원명을 입력해 주세요.'); return { type: val('resType'), name: val('resName').trim(), contact: val('resContact').trim(), date: val('resDate') || Utils.todayStr(), note: val('resNote').trim() }; } },
@@ -4832,16 +4968,28 @@ const Views = {
       UI.renderCurrentView();
     });
 
+    // 입원 형태·퇴원 예정일은 "입원"을 고른 경우에만 보인다.
+    const syncAdmissionFields = () => {
+      const isIn = document.getElementById('admType').value === '입원';
+      document.getElementById('admKindWrap').classList.toggle('hidden', !isIn);
+      document.getElementById('admExpectedWrap').classList.toggle('hidden', !isIn);
+    };
+    document.getElementById('admType').onchange = syncAdmissionFields;
+    syncAdmissionFields();
     document.getElementById('addAdmissionBtn').onclick = async () => {
       const date = document.getElementById('admDate').value;
       if (!date){ toast('날짜를 입력해 주세요.', 'error'); return; }
-      await Clients.addAdmission(id, {
-        type: document.getElementById('admType').value,
-        date, hospital: document.getElementById('admHospital').value,
-        note: document.getElementById('admNote').value
-      });
-      toast('입퇴원 기록을 추가했습니다.');
-      UI.renderCurrentView();
+      try{
+        await Clients.addAdmission(id, {
+          type: document.getElementById('admType').value,
+          date, hospital: document.getElementById('admHospital').value,
+          kind: document.getElementById('admKind').value,
+          expectedDischarge: document.getElementById('admExpectedDischarge').value,
+          note: document.getElementById('admNote').value
+        });
+        toast('입퇴원 기록을 추가했습니다.');
+        UI.renderCurrentView();
+      }catch(e){ toast(e.message, 'error'); }
     };
     document.querySelectorAll('[data-del-admission]').forEach(el => {
       el.onclick = () => UI.confirm('이 입퇴원 기록을 삭제할까요?', async () => {
@@ -7156,6 +7304,10 @@ async function bootstrapApp(){
   });
   document.getElementById('navMoreBtn').addEventListener('click', () => UI.openMobileMoreMenu());
   document.getElementById('lockNowBtn').addEventListener('click', () => Auth.lock());
+  document.getElementById('backupChipBtn').addEventListener('click', async () => {
+    try{ await Backup.downloadBackup(); toast('백업 파일을 저장했습니다.'); UI.renderCurrentView(); }
+    catch(e){ console.error(e); toast('백업 파일 생성에 실패했습니다.', 'error'); }
+  });
   document.getElementById('skipToMain').addEventListener('click', (e) => {
     e.preventDefault();
     document.getElementById('appMain').focus();
@@ -7210,7 +7362,9 @@ async function bootstrapApp(){
 
   Auth.startIdleWatcher();
   Notifications.start();
-  Backup.overdueCached = await Backup.isBackupOverdue();
+  await Backup.init();
+  await Backup.refresh();
+  Backup.startWatcher();
   UI.renderRecentClients();
 
   UI.navigate('dashboard', {});
