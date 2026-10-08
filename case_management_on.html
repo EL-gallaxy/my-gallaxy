@@ -452,6 +452,8 @@
 
   /* signature lines shown only when printing */
   .print-signature{display:none;}
+  .lt-out{display:none;white-space:pre-line;}
+  @media print{ .lt-out{display:block;margin-top:2px;} .lt-in, #ltTo, #ltDate, #ltReply, #ltContact{display:none !important;} #printLetterBtn, #backFromLetterBtn{display:none !important;} }
   @media print{ #monthEndCheck, #soapRefPanel{display:none !important;} }
   @media print{
     .print-signature{display:flex !important;gap:18px 40px;flex-wrap:wrap;margin-top:32px;padding-top:16px;border-top:1px solid #999;}
@@ -874,6 +876,11 @@ const Utils = {
     return first.getFullYear() + '-' + String(first.getMonth() + 1).padStart(2, '0') + '-' + String(Math.min(d, last)).padStart(2, '0');
   },
   // 분 단위 시간을 "2시간 35분" 꼴로 바꾼다.
+  // 소요 시간 입력값 정리 — 1~720분 정수만 인정하고 나머지는 빈 값으로 둔다.
+  cleanMinutes(v){
+    const n = parseInt(v, 10);
+    return n >= 1 && n <= 720 ? n : '';
+  },
   formatMinutes(min){
     min = Math.max(0, Math.round(min));
     const h = Math.floor(min / 60), m = min % 60;
@@ -2591,6 +2598,15 @@ const Clients = {
   // 한 번도 없었으면 등록일부터 경과 일수를 센다 — 등록 후 한 번도 대면으로 만난
   // 적 없는 대상자를 놓치지 않기 위함이다. 기준 일수는 관리수준별로 다르며(위기관리일수록
   // 짧게), 이를 넘지 않으면 null을 반환한다.
+  // 월 접촉 계획(횟수) 대비 이번 달 실제 상담 기록 수. 계획을 정하지 않은 경우 빈 문자열.
+  monthSoapCount(clientId, monthStr){
+    return SoapModule.list().filter(s => s.clientId === clientId && (s.date || '').startsWith(monthStr)).length;
+  },
+  contactPlanText(client){
+    const plan = parseInt(client.contactPlanPerMonth, 10);
+    if (!(plan > 0)) return '';
+    return '이번 달 ' + this.monthSoapCount(client.id, Utils.todayStr().slice(0, 7)) + '회 / 계획 ' + plan + '회';
+  },
   getContactGapInfo(clientId){
     const client = this.get(clientId);
     if (!client || client.status === 'closed') return null;
@@ -2884,7 +2900,7 @@ const SoapModule = {
   createBlank(prefill){
     prefill = prefill || {};
     return {
-      id: '', clientId: prefill.clientId || '', date: Utils.todayStr(), time: '', contactType: '전화',
+      id: '', clientId: prefill.clientId || '', date: Utils.todayStr(), time: '', durationMin: '', contactType: '전화',
       subject: prefill.subject || 'client',
       areas: [], S: '', O: '', A: '', PText: prefill.PText || '', PActions: [], pDate: '',
       status: 'draft', createdAt: '', updatedAt: ''
@@ -3035,7 +3051,7 @@ const SoapModule = {
   },
 
   // 최종 저장된 기록을 고치면 고치기 전 내용을 revisions에 남긴다(내용·상태가 실제로 바뀐 경우만).
-  REVISION_FIELDS: ['date', 'time', 'contactType', 'subject', 'areas', 'S', 'O', 'A', 'PActions', 'PText', 'pDate'],
+  REVISION_FIELDS: ['date', 'time', 'durationMin', 'contactType', 'subject', 'areas', 'S', 'O', 'A', 'PActions', 'PText', 'pDate'],
   _revisionOf(prev, replacedAt){
     const snap = { id: Utils.uid('rev'), replacedAt, savedAt: prev.updatedAt || '', status: prev.status };
     this.REVISION_FIELDS.forEach(k => { snap[k] = JSON.parse(JSON.stringify(prev[k] === undefined ? '' : prev[k])); });
@@ -3540,6 +3556,16 @@ const Stats = {
       referralStatusCounts[key] = (referralStatusCounts[key] || 0) + 1;
     }));
 
+    // 소요 시간 — 시간을 적은 기록만 합산한다(적지 않은 기록은 건수에서도 따로 센다).
+    const durationByType = {};
+    let durationTotal = 0, durationRecorded = 0;
+    soapsInMonth.forEach(s => {
+      const m = parseInt(s.durationMin, 10);
+      if (!(m > 0)) return;
+      const d = durationByType[s.contactType] = durationByType[s.contactType] || { count: 0, minutes: 0 };
+      d.count++; d.minutes += m; durationTotal += m; durationRecorded++;
+    });
+
     const closureReasonCounts = {};
     closures.forEach(c => { closureReasonCounts[c.closedReason || '기타'] = (closureReasonCounts[c.closedReason || '기타'] || 0) + 1; });
 
@@ -3569,7 +3595,8 @@ const Stats = {
       levelImprovedCount, levelWorsenedCount,
       totalSoaps: soapsInMonth.length,
       contactTypeCounts,
-      subjectCounts, familySessionCount, referralStatusCounts, referralTotal
+      subjectCounts, familySessionCount, referralStatusCounts, referralTotal,
+      durationByType, durationTotal, durationRecorded
     };
   },
 
@@ -3620,6 +3647,16 @@ const Stats = {
       .filter(c => c.status !== 'closed' && ['crisis', 'intensive'].includes(c.managementLevel) && (c.registrationDate || '') <= monthEnd && !contacted.has(c.id))
       .map(c => ({ clientId: c.id, date: '', text: (CONSTANTS.MANAGEMENT_LEVELS[c.managementLevel].label || c.managementLevel) + ' · 이 달 상담 기록 없음' }));
 
+    const today2 = Utils.todayStr();
+    out.planShortfall = [];
+    if (monthEnd <= Utils.addDaysStr(today2, 6)){
+      clients.forEach(c => {
+        const plan = parseInt(c.contactPlanPerMonth, 10);
+        if (!(plan > 0) || c.status === 'closed' || (c.registrationDate || '') > monthEnd) return;
+        const n = Clients.monthSoapCount(c.id, monthStr);
+        if (n < plan) out.planShortfall.push({ clientId: c.id, date: '', text: '월 접촉 계획 ' + plan + '회 · 실제 ' + n + '회' });
+      });
+    }
     out.contactGap = Clients.contactGapList().map(g => ({ clientId: g.clientId, date: '', text: '마지막 대면 접촉 후 ' + Utils.formatElapsedDays(g.days) + ' 경과' }));
     out.reassessGap = Clients.reassessmentGapList().map(g => ({ clientId: g.clientId, date: '', text: '정기 재사정 ' + Utils.formatElapsedDays(g.days) + ' 경과' }));
     out.planOverdue = Clients.getPlanReviews().filter(r => r.overdue).map(r => ({ clientId: r.clientId, date: r.plan.nextReviewDate, text: '서비스계획 점검일 ' + r.plan.nextReviewDate + ' 경과' }));
@@ -4422,6 +4459,7 @@ const UI = {
       case 'servicePlanPrint': main.innerHTML = Views.servicePlanPrint(State.currentParams); Views.bindServicePlanPrint(State.currentParams); break;
       case 'crisisReport': main.innerHTML = Views.crisisReport(State.currentParams); Views.bindCrisisReport(State.currentParams); break;
       case 'handoverSummary': main.innerHTML = Views.handoverSummary(State.currentParams.id); Views.bindHandoverSummary(State.currentParams.id); break;
+      case 'referralLetter': main.innerHTML = Views.referralLetter(State.currentParams); Views.bindReferralLetter(State.currentParams); break;
       case 'caseloadSummary': main.innerHTML = Views.caseloadSummary(); Views.bindCaseloadSummary(); break;
       case 'soapList': main.innerHTML = Views.soapList(); Views.bindSoapList(); break;
       case 'soapEditor': main.innerHTML = Views.soapEditor(State.currentParams); Views.bindSoapEditor(State.currentParams); break;
@@ -5107,6 +5145,7 @@ const Views = {
       Object.keys(CONSTANTS.MANAGEMENT_LEVELS).map(k => '<option value="' + k + '"' + (k === c.managementLevel ? ' selected' : '') + '>' + CONSTANTS.MANAGEMENT_LEVELS[k].emoji + ' ' + CONSTANTS.MANAGEMENT_LEVELS[k].label + '</option>').join('') +
       '</select>' +
       '<span class="help-text" style="margin-left:6px;">관리 수준은 담당자가 직접 지정합니다.</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:6px;"><label for="contactPlanInput" style="font-size:0.88rem;">월 접촉 계획</label><input type="number" min="0" max="60" id="contactPlanInput" style="width:70px;" value="' + (c.contactPlanPerMonth || '') + '"><span class="help-text" id="contactPlanActual">' + Clients.contactPlanText(c) + '</span></span>' +
       '<div style="margin-left:auto;display:flex;gap:8px;">' +
       (isClosed
         ? '<button class="btn btn-sm" id="reopenClientBtn">↩ 재등록</button>'
@@ -5451,7 +5490,7 @@ const Views = {
             '<div class="row-sub">' + [r.contact, r.note].filter(Boolean).map(Utils.escapeHtml).join(' · ') + '</div>' +
             (dueR ? '<div class="row-sub">결과 확인 예정일: ' + dueR + (dueR < todayR ? ' <span class="badge badge-crisis">⏰ 확인 경과</span>' : '') + (r.lastCheckDate ? ' · 마지막 확인 ' + r.lastCheckDate + '(회신 없음)' : '') + '</div>' : '') +
             (r.resultDate ? '<div class="row-sub">결과 확인일 ' + r.resultDate + (r.resultNote ? ': ' + Utils.escapeHtml(r.resultNote) : '') + '</div>' : '') +
-            '</div><div class="row-actions"><button class="btn btn-sm btn-primary" data-res-result="' + r.id + '">결과 기록</button><button class="btn btn-sm" data-edit-resource="' + r.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
+            '</div><div class="row-actions"><button class="btn btn-sm btn-primary" data-res-result="' + r.id + '">결과 기록</button><button class="btn btn-sm" data-res-letter="' + r.id + '">의뢰서</button><button class="btn btn-sm" data-edit-resource="' + r.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-resource="' + r.id + '">삭제</button></div></div>';
         });
       }
       historyHtml += '<div class="divider"></div><div class="form-grid">' +
@@ -6086,6 +6125,14 @@ const Views = {
     document.getElementById('emergencyInfoBtn').onclick = () => Views.openEmergencyInfoModal(id);
     document.getElementById('backToClientsBtn').onclick = () => UI.navigate('clients');
     document.getElementById('printClientBtn').onclick = () => Views.openPrintOptionsModal();
+    document.getElementById('contactPlanInput').onchange = async (e) => {
+      const n = parseInt(e.target.value, 10);
+      const v = n > 0 && n <= 60 ? n : '';
+      e.target.value = v;
+      await Clients.update(id, { contactPlanPerMonth: v });
+      document.getElementById('contactPlanActual').textContent = Clients.contactPlanText(Clients.get(id));
+      toast(v ? '월 접촉 계획을 저장했습니다.' : '월 접촉 계획을 지웠습니다.');
+    };
     document.getElementById('mgmtLevelSelect').onchange = (e) => {
       const newLevel = e.target.value;
       const prevLevel = Clients.get(id).managementLevel;
@@ -6230,6 +6277,7 @@ const Views = {
       document.getElementById('resStatus').onchange = syncResStatus;
       syncResStatus();
     }
+    document.querySelectorAll('[data-res-letter]').forEach(el => { el.onclick = () => UI.navigate('referralLetter', { clientId: id, linkId: el.dataset.resLetter }); });
     document.querySelectorAll('[data-res-result]').forEach(el => { el.onclick = () => Views.openReferralResultModal(id, el.dataset.resResult); });
     if (addResourceBtn) addResourceBtn.onclick = async () => {
       const name = document.getElementById('resName').value;
@@ -6930,6 +6978,50 @@ const Views = {
       }catch(e){ toast(e.message || '저장하지 못했습니다.', 'error'); }
     };
   },
+  // 연계 의뢰서 — 화면에서 문구를 다듬고 그대로 인쇄한다. 기본 문구는 연계 기록의 메모에서 가져오며,
+  // 대상자 이름은 넣지 않고 ID(별칭)만 쓴다. 기관 밖으로 나가는 문서이므로 보낼 정보는 본인이 확인하도록 안내한다.
+  referralLetter(params){
+    const c = Clients.get(params.clientId);
+    const link = c && (c.resourceLinks || []).find(r => r.id === params.linkId);
+    if (!link) return '<p>연계 기록을 찾을 수 없습니다.</p><button class="btn" onclick="UI.navigate(\'clients\')">목록으로</button>';
+    const e = Utils.escapeHtml;
+    const age = Utils.calculateAge(c.birthDate);
+    const field = (id, label, value, rows) => '<div class="field full"><label for="' + id + '">' + label + '</label>' +
+      '<textarea class="lt-in" id="' + id + '" style="min-height:' + (rows * 24) + 'px;">' + e(value || '') + '</textarea>' +
+      '<div class="lt-out" id="' + id + 'Out"></div></div>';
+    let html = Views.printHeaderHtml('연계 의뢰서: ' + c.id);
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('link', { size: 22 }) + ' 연계 의뢰서</h1>' +
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="printLetterBtn">' + icon('printer') + ' 인쇄</button>' +
+      '<button class="btn btn-sm" id="backFromLetterBtn">' + icon('arrowLeft') + ' 대상자 상세로</button></div></div>';
+    html += '<div class="example-banner">⚠ 기관 밖으로 나가는 문서입니다. 아래 내용 중 본인 동의 범위를 넘는 정보는 지우고 인쇄하세요. 문구는 화면에서 고칠 수 있으며 저장되지 않습니다.</div>';
+    html += '<div class="panel"><div class="form-grid">' +
+      '<div class="field"><label for="ltTo">수신 (기관/자원)</label><input type="text" id="ltTo" value="' + e([link.name, link.type].filter(Boolean).join(' · ')) + '"><div class="lt-out" id="ltToOut"></div></div>' +
+      '<div class="field"><label for="ltDate">의뢰일</label><input type="date" id="ltDate" value="' + e(link.date || Utils.todayStr()) + '"><div class="lt-out" id="ltDateOut"></div></div>' +
+      '<div class="field full"><label>의뢰 대상자</label><div>' + e(c.id) + (c.alias ? ' (' + e(c.alias) + ')' : '') + (age !== null ? ' · 만 ' + age + '세' : '') + '</div></div>' +
+      field('ltReason', '의뢰 사유', link.note || '', 3) +
+      field('ltInfo', '전달할 현황 (필요한 범위만)', '', 4) +
+      field('ltRequest', '요청 사항', '', 3) +
+      '<div class="field"><label for="ltReply">회신 요청일</label><input type="date" id="ltReply" value="' + e(link.checkDate || '') + '"><div class="lt-out" id="ltReplyOut"></div></div>' +
+      '<div class="field"><label for="ltContact">회신 연락처</label><input type="text" id="ltContact" value="' + e(OrgInfo.name || '') + '"><div class="lt-out" id="ltContactOut"></div></div>' +
+      '</div></div>';
+    html += '<div class="print-signature">' +
+      '<div class="sig-line"><span class="sig-label">정보 제공 동의(대상자):</span><span class="sig-blank"></span></div>' +
+      '<div class="sig-line"><span class="sig-label">의뢰자 (' + e(OrgInfo.worker || '담당자') + '):</span><span class="sig-blank"></span></div>' +
+      '<div class="sig-line"><span class="sig-label">확인자(팀장) 서명:</span><span class="sig-blank"></span></div></div>';
+    return html;
+  },
+  bindReferralLetter(params){
+    const pairs = [['ltTo', 'ltToOut'], ['ltDate', 'ltDateOut'], ['ltReason', 'ltReasonOut'], ['ltInfo', 'ltInfoOut'], ['ltRequest', 'ltRequestOut'], ['ltReply', 'ltReplyOut'], ['ltContact', 'ltContactOut']];
+    const sync = () => pairs.forEach(([a, b]) => { document.getElementById(b).textContent = document.getElementById(a).value; });
+    pairs.forEach(([a]) => document.getElementById(a).addEventListener('input', sync));
+    sync();
+    document.getElementById('printLetterBtn').onclick = () => { sync(); window.print(); };
+    document.getElementById('backFromLetterBtn').onclick = () => {
+      Views._clientDetailTab = 'history'; Views._clientDetailTabClientId = params.clientId;
+      UI.navigate('clientDetail', { id: params.clientId });
+    };
+  },
+
   servicePlanPrint(params){
     const c = Clients.get(params.clientId);
     const plan = c && (c.servicePlans || []).find(x => x.id === params.planId);
@@ -7098,6 +7190,7 @@ const Views = {
       (soap.id ? '' : '<button type="button" class="btn-link" id="copyPrevSoapBtn" style="margin-top:6px;text-align:left;">지난 기록 불러오기</button>') + '</div>';
     html += '<div class="field"><label>날짜</label><input type="date" id="soapDate" value="' + soap.date + '"></div>';
     html += '<div class="field"><label>시간(선택)</label><input type="time" id="soapTime" value="' + (soap.time || '') + '"></div>';
+    html += '<div class="field"><label>소요 시간(분, 선택)</label><input type="number" min="1" max="720" id="soapDuration" value="' + (soap.durationMin || '') + '"></div>';
     html += '<div class="field"><label>접촉 유형</label><select id="soapContactType">' +
       CONSTANTS.CONTACT_TYPES.map(t => '<option value="' + t + '"' + (t === soap.contactType ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>';
     html += '<div class="field"><label>상담 대상</label><select id="soapSubject">' +
@@ -7217,6 +7310,7 @@ const Views = {
     soap.clientId = Views.resolveClientPickerValue(document.getElementById('soapClientPicker').value);
     soap.date = document.getElementById('soapDate').value;
     soap.time = document.getElementById('soapTime').value;
+    soap.durationMin = Utils.cleanMinutes(document.getElementById('soapDuration').value);
     soap.contactType = document.getElementById('soapContactType').value;
     soap.subject = document.getElementById('soapSubject').value;
     soap.areas = Array.from(document.querySelectorAll('.areaChk:checked')).map(el => el.value);
@@ -7992,6 +8086,16 @@ const Views = {
       '<button class="tab-btn' + (mode === 'year' ? ' active' : '') + '" id="reportModeYearBtn">연간</button>' +
       '</div>';
   },
+  durationReportHtml(r){
+    const types = Object.keys(r.durationByType);
+    let html = '<div class="divider"></div><p style="font-weight:600;font-size:0.9rem;margin-bottom:8px;">접촉유형별 소요 시간 (시간을 적은 기록 기준)</p>';
+    if (!types.length) return html + '<div class="empty-msg">소요 시간을 적은 기록이 없습니다. SOAP 작성 화면의 "소요 시간(분)"에 적으면 여기에 집계됩니다.</div>';
+    html += '<table><thead><tr><th scope="col">접촉유형</th><th scope="col">기록 수</th><th scope="col">합계</th><th scope="col">평균</th></tr></thead><tbody>' +
+      types.map(t => { const d = r.durationByType[t]; return '<tr><th scope="row" style="text-align:left;">' + Utils.escapeHtml(t) + '</th><td>' + d.count + '건</td><td>' + Utils.formatMinutes(d.minutes) + '</td><td>' + Utils.formatMinutes(Math.round(d.minutes / d.count)) + '</td></tr>'; }).join('') +
+      '<tr><th scope="row" style="text-align:left;">합계</th><td>' + r.durationRecorded + '건</td><td>' + Utils.formatMinutes(r.durationTotal) + '</td><td>' + Utils.formatMinutes(Math.round(r.durationTotal / r.durationRecorded)) + '</td></tr></tbody></table>' +
+      '<p class="help-text" style="margin-top:6px;">전체 ' + r.totalSoaps + '건 중 ' + r.durationRecorded + '건에 소요 시간이 적혀 있습니다.</p>';
+    return html;
+  },
   monthEndCheckHtml(monthStr){
     const r = Stats.monthEndCheck(monthStr);
     const e = Utils.escapeHtml;
@@ -8003,6 +8107,7 @@ const Views = {
       ['referralNoResult', '연계 결과 미확인', '해당 월'],
       ['closureNoReason', '종결 사유 미기록', '해당 월'],
       ['noContactMonth', '이 달 접촉 없는 위기·집중관리 대상자', '해당 월'],
+      ['planShortfall', '월 접촉 계획보다 적게 접촉', '해당 월'],
       ['contactGap', '대면 접촉 공백', '현재 기준'],
       ['reassessGap', '정기 재사정 필요', '현재 기준'],
       ['planOverdue', '서비스계획 점검일 경과', '현재 기준']
@@ -8080,6 +8185,7 @@ const Views = {
 
     html += '</div>';
     html += Views.printSignatureHtml();
+    html += Views.durationReportHtml(r);
     html += Views.monthEndCheckHtml(monthStr);
     return html;
   },
