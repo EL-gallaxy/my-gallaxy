@@ -674,6 +674,39 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('화면 구성');
   });
 
+  await step('대시보드: 오늘 할 일이 위에, 나머지 점검은 접힌 영역에 있고 카드를 누르면 펼쳐진다', async () => {
+    await page.evaluate(async () => { await DashboardPrefs.setMoreOpen(false); Views._dirty = false; UI.navigate('dashboard', {}); });
+    await page.waitForTimeout(250);
+    const r = await page.evaluate(() => {
+      const main = document.getElementById('appMain');
+      const more = document.getElementById('dashMore');
+      const order = (sel) => { const el = main.querySelector(sel); return el ? Array.from(main.querySelectorAll('*')).indexOf(el) : -1; };
+      const topCardsCount = main.querySelectorAll(':scope > .summary-grid .summary-card').length;
+      return {
+        moreExists: !!more, closed: !more.open, topCardsCount,
+        todayInTop: !more.contains(document.getElementById('todaySection')) && !more.contains(document.getElementById('draftSection')),
+        orderOk: order('.quick-btns') < order('.summary-grid') && order('.summary-grid') < order('#todaySection') && order('#todaySection') < order('#dashMore'),
+        insideMore: ['gapSection', 'reassessmentSection', 'safetyGapSection', 'crisisSection'].every(id => !document.getElementById(id) || more.contains(document.getElementById(id))),
+        gridInMore: more.querySelectorAll('.summary-card').length > 5, quickOutside: !more.contains(document.getElementById('qbNewSoap'))
+      };
+    });
+    assert(r.moreExists && r.closed && r.topCardsCount === 4 && r.todayInTop && r.orderOk && r.insideMore && r.gridInMore && r.quickOutside, '대시보드 구조가 다름: ' + JSON.stringify(r));
+    // 접힌 영역 안의 카드를 누르면 펼쳐지고, 펼침 상태는 기억된다
+    const card = await page.evaluate(() => { const c = document.querySelector('#dashMore .summary-card[data-scroll]'); return c ? c.dataset.scroll : ''; });
+    if (card){
+      await page.evaluate(() => document.querySelector('#dashMore .summary-card[data-scroll]').click());
+      await page.waitForTimeout(150);
+      assert(await page.evaluate(() => document.getElementById('dashMore').open), '카드를 눌러도 접힌 영역이 펼쳐지지 않음');
+    }
+    await page.evaluate(() => { document.getElementById('dashMore').open = true; });
+    await page.waitForTimeout(150);
+    assert(await page.evaluate(() => DashboardPrefs.moreOpen === true), '펼침 상태가 기억되지 않음');
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('clients', {}); UI.navigate('dashboard', {}); });
+    assert(await page.evaluate(() => document.getElementById('dashMore').open), '다시 열었을 때 펼침 상태가 유지되지 않음');
+    await page.evaluate(async () => { document.getElementById('dashMore').open = false; await new Promise(r => setTimeout(r, 100)); });
+    noNewErrors('대시보드 구조');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
@@ -1093,6 +1126,59 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
       }
     }
     await page.emulateMedia({ colorScheme: 'light' });
+  });
+
+  await step('저장 구조가 바뀌는 업데이트 전에 백업 파일을 먼저 받도록 안내한다', async () => {
+    const ctx = await browser.newContext({ acceptDownloads: true });
+    const pg = await ctx.newPage();
+    const errs = [];
+    pg.on('pageerror', (e) => errs.push(e.message));
+    // 예전 버전(저장소 버전 3)의 데이터를 흉내 낸다
+    await pg.goto(url + '/manifest.webmanifest').catch(() => {});
+    await pg.goto(url + '/manifest.json').catch(() => {});
+    await pg.evaluate(() => new Promise((resolve, reject) => {
+      const req = indexedDB.open('case_management_on_db', 3);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        db.createObjectStore('settings', { keyPath: 'key' });
+        ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes'].forEach(n => db.createObjectStore(n, { keyPath: 'id' }));
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction(['settings', 'clients'], 'readwrite');
+        tx.objectStore('settings').put({ key: 'authSalt', value: 'c2FsdA==' });
+        tx.objectStore('clients').put({ id: 'OLDDATA', iv: 'aXY=', cipher: 'Y2lwaGVy' });
+        tx.oncomplete = () => { db.close(); resolve(); };
+      };
+      req.onerror = () => reject(req.error);
+    }));
+    await pg.goto(app);
+    await pg.waitForSelector('#upgBackup', { timeout: 10000 });
+    const text = await pg.evaluate(() => document.getElementById('modalBox').textContent);
+    assert(text.includes('업데이트 전에 백업'), '업데이트 전 백업 안내가 뜨지 않음');
+    const [download] = await Promise.all([pg.waitForEvent('download'), pg.click('#upgBackup')]);
+    const saved = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
+    assert(saved.app === 'case_management_on' && saved.settings.authSalt === 'c2FsdA==' && saved.clients.length === 1 && saved.clients[0].id === 'OLDDATA', '업데이트 전 백업 파일 내용이 다름: ' + JSON.stringify(saved).slice(0, 200));
+    assert(/before_update/.test(download.suggestedFilename()), '백업 파일 이름이 다름: ' + download.suggestedFilename());
+    await pg.waitForFunction(() => document.getElementById('modalOverlay').classList.contains('hidden'));
+    await pg.waitForTimeout(500);
+    const ver = await pg.evaluate(async () => (await indexedDB.databases()).find(d => d.name === 'case_management_on_db').version);
+    assert(ver === 4, '백업 뒤 저장소가 업그레이드되지 않음: ' + ver);
+    assert(errs.length === 0, '업그레이드 중 오류: ' + errs.join(' | '));
+    // 자료가 없는 예전 저장소는 안내 없이 넘어간다
+    const ctx2 = await browser.newContext();
+    const p2 = await ctx2.newPage();
+    await p2.goto(url + '/manifest.json').catch(() => {});
+    await p2.evaluate(() => new Promise((resolve, reject) => {
+      const req = indexedDB.open('case_management_on_db', 3);
+      req.onupgradeneeded = () => { const db = req.result; db.createObjectStore('settings', { keyPath: 'key' }); ['clients', 'soaps', 'followUps', 'schedules', 'resourceDirectory', 'selfCareNotes'].forEach(n => db.createObjectStore(n, { keyPath: 'id' })); };
+      req.onsuccess = () => { req.result.close(); resolve(); };
+      req.onerror = () => reject(req.error);
+    }));
+    await p2.goto(app);
+    await p2.waitForTimeout(1500);
+    assert(await p2.evaluate(() => !document.getElementById('upgBackup')), '자료가 없는데 백업 안내가 뜸');
+    await ctx.close(); await ctx2.close();
   });
 
   await browser.close();
