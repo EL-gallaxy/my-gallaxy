@@ -707,6 +707,96 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('대시보드 구조');
   });
 
+  await step('대상자 목록: 정렬(방문 우선순위·미접촉 오래된 순)·주의 표시·주의만 보기가 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      const today = Utils.todayStr();
+      await Clients.add({ id: 'LS1', alias: '목록1', managementLevel: 'crisis', registrationDate: Utils.addDaysStr(today, -200) });
+      await Clients.add({ id: 'LS2', alias: '목록2', managementLevel: 'maintenance', registrationDate: Utils.addDaysStr(today, -10) });
+      await Clients.add({ id: 'LS3', alias: '목록3', managementLevel: 'maintenance', registrationDate: Utils.addDaysStr(today, -300) });
+      const mk = async (cid, date, type) => { const s = SoapModule.createBlank({ clientId: cid }); s.date = date; s.contactType = type; s.S = '목록용'; await SoapModule.save(s, true); };
+      await mk('LS2', Utils.addDaysStr(today, -2), '방문');
+      await mk('LS3', Utils.addDaysStr(today, -200), '방문');
+      const info = Views.clientListInfo(Clients.list().filter(c => ['LS1', 'LS2', 'LS3'].includes(c.id)));
+      State.currentParams = { sort: 'gap', statusFilter: 'active' };
+      const idsGap = (Views.clientsList().match(/data-client="(LS\d)"/g) || []).map(x => x.slice(13, 16));
+      State.currentParams = { sort: 'urgent', statusFilter: 'active' };
+      const idsUrgent = (Views.clientsList().match(/data-client="(LS\d)"/g) || []).map(x => x.slice(13, 16));
+      State.currentParams = { sort: 'oldest', statusFilter: 'active', levelFilter: 'maintenance' };
+      const idsOldest = (Views.clientsList().match(/data-client="(LS\d)"/g) || []).map(x => x.slice(13, 16));
+      State.currentParams = { sort: 'id', statusFilter: 'active', attnOnly: true };
+      const attnHtml = Views.clientsList();
+      State.currentParams = {};
+      return { f1: info.LS1.flags, f2: info.LS2.flags, f3: info.LS3.flags, idsGap, idsUrgent, idsOldest, attnHas1: attnHtml.includes('data-client="LS1"'), attnHas2: attnHtml.includes('data-client="LS2"'), faceDays: info.LS2.faceDays, month: info.LS2.monthCount };
+    });
+    assert(r.f1.includes('접촉 공백') && r.f3.includes('접촉 공백') && !r.f2.includes('접촉 공백'), '주의 표시가 다름: ' + JSON.stringify(r));
+    assert(r.idsGap.indexOf('LS1') < r.idsGap.indexOf('LS3') || r.idsGap.indexOf('LS3') < r.idsGap.indexOf('LS2'), '미접촉 순서가 다름: ' + JSON.stringify(r.idsGap));
+    assert(r.idsGap.indexOf('LS2') > r.idsGap.indexOf('LS1') && r.idsGap.indexOf('LS2') > r.idsGap.indexOf('LS3'), '최근 접촉한 대상자가 앞에 옴: ' + JSON.stringify(r.idsGap));
+    assert(r.idsUrgent[0] === 'LS1' || r.idsUrgent.indexOf('LS1') < r.idsUrgent.indexOf('LS2'), '방문 우선순위가 다름: ' + JSON.stringify(r.idsUrgent));
+    assert(r.idsOldest.indexOf('LS3') < r.idsOldest.indexOf('LS2') && !r.idsOldest.includes('LS1'), '오래된 순/수준 필터가 다름: ' + JSON.stringify(r.idsOldest));
+    assert(r.attnHas1 && !r.attnHas2 && r.faceDays === 2 && r.month >= 1, '주의만 보기/경과일이 다름: ' + JSON.stringify(r));
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('clients', { sort: 'urgent' }); });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => { const c = document.getElementById('clientAttnOnly'); c.click(); });
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(() => State.currentParams.attnOnly === true && State.currentParams.sort === 'urgent'), '주의만 보기 체크가 정렬을 유지하지 못함');
+    noNewErrors('대상자 목록');
+  });
+
+  await step('SOAP 작성: Ctrl+Enter로 다음 칸, Alt+숫자로 칸 이동, 지난 기록은 고른 칸만 가져온다', async () => {
+    await page.evaluate(() => { Views._dirty = false; Views._draftCache = null; UI.navigate('soapEditor', { prefillClientId: 'CI1' }); });
+    await page.waitForTimeout(300);
+    const first = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    assert(first === 'soapS', '새 SOAP를 열었을 때 S 칸에 커서가 가지 않음: ' + first);
+    const seq = [];
+    for (let i = 0; i < 5; i++){ await page.keyboard.press('Control+Enter'); seq.push(await page.evaluate(() => document.activeElement.id)); }
+    assert(seq.join(',') === 'soapO,soapA,soapPText,soapPDate,soapPDate', 'Ctrl+Enter 이동 순서가 다름: ' + seq.join(','));
+    const alts = [];
+    for (const k of ['1', '2', '3', '4']){ await page.keyboard.press('Alt+' + k); alts.push(await page.evaluate(() => document.activeElement.id)); }
+    assert(alts.join(',') === 'soapS,soapO,soapA,soapPText', 'Alt+숫자 이동이 다름: ' + alts.join(','));
+    // 지난 기록 불러오기 — 고른 칸만 덮어쓴다
+    await page.evaluate(async () => {
+      const prev = SoapModule.createBlank({ clientId: 'CI1' }); prev.date = Utils.addDaysStr(Utils.todayStr(), -3); prev.S = '옛S'; prev.O = '옛O'; prev.A = '옛A'; prev.PText = '옛P'; prev.contactType = '내소'; await SoapModule.save(prev, true);
+      document.getElementById('soapS').value = '지금S'; document.getElementById('soapO').value = '지금O'; document.getElementById('soapA').value = '지금A'; document.getElementById('soapPText').value = '지금P';
+      Views.openCopyPreviousModal('CI1');
+    });
+    await page.waitForTimeout(150);
+    const res = await page.evaluate(async () => {
+      document.querySelectorAll('.copyFld').forEach(c => { c.checked = (c.value === 'P' || c.value === 'A'); });
+      const b = Array.from(document.querySelectorAll('[data-copy-soap]')).find(x => SoapModule.get(x.dataset.copySoap).S === '옛S');
+      b.click();
+      await new Promise(r => setTimeout(r, 100));
+      return { S: document.getElementById('soapS').value, O: document.getElementById('soapO').value, A: document.getElementById('soapA').value, P: document.getElementById('soapPText').value, type: document.getElementById('soapContactType').value, remembered: Views._copyFields };
+    });
+    assert(res.S === '지금S' && res.O === '지금O' && res.A === '옛A' && res.P === '옛P' && res.type !== '내소', '고른 칸만 가져오지 않음: ' + JSON.stringify(res));
+    assert(res.remembered.P && res.remembered.A && !res.remembered.S && !res.remembered.meta, '고른 칸이 기억되지 않음');
+    await page.evaluate(() => { Views._copyFields = { S: true, O: true, A: true, P: true, meta: true }; Views._dirty = false; Views._draftCache = null; });
+    noNewErrors('SOAP 키보드 흐름');
+  });
+
+  await step('주간 업무 요약: 한 주의 활동과 다음 주 예정을 집계한다', async () => {
+    const r = await page.evaluate(async () => {
+      const today = Utils.todayStr();
+      const rep = Stats.weekReport(Utils.addDaysStr(today, -((new Date().getDay() + 6) % 7)));
+      const next = Utils.addDaysStr(rep.start, 8);
+      await Schedules.add({ clientId: 'PL1', date: next, time: '10:00', contactType: '방문', memo: '다음주' });
+      await FollowUps.add({ clientId: 'PL1', type: '기타', text: '다음주후속', dueDate: next });
+      const rep2 = Stats.weekReport(rep.start);
+      const html = Views.weekSummary({ start: today });
+      // 지난 주 데이터가 이번 주 합계에 섞이지 않는다
+      const old = SoapModule.createBlank({ clientId: 'PL1' }); old.date = Utils.addDaysStr(rep.start, -3); old.S = '지난주'; await SoapModule.save(old, true);
+      const rep3 = Stats.weekReport(rep.start);
+      const lastWeek = Stats.weekReport(Utils.addDaysStr(rep.start, -7));
+      return { startIsMonday: new Date(rep.start + 'T00:00:00').getDay() === 1, endDay: Utils.addDaysStr(rep.start, 6) === rep.end, nextS: rep2.nextSchedules.length, nextF: rep2.nextFollowUps.length, html: html.includes('주간 업무 요약') && html.includes('다음주') && html.includes('다음주후속') && !html.includes('undefined') && !html.includes('NaN'), same: rep3.soapCount === rep2.soapCount, lastWeekHasOld: lastWeek.soapCount >= 1 };
+    });
+    assert(r.startIsMonday && r.endDay && r.nextS >= 1 && r.nextF >= 1 && r.html && r.same && r.lastWeekHasOld, '주간 요약 집계가 다름: ' + JSON.stringify(r));
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('weekSummary', {}); });
+    await page.waitForTimeout(250);
+    await page.evaluate(() => document.getElementById('wkPrev').click());
+    await page.waitForTimeout(250);
+    assert(await page.evaluate(() => State.currentView === 'weekSummary' && !!State.currentParams.start), '지난주 이동이 동작하지 않음');
+    noNewErrors('주간 업무 요약');
+  });
+
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
     const views = [['dashboard', {}], ['clients', {}], ['clientDetail', { id: 'CI1' }], ['soapList', {}], ['soapEditor', { prefillClientId: 'CI1' }], ['followUps', {}], ['schedule', {}],
       ['resourceDirectory', {}], ['debriefings', {}], ['search', {}], ['stats', {}], ['outcomes', {}], ['selfCare', {}], ['training', {}], ['settings', {}], ['tour', {}], ['caseloadSummary', {}],
@@ -871,7 +961,7 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
       const soap = SoapModule.list()[0], deb = Debriefings.list().find(d => d.kind === 'crisisUnreg'), plan = Clients.get('CI1').servicePlans[0], ev = Clients.get('CI1').crisisEvents[0];
       const link = (Clients.get('PL1').resourceLinks || [])[0];
       const clientIds = Clients.list().map(c => c.id);
-      ['dashboard', 'clients', 'followUps', 'schedule', 'resourceDirectory', 'stats', 'outcomes', 'yearSummary', 'debriefings', 'supervisionAgenda', 'selfCare', 'training', 'settings', 'tour', 'caseloadSummary', 'dailyBriefing'].forEach(v => go(v, v));
+      ['dashboard', 'clients', 'followUps', 'schedule', 'resourceDirectory', 'stats', 'outcomes', 'yearSummary', 'weekSummary', 'debriefings', 'supervisionAgenda', 'selfCare', 'training', 'settings', 'tour', 'caseloadSummary', 'dailyBriefing'].forEach(v => go(v, v));
       ['all', 'draft', 'final'].forEach(f => go('soapList:' + f, 'soapList', { filter: f }));
       ['all', 'today', 'overdue', 'upcoming', 'done'].forEach(f => { go('followUps:' + f, 'followUps', { filter: f }); go('schedule:' + f, 'schedule', { filter: f }); });
       go('schedule:날짜', 'schedule', { selectedDate: Utils.todayStr() });
@@ -950,7 +1040,7 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     const plan = await page.evaluate(() => Clients.get('CI1').servicePlans[0].id);
     const ev = await page.evaluate(() => Clients.get('CI1').crisisEvents[0].id);
     const link = await page.evaluate(() => Clients.get('PL1').resourceLinks[0].id);
-    const limits = [['연말 활동 요약', 'yearSummary', { year: y }, 1], ['연계 의뢰서', 'referralLetter', { clientId: 'PL1', linkId: link }, 1], ['서비스계획서', 'servicePlanPrint', { clientId: 'CI1', planId: plan }, 1],
+    const limits = [['연말 활동 요약', 'yearSummary', { year: y }, 1], ['주간 업무 요약', 'weekSummary', {}, 1], ['연계 의뢰서', 'referralLetter', { clientId: 'PL1', linkId: link }, 1], ['서비스계획서', 'servicePlanPrint', { clientId: 'CI1', planId: plan }, 1],
       ['슈퍼비전 안건', 'supervisionAgenda', {}, 1], ['오늘의 방문 브리핑', 'dailyBriefing', {}, 1], ['위기개입 보고서', 'crisisReport', { clientId: 'CI1', eventId: ev }, 2], ['인계서', 'handoverSummary', { id: 'CI1' }, 2]];
     const over = [];
     for (const [label, view, params, max] of limits){
