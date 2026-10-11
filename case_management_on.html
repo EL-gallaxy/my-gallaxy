@@ -456,7 +456,7 @@
   .ys-num{font-size:1.25rem;font-weight:700;line-height:1.2;}
   .ys-label{font-size:0.78rem;color:var(--text-muted);}
   .ys-line{font-size:0.85rem;line-height:1.6;margin:3px 0;}
-  @media print{ .ys{break-inside:avoid;} .ys-tiles{grid-template-columns:repeat(4,1fr);} .ys-num{font-size:1.05rem;} .ys-line{font-size:0.78rem;} }
+  @media print{ .ys table th, .ys table td{padding:2px 6px;font-size:0.76rem;} .ys{break-inside:avoid;} .ys-tiles{grid-template-columns:repeat(4,1fr);} .ys-num{font-size:1.05rem;} .ys-line{font-size:0.78rem;} }
   @media screen{ .user-hidden{display:none !important;} }
   .lt-out{display:none;white-space:pre-line;}
   @media print{ .lt-out{display:block;margin-top:2px;} .lt-in, #ltTo, #ltDate, #ltReply, #ltContact{display:none !important;} #printLetterBtn, #backFromLetterBtn{display:none !important;} }
@@ -481,7 +481,7 @@
     #addTagBtn, #newTagInput, [data-del-tag], [data-edit-tag], [data-toggle-doc], [data-attach-doc], [data-del-attachment],
     #addGoalBtn, #goalTerm, #goalText, .goalStatusSelect, #saveVisitSafetyBtn, #saveSafetyPlanBtn,
     #vsViolence, #vsCompanion, #vsPets, #reportMonthSelect, #exportReportCsvBtn, #reportModeMonthBtn,
-    #reportModeYearBtn, #reportYearSelect, #exportAnnualReportCsvBtn, #yearSummaryBtn, #ysYearSelect, #ysPrintBtn, #ysBackBtn, #fuBulkBar, #fuBulkDone, #fuBulk7, #fuBulk14, #fuBulkDate, #fuBulkDel, #planSchedBtn,
+    #reportModeYearBtn, #reportYearSelect, #exportAnnualReportCsvBtn, #yearSummaryBtn, #goWeekBtn, #wkPrev, #wkNext, #wkDate, #wkPrint, #wkBack, #ysYearSelect, #ysPrintBtn, #ysBackBtn, #fuBulkBar, #fuBulkDone, #fuBulk7, #fuBulk14, #fuBulkDate, #fuBulkDel, #planSchedBtn,
     #printReportBtn, #journalDateInput, #printJournalBtn, #icsExportBtn, #dailyBriefingBtn,
     #briefingDateInput, #printBriefingBtn, #addRiskBtn, #riskFactorList, #addReassessBtn, #addConsentBtn, .example-banner{
       display:none !important;
@@ -3900,6 +3900,40 @@ const Stats = {
     };
   },
 
+  // 주간 업무 요약 — 월요일부터 일요일까지 한 주의 활동과 다음 주 예정. 새 판단 없이 이미 기록된 값을 모은다.
+  weekReport(startStr){
+    const end = Utils.addDaysStr(startStr, 6);
+    const nextStart = Utils.addDaysStr(startStr, 7), nextEnd = Utils.addDaysStr(startStr, 13);
+    const inW = (d) => !!d && d >= startStr && d <= end;
+    const clients = Clients.list();
+    const soaps = SoapModule.list().filter(x => inW(x.date));
+    const contactTypeCounts = {}, subjectCounts = { client: 0, family: 0 };
+    let minutes = 0, minutesRecorded = 0;
+    soaps.forEach(x => {
+      contactTypeCounts[x.contactType] = (contactTypeCounts[x.contactType] || 0) + 1;
+      subjectCounts[x.subject === 'family' ? 'family' : 'client']++;
+      const m = parseInt(x.durationMin, 10); if (m > 0){ minutes += m; minutesRecorded++; }
+    });
+    const crisisReg = [];
+    clients.forEach(c => (c.crisisEvents || []).forEach(ev => { if (inW(ev.date)) crisisReg.push({ clientId: c.id, type: ev.type, date: ev.date, outcome: ev.outcome || '' }); }));
+    const unreg = Debriefings.list().filter(d => d.kind === 'crisisUnreg' && inW(d.date));
+    const debriefs = Debriefings.list().filter(d => inW(d.date)).length;
+    const fuDone = FollowUps.list().filter(f => f.status === 'completed' && inW((f.completedAt || '').slice(0, 10)));
+    const today = Utils.todayStr();
+    const schDone = Schedules.list().filter(x => x.status === 'completed' && inW(x.date)).length;
+    const schMissed = Schedules.list().filter(x => x.status === 'planned' && inW(x.date) && x.date < today).length;
+    const nextSchedules = Schedules.list().filter(x => x.status === 'planned' && x.date >= nextStart && x.date <= nextEnd);
+    const nextFollowUps = FollowUps.list().filter(f => f.status === 'pending' && f.dueDate >= nextStart && f.dueDate <= nextEnd);
+    return {
+      start: startStr, end, nextStart, nextEnd,
+      soapCount: soaps.length, clientCount: new Set(soaps.map(x => x.clientId)).size, contactTypeCounts, subjectCounts, minutes, minutesRecorded,
+      crisisRegCount: crisisReg.length, crisisUnregCount: unreg.length, debriefCount: debriefs,
+      newClients: clients.filter(c => inW(c.registrationDate)).length, closedClients: clients.filter(c => c.status === 'closed' && inW(c.closedDate)).length,
+      fuDoneCount: fuDone.length, fuOverdueNow: FollowUps.overdue().length, schDone, schMissed,
+      nextSchedules, nextFollowUps, draftSoaps: soaps.filter(x => x.status === 'draft').length
+    };
+  },
+
   // 월말 마감 점검 — 보고서를 쓰기 전에 빠진 기록·처리 안 된 일정을 짚는다. 새 판단을 만들지 않고
   // 이미 입력된 값끼리 대조해 "해당 월에 정리할 것"만 모은다. 항목마다 대상자 ID와 한 줄 설명을 돌려준다.
   monthEndCheck(monthStr){
@@ -4755,7 +4789,7 @@ const UI = {
     { label: '대시보드', view: 'dashboard' }, { label: '대상자 목록', view: 'clients' }, { label: 'SOAP 기록 목록', view: 'soapList' },
     { label: '후속조치', view: 'followUps' }, { label: '일정', view: 'schedule' }, { label: '기관주소록', view: 'resourceDirectory' },
     { label: '검색', view: 'search' }, { label: '통계·월간 보고서', view: 'stats' }, { label: '성과 지표', view: 'outcomes' },
-    { label: '연말 활동 요약(한 장)', view: 'yearSummary' }, { label: '디브리핑', view: 'debriefings' }, { label: '슈퍼비전 안건 출력', view: 'supervisionAgenda' }, { label: '자기돌봄', view: 'selfCare' },
+    { label: '주간 업무 요약(한 장)', view: 'weekSummary' }, { label: '연말 활동 요약(한 장)', view: 'yearSummary' }, { label: '디브리핑', view: 'debriefings' }, { label: '슈퍼비전 안건 출력', view: 'supervisionAgenda' }, { label: '자기돌봄', view: 'selfCare' },
     { label: '교육·슈퍼비전', view: 'training' }, { label: '설정', view: 'settings' }, { label: '오늘의 방문 준비 브리핑', view: 'dailyBriefing' },
     { label: '전체 대상자 현황 요약', view: 'caseloadSummary' }
   ],
@@ -4807,7 +4841,9 @@ const UI = {
       ['?', '단축키 도움말 열기/닫기'],
       ['Esc', '열린 창(모달) 닫기'],
       ['Ctrl/Cmd + K', '빠른 이동 (대상자·화면 찾아 가기)'],
-      ['Ctrl/Cmd + S', 'SOAP 작성 중 임시저장 (최종저장은 아님)']
+      ['Ctrl/Cmd + S', 'SOAP 작성 중 임시저장 (최종저장은 아님)'],
+      ['Ctrl/Cmd + Enter', 'SOAP 작성 중 다음 칸(S→O→A→P→예정일)으로 이동'],
+      ['Alt + 1 / 2 / 3 / 4', 'SOAP 작성 중 S / O / A / P 칸으로 바로 이동']
     ];
     UI.openModal(
       '<h3>⌨️ 키보드 단축키</h3>' +
@@ -4969,6 +5005,7 @@ const UI = {
       case 'resourceDirectory': main.innerHTML = Views.resourceDirectory(); Views.bindResourceDirectory(); break;
       case 'search': main.innerHTML = Views.search(); Views.bindSearch(); break;
       case 'stats': main.innerHTML = Views.stats(); Views.bindStats(); break;
+      case 'weekSummary': main.innerHTML = Views.weekSummary(State.currentParams); Views.bindWeekSummary(State.currentParams); break;
       case 'yearSummary': main.innerHTML = Views.yearSummary(State.currentParams); Views.bindYearSummary(); break;
       case 'outcomes': main.innerHTML = Views.outcomes(State.currentParams); Views.bindOutcomes(); break;
       case 'selfCare': main.innerHTML = Views.selfCarePage(); Views.bindSelfCarePage(); break;
@@ -5586,18 +5623,58 @@ const Views = {
   /* ---------------- CLIENTS ---------------- */
   MANAGEMENT_LEVEL_RANK: { crisis: 0, intensive: 1, maintenance: 2, temporary: 3 },
 
+  // 대상자 목록의 마지막 접촉·이번 달 접촉·주의 표시를 한 번의 훑기로 계산한다(대상자가 많아도 느려지지 않도록).
+  clientListInfo(clients){
+    const today = Utils.todayStr(), month = today.slice(0, 7);
+    const lastFace = {}, lastAny = {}, monthCount = {};
+    State.soaps.forEach(sp => {
+      if (!sp.clientId) return;
+      if (CONSTANTS.FACE_TO_FACE_TYPES.includes(sp.contactType) && (!lastFace[sp.clientId] || sp.date > lastFace[sp.clientId])) lastFace[sp.clientId] = sp.date;
+      if (!lastAny[sp.clientId] || sp.date > lastAny[sp.clientId]) lastAny[sp.clientId] = sp.date;
+      if ((sp.date || '').startsWith(month)) monthCount[sp.clientId] = (monthCount[sp.clientId] || 0) + 1;
+    });
+    const noDebrief = new Set(Debriefings.pendingList().map(x => x.clientId).filter(Boolean));
+    const info = {};
+    clients.forEach(c => {
+      const base = lastFace[c.id] || c.registrationDate || '';
+      const days = base ? Utils.daysSince(base) : null;
+      const threshold = CONSTANTS.CONTACT_GAP_DAYS_BY_LEVEL[c.managementLevel];
+      const flags = [];
+      if (c.status !== 'closed'){
+        if (Clients.currentAdmission(c)) flags.push('입원 중');
+        if (threshold && days !== null && days >= threshold) flags.push('접촉 공백');
+        if (Clients.getReassessmentGapInfo(c.id)) flags.push('재사정 필요');
+        const plan = Clients.currentPlan(c);
+        if (plan && plan.nextReviewDate && plan.nextReviewDate < today) flags.push('계획 점검 경과');
+        if (noDebrief.has(c.id)) flags.push('디브리핑 미작성');
+      }
+      info[c.id] = { lastFace: lastFace[c.id] || '', faceDays: lastFace[c.id] ? Utils.daysSince(lastFace[c.id]) : null, sinceBase: days, lastAny: lastAny[c.id] || '', monthCount: monthCount[c.id] || 0, flags };
+    });
+    return info;
+  },
   clientsList(){
     const sort = State.currentParams.sort || 'id';
     const levelFilter = State.currentParams.levelFilter || 'all';
     const statusFilter = State.currentParams.statusFilter || 'active';
+    const attnOnly = !!State.currentParams.attnOnly;
     let clients = Clients.list(); // base order: ID ascending
     if (statusFilter === 'active') clients = clients.filter(c => c.status !== 'closed');
     else if (statusFilter === 'closed') clients = clients.filter(c => c.status === 'closed');
     if (levelFilter !== 'all') clients = clients.filter(c => c.managementLevel === levelFilter);
+    const info = Views.clientListInfo(clients);
+    if (attnOnly) clients = clients.filter(c => info[c.id].flags.length > 0);
+    const rank = (c) => Views.MANAGEMENT_LEVEL_RANK[c.managementLevel] ?? 9;
+    const gapDays = (c) => info[c.id].sinceBase === null ? 99999 : info[c.id].sinceBase;
     if (sort === 'level'){
-      clients = clients.slice().sort((a, b) => (Views.MANAGEMENT_LEVEL_RANK[a.managementLevel] ?? 9) - (Views.MANAGEMENT_LEVEL_RANK[b.managementLevel] ?? 9));
+      clients = clients.slice().sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
     } else if (sort === 'recent'){
-      clients = clients.slice().sort((a, b) => (Clients.lastRecordDate(b.id) || '').localeCompare(Clients.lastRecordDate(a.id) || ''));
+      clients = clients.slice().sort((a, b) => (info[b.id].lastAny || '').localeCompare(info[a.id].lastAny || ''));
+    } else if (sort === 'oldest'){
+      clients = clients.slice().sort((a, b) => (info[a.id].lastAny || '').localeCompare(info[b.id].lastAny || '') || a.id.localeCompare(b.id));
+    } else if (sort === 'gap'){
+      clients = clients.slice().sort((a, b) => gapDays(b) - gapDays(a) || a.id.localeCompare(b.id));
+    } else if (sort === 'urgent'){
+      clients = clients.slice().sort((a, b) => info[b.id].flags.length - info[a.id].flags.length || rank(a) - rank(b) || gapDays(b) - gapDays(a) || a.id.localeCompare(b.id));
     }
 
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('users', { size: 22 }) + ' 대상자</h1>' +
@@ -5612,6 +5689,9 @@ const Views = {
       '<input type="text" id="clientSearchInput" placeholder="ID, 별칭 또는 특성 태그 검색"></div>' +
       '<div class="field" style="margin:0;max-width:200px;"><label>정렬</label><select id="clientSortSelect">' +
       '<option value="id"' + (sort === 'id' ? ' selected' : '') + '>ID순</option>' +
+      '<option value="urgent"' + (sort === 'urgent' ? ' selected' : '') + '>방문 우선순위 (주의 많은 순)</option>' +
+      '<option value="gap"' + (sort === 'gap' ? ' selected' : '') + '>미접촉 오래된 순</option>' +
+      '<option value="oldest"' + (sort === 'oldest' ? ' selected' : '') + '>마지막 기록 오래된 순</option>' +
       '<option value="recent"' + (sort === 'recent' ? ' selected' : '') + '>최근 기록일순</option>' +
       '<option value="level"' + (sort === 'level' ? ' selected' : '') + '>관리수준순</option>' +
       '</select></div>' +
@@ -5624,20 +5704,25 @@ const Views = {
       '<option value="closed"' + (statusFilter === 'closed' ? ' selected' : '') + '>종결</option>' +
       '<option value="all"' + (statusFilter === 'all' ? ' selected' : '') + '>전체</option>' +
       '</select></div>' +
+      '<label class="chip-check' + (attnOnly ? ' checked' : '') + '" style="margin-bottom:6px;"><input type="checkbox" id="clientAttnOnly"' + (attnOnly ? ' checked' : '') + '>주의 표시 있는 대상자만</label>' +
       '</div>';
 
     html += '<div class="panel">';
     if (clients.length === 0){
       html += '<div class="empty-msg">해당 조건의 대상자가 없습니다.</div>';
     } else {
-      html += '<table><thead><tr><th>ID</th><th>별칭</th><th>관리 수준</th><th>상태</th><th>최근 기록일</th><th>미완료 후속조치</th><th>예정 일정</th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>ID</th><th>별칭</th><th>관리 수준</th><th>상태</th><th>최근 기록일</th><th>마지막 대면 접촉</th><th>이번 달 접촉</th><th>주의</th><th>미완료 후속조치</th><th>예정 일정</th></tr></thead><tbody>';
       clients.forEach(c => {
+        const inf = info[c.id], plan = parseInt(c.contactPlanPerMonth, 10);
         html += '<tr class="clickable-row" data-client="' + Utils.escapeHtml(c.id) + '">' +
           '<td><strong>' + Utils.escapeHtml(c.id) + '</strong></td>' +
           '<td>' + Utils.escapeHtml(c.alias || '-') + '</td>' +
           '<td>' + Views.managementBadge(c.managementLevel) + '</td>' +
           '<td>' + (c.status === 'closed' ? '<span class="badge badge-closed">🔒 종결</span>' : '<span class="badge badge-final">🟢 활성</span>') + '</td>' +
-          '<td>' + (Clients.lastRecordDate(c.id) || '-') + '</td>' +
+          '<td>' + (inf.lastAny || '-') + '</td>' +
+          '<td>' + (inf.lastFace ? Utils.escapeHtml(inf.lastFace) + ' <span class="help-text">(' + Utils.formatElapsedDays(inf.faceDays) + ' 전)</span>' : '-') + '</td>' +
+          '<td>' + inf.monthCount + (plan > 0 ? ' / ' + plan : '') + '</td>' +
+          '<td>' + (inf.flags.length ? inf.flags.map(f => '<span class="badge badge-pending" style="margin:1px 2px 1px 0;">' + Utils.escapeHtml(f) + '</span>').join('') : '-') + '</td>' +
           '<td>' + Clients.pendingFollowUpCount(c.id) + '</td>' +
           '<td>' + Clients.upcomingScheduleCount(c.id) + '</td>' +
           '</tr>';
@@ -5666,9 +5751,11 @@ const Views = {
     document.getElementById('newClientBtn').onclick = () => Views.openNewClientModal();
     document.getElementById('caseloadSummaryBtn').onclick = () => UI.navigate('caseloadSummary');
     document.getElementById('exportClientsCsvBtn').onclick = () => CSV.exportClients();
-    document.getElementById('clientSortSelect').onchange = (e) => UI.navigate('clients', { sort: e.target.value, levelFilter: State.currentParams.levelFilter || 'all', statusFilter: State.currentParams.statusFilter || 'active' });
-    document.getElementById('clientLevelFilterSelect').onchange = (e) => UI.navigate('clients', { sort: State.currentParams.sort || 'id', levelFilter: e.target.value, statusFilter: State.currentParams.statusFilter || 'active' });
-    document.getElementById('clientStatusFilterSelect').onchange = (e) => UI.navigate('clients', { sort: State.currentParams.sort || 'id', levelFilter: State.currentParams.levelFilter || 'all', statusFilter: e.target.value });
+    const clientNav = (patch) => UI.navigate('clients', Object.assign({ sort: State.currentParams.sort || 'id', levelFilter: State.currentParams.levelFilter || 'all', statusFilter: State.currentParams.statusFilter || 'active', attnOnly: !!State.currentParams.attnOnly }, patch));
+    document.getElementById('clientAttnOnly').onchange = (e) => clientNav({ attnOnly: e.target.checked });
+    document.getElementById('clientSortSelect').onchange = (e) => clientNav({ sort: e.target.value });
+    document.getElementById('clientLevelFilterSelect').onchange = (e) => clientNav({ levelFilter: e.target.value });
+    document.getElementById('clientStatusFilterSelect').onchange = (e) => clientNav({ statusFilter: e.target.value });
     const importInput = document.getElementById('importClientsCsvInput');
     document.getElementById('importClientsCsvBtn').onclick = () => importInput.click();
     importInput.onchange = async (e) => {
@@ -7701,6 +7788,7 @@ const Views = {
   _rowLimits: {},
   _dirty: false,
   _fuSel: new Set(),
+  _copyFields: { S: true, O: true, A: true, P: true, meta: true },
   // 편집 화면에서 입력이 생기면 표시한다(저장·삭제·나가기 확인 뒤에는 _dirty를 false로 되돌린다).
   trackDirty(root){
     Views._dirty = false;
@@ -7790,6 +7878,7 @@ const Views = {
     if (soap.status !== 'final'){
       html += '<p class="help-text" id="autosaveIndicator" style="margin-top:-10px;margin-bottom:14px;">입력하는 동안 자동으로 임시저장됩니다. (Ctrl/Cmd+S로 바로 임시저장할 수 있습니다)</p>';
     }
+    html += '<p class="help-text" style="margin-top:-6px;margin-bottom:12px;">키보드: <kbd>Ctrl/Cmd+Enter</kbd> 다음 칸(S→O→A→P)으로 · <kbd>Alt+1~4</kbd> S/O/A/P 칸으로 바로 이동</p>';
 
     if (params.relatedFollowUp){
       html += '<div class="example-banner">🔗 관련 후속조치: ' + Utils.escapeHtml(params.relatedFollowUp.text) + ' (완료 처리됨)</div>';
@@ -8038,6 +8127,7 @@ const Views = {
   },
 
   bindSoapEditor(params){
+    const soap0ClientId = () => (Views._draftCache && Views._draftCache.clientId) || '';
     // Auto-save while composing: debounced so it fires ~1.5s after the user
     // stops typing, and only for drafts (never silently rewrites a
     // final/completed record). Cleared on every navigate-away below so a
@@ -8060,6 +8150,30 @@ const Views = {
     document.querySelectorAll('.chip-check input').forEach(chk => {
       chk.addEventListener('change', () => chk.closest('.chip-check').classList.toggle('checked', chk.checked));
     });
+    {
+      // S → O → A → P(후속조치 내용) → 예정일 순서로 키보드만으로 이동한다.
+      const order = ['soapS', 'soapO', 'soapA', 'soapPText', 'soapPDate'];
+      const focusId = (id) => { const el = document.getElementById(id); if (el){ el.focus(); if (el.select && el.tagName === 'INPUT') el.select(); } };
+      order.forEach((id, i) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && !ev.altKey){
+            ev.preventDefault();
+            focusId(order[Math.min(order.length - 1, i + 1)]);
+          }
+        });
+      });
+      const altKeys = { '1': 'soapS', '2': 'soapO', '3': 'soapA', '4': 'soapPText' };
+      const onAlt = (ev) => {
+        if (State.currentView !== 'soapEditor' || !ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        const target = altKeys[ev.key];
+        if (target && document.getElementById(target)){ ev.preventDefault(); focusId(target); }
+      };
+      if (Views._soapAltHandler) document.removeEventListener('keydown', Views._soapAltHandler);
+      Views._soapAltHandler = onAlt;
+      document.addEventListener('keydown', onAlt);
+      if (!params.soapId && Clients.get(soap0ClientId())) focusId('soapS');
+    }
     const copyPrevBtn = document.getElementById('copyPrevSoapBtn');
     if (copyPrevBtn) copyPrevBtn.onclick = () => {
       const cid = Views.resolveClientPickerValue(document.getElementById('soapClientPicker').value);
@@ -8083,7 +8197,7 @@ const Views = {
       if (!Views._draftCache || Views._draftCache.status === 'final') return;
       if (autosaveTimer) clearTimeout(autosaveTimer);
       autosaveTimer = setTimeout(async () => {
-        if (!Views._draftCache) return;
+        if (!Views._draftCache || State.currentView !== 'soapEditor' || !document.getElementById('soapClientPicker')) return;
         const current = Views._readSoapForm();
         const hasContent = (current.S || '').trim() || (current.O || '').trim() || (current.A || '').trim();
         if (!current.clientId || !hasContent) return;
@@ -9067,7 +9181,7 @@ const Views = {
     const s = Stats.compute();
     let html = Views.printHeaderHtml('통계 및 월간 실적보고서');
     html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('barChart', { size: 22 }) + ' 통계</h1>' +
-      '<button class="btn btn-sm btn-primary" id="goOutcomesBtn">' + icon('trendingUp') + ' 성과 지표 보기</button></div>';
+      '<div style="display:flex;gap:8px;"><button class="btn btn-sm" id="goWeekBtn">' + icon('calendar') + ' 주간 업무 요약</button><button class="btn btn-sm btn-primary" id="goOutcomesBtn">' + icon('trendingUp') + ' 성과 지표 보기</button></div></div>';
 
     html += '<div class="summary-grid">' +
       '<div class="summary-card" style="cursor:default;"><div class="num">' + s.totalClients + '</div><div class="label">총 대상자</div></div>' +
@@ -9105,6 +9219,43 @@ const Views = {
       : Views.renderMonthlyReport(Views._reportMonth);
 
     return html;
+  },
+  // 주간 업무 요약 — 한 주를 한 장으로 인쇄한다(월요일 시작).
+  weekSummary(params){
+    const mondayOf = (d) => { const [y, m, dd] = d.split('-').map(Number); const dt = new Date(y, m - 1, dd); const diff = (dt.getDay() + 6) % 7; return Utils.addDaysStr(d, -diff); };
+    const start = mondayOf((params && params.start) || Utils.todayStr());
+    const r = Stats.weekReport(start), e = Utils.escapeHtml;
+    const tile = (n, l) => '<div class="ys-tile"><div class="ys-num">' + n + '</div><div class="ys-label">' + l + '</div></div>';
+    const cname = (id) => { const c = Clients.get(id); return e(id) + (c && c.alias ? ' (' + e(c.alias) + ')' : ''); };
+    const types = Object.keys(r.contactTypeCounts);
+    let html = Views.printHeaderHtml('주간 업무 요약 ' + r.start + ' ~ ' + r.end);
+    html += '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('calendar', { size: 22 }) + ' 주간 업무 요약 <span style="font-weight:400;font-size:1rem;color:var(--text-muted);">' + e(r.start) + ' ~ ' + e(r.end) + '</span></h1>' +
+      '<div style="display:flex;gap:8px;align-items:center;"><button class="btn btn-sm" id="wkPrev">' + icon('arrowLeft') + ' 지난주</button><input type="date" id="wkDate" value="' + e(start) + '" aria-label="주 선택(해당 주의 아무 날짜)"><button class="btn btn-sm" id="wkNext">다음주</button>' +
+      '<button class="btn btn-sm" id="wkPrint">' + icon('printer') + ' 인쇄</button><button class="btn btn-sm" id="wkBack">' + icon('arrowLeft') + ' 통계로</button></div></div>';
+    html += '<div class="panel ys"><div class="ys-title">이번 주 활동</div><div class="ys-tiles">' +
+      tile(r.soapCount, '상담 기록') + tile(r.clientCount, '상담한 대상자') + tile(r.subjectCounts.family || 0, '가족·보호자 상담') + tile(r.minutesRecorded ? Utils.formatMinutes(r.minutes) : '-', '기록된 상담 시간') +
+      tile(r.crisisRegCount, '위기개입(등록)') + tile(r.crisisUnregCount, '위기개입(미등록)') + tile(r.debriefCount, '디브리핑 기록') + tile(r.fuDoneCount, '완료한 후속조치') +
+      tile(r.schDone, '완료한 일정') + tile(r.newClients, '신규 등록') + tile(r.closedClients, '종결/전출') + tile(r.draftSoaps, '이번 주 임시저장 SOAP') + '</div>' +
+      (types.length ? '<p class="ys-line"><strong>접촉유형별:</strong> ' + types.map(t => e(t) + ' ' + r.contactTypeCounts[t]).join(' · ') + '</p>' : '') +
+      '<p class="ys-line"><strong>현재 밀린 것:</strong> 기한 초과 후속조치 ' + r.fuOverdueNow + '건' + (r.schMissed ? ' · 이번 주 일정 중 처리 안 된 것 ' + r.schMissed + '건' : '') + '</p></div>';
+    const rows = (arr, cols, limit) => arr.slice(0, limit).map(cols).join('') + (arr.length > limit ? '<tr><td colspan="4" class="help-text">외 ' + (arr.length - limit) + '건</td></tr>' : '');
+    html += '<div class="panel ys"><div class="ys-title">다음 주 예정 (' + e(r.nextStart) + ' ~ ' + e(r.nextEnd) + ')</div>' +
+      '<p class="ys-line"><strong>일정 ' + r.nextSchedules.length + '건</strong></p>' +
+      (r.nextSchedules.length ? '<table><thead><tr><th scope="col">날짜</th><th scope="col">시간</th><th scope="col">대상자</th><th scope="col">유형</th></tr></thead><tbody>' + rows(r.nextSchedules, x => '<tr><td>' + e(x.date) + '</td><td>' + e(x.time || '-') + '</td><td>' + cname(x.clientId) + '</td><td>' + e(x.contactType || '') + '</td></tr>', 8) + '</tbody></table>' : '') +
+      '<p class="ys-line" style="margin-top:8px;"><strong>후속조치 기한 ' + r.nextFollowUps.length + '건</strong></p>' +
+      (r.nextFollowUps.length ? '<table><thead><tr><th scope="col">기한</th><th scope="col">대상자</th><th scope="col">유형</th><th scope="col">내용</th></tr></thead><tbody>' + rows(r.nextFollowUps, f => '<tr><td>' + e(f.dueDate) + '</td><td>' + cname(f.clientId) + '</td><td>' + e(f.type || '') + '</td><td>' + e(f.text || '') + '</td></tr>', 8) + '</tbody></table>' : '') + '</div>';
+    html += Views.printSignatureHtml();
+    return html;
+  },
+  bindWeekSummary(params){
+    const cur = () => document.getElementById('wkDate').value;
+    const go = (d) => UI.navigate('weekSummary', { start: d });
+    const mondayStart = Stats.weekReport(cur() || Utils.todayStr()).start;
+    document.getElementById('wkDate').onchange = (ev) => { if (ev.target.value) go(ev.target.value); };
+    document.getElementById('wkPrev').onclick = () => go(Utils.addDaysStr(mondayStart, -7));
+    document.getElementById('wkNext').onclick = () => go(Utils.addDaysStr(mondayStart, 7));
+    document.getElementById('wkPrint').onclick = () => window.print();
+    document.getElementById('wkBack').onclick = () => { Views._reportMode = 'month'; UI.navigate('stats', {}); };
   },
   // 연말 활동 요약 — 연간 실적·성과·위기개입·디브리핑을 한 장에 모아 인쇄한다(새 집계는 만들지 않고 기존 값을 모은다).
   yearSummary(params){
@@ -9249,6 +9400,7 @@ const Views = {
       el.onclick = () => UI.navigate('clientDetail', { id: el.dataset.gotoClient });
     });
     document.getElementById('goOutcomesBtn').onclick = () => UI.navigate('outcomes', {});
+    document.getElementById('goWeekBtn').onclick = () => UI.navigate('weekSummary', {});
     document.getElementById('journalDateInput').onchange = (e) => {
       Views._journalDate = e.target.value;
       UI.renderCurrentView();
@@ -10369,7 +10521,9 @@ const Views = {
     UI.openModal(
       '<h3>지난 기록 불러오기 — ' + Utils.escapeHtml(clientId) + '</h3>' +
       '<p class="help-text" style="margin-bottom:10px;">고른 기록의 S·O·A·P 내용과 상담 영역을 지금 입력칸에 채웁니다. ' +
-      (hasCurrent ? '<strong>현재 입력한 내용은 덮어써집니다.</strong> ' : '') + '불러온 뒤에는 오늘 상황에 맞게 반드시 고쳐 쓰세요.</p>' +
+      (hasCurrent ? '<strong>고른 칸은 현재 입력한 내용을 덮어씁니다.</strong> ' : '') + '불러온 뒤에는 오늘 상황에 맞게 반드시 고쳐 쓰세요.</p>' +
+      '<div class="field"><label>가져올 칸</label><div class="checkbox-group">' +
+      [['S', 'S'], ['O', 'O'], ['A', 'A'], ['P', 'P(후속조치 내용)'], ['meta', '접촉 유형·상담 대상·영역']].map(([k, l]) => '<label class="chip-check' + (Views._copyFields[k] ? ' checked' : '') + '"><input type="checkbox" class="copyFld" value="' + k + '"' + (Views._copyFields[k] ? ' checked' : '') + '>' + l + '</label>').join('') + '</div></div>' +
       (recent.length === 0 ? '<div class="empty-msg">불러올 지난 기록이 없습니다.</div>' : recent.map(x =>
         '<div class="list-row"><div class="list-row-main"><div class="row-title">' + Utils.formatSoapDate(x) + ' · ' + Utils.escapeHtml(x.contactType) +
         (x.status === 'draft' ? ' <span class="badge badge-draft">임시저장</span>' : '') + '</div>' +
@@ -10377,19 +10531,29 @@ const Views = {
         '<div class="row-actions"><button class="btn btn-sm btn-primary" data-copy-soap="' + x.id + '">불러오기</button></div></div>').join('')) +
       '<div style="display:flex;justify-content:flex-end;margin-top:12px;"><button class="btn" id="copyPrevClose">닫기</button></div>'
     );
+    document.querySelectorAll('.copyFld').forEach(c => c.addEventListener('change', () => c.closest('.chip-check').classList.toggle('checked', c.checked)));
     document.getElementById('copyPrevClose').onclick = () => UI.closeModal();
     document.querySelectorAll('[data-copy-soap]').forEach(btn => {
       btn.onclick = () => {
         const src = SoapModule.get(btn.dataset.copySoap);
         if (!src) return;
+        const pick = {};
+        document.querySelectorAll('.copyFld').forEach(c => { pick[c.value] = c.checked; });
+        Views._copyFields = Object.assign({}, pick);
+        if (!Object.values(pick).some(Boolean)){ toast('가져올 칸을 하나 이상 골라 주세요.', 'error'); return; }
         const setVal = (id, v) => { const el = document.getElementById(id); el.value = v || ''; el.dispatchEvent(new Event('input', { bubbles: true })); };
-        setVal('soapS', src.S); setVal('soapO', src.O); setVal('soapA', src.A); setVal('soapPText', src.PText);
-        document.getElementById('soapContactType').value = src.contactType;
-        document.getElementById('soapSubject').value = src.subject || 'client';
-        document.querySelectorAll('.areaChk').forEach(chk => {
-          chk.checked = (src.areas || []).includes(chk.value);
-          chk.closest('.chip-check').classList.toggle('checked', chk.checked);
-        });
+        if (pick.S) setVal('soapS', src.S);
+        if (pick.O) setVal('soapO', src.O);
+        if (pick.A) setVal('soapA', src.A);
+        if (pick.P) setVal('soapPText', src.PText);
+        if (pick.meta){
+          document.getElementById('soapContactType').value = src.contactType;
+          document.getElementById('soapSubject').value = src.subject || 'client';
+          document.querySelectorAll('.areaChk').forEach(chk => {
+            chk.checked = (src.areas || []).includes(chk.value);
+            chk.closest('.chip-check').classList.toggle('checked', chk.checked);
+          });
+        }
         UI.closeModal();
         toast(Utils.formatSoapDate(src) + ' 기록을 불러왔습니다. 오늘 상황에 맞게 고쳐 쓰세요.');
       };
