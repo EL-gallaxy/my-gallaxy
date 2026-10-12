@@ -786,7 +786,7 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
       const old = SoapModule.createBlank({ clientId: 'PL1' }); old.date = Utils.addDaysStr(rep.start, -3); old.S = '지난주'; await SoapModule.save(old, true);
       const rep3 = Stats.weekReport(rep.start);
       const lastWeek = Stats.weekReport(Utils.addDaysStr(rep.start, -7));
-      return { startIsMonday: new Date(rep.start + 'T00:00:00').getDay() === 1, endDay: Utils.addDaysStr(rep.start, 6) === rep.end, nextS: rep2.nextSchedules.length, nextF: rep2.nextFollowUps.length, html: html.includes('주간 업무 요약') && html.includes('다음주') && html.includes('다음주후속') && !html.includes('undefined') && !html.includes('NaN'), same: rep3.soapCount === rep2.soapCount, lastWeekHasOld: lastWeek.soapCount >= 1 };
+      return { startIsMonday: new Date(rep.start + 'T00:00:00').getDay() === 1, endDay: Utils.addDaysStr(rep.start, 6) === rep.end, nextS: rep2.nextSchedules.length, nextF: rep2.nextFollowUps.length, html: html.includes('주간 업무 요약') && html.includes('일정 ' + rep2.nextSchedules.length + '건') && html.includes('후속조치 기한 ' + rep2.nextFollowUps.length + '건') && !html.includes('undefined') && !html.includes('NaN'), same: rep3.soapCount === rep2.soapCount, lastWeekHasOld: lastWeek.soapCount >= 1 };
     });
     assert(r.startIsMonday && r.endDay && r.nextS >= 1 && r.nextF >= 1 && r.html && r.same && r.lastWeekHasOld, '주간 요약 집계가 다름: ' + JSON.stringify(r));
     await page.evaluate(() => { Views._dirty = false; UI.navigate('weekSummary', {}); });
@@ -795,6 +795,22 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     await page.waitForTimeout(250);
     assert(await page.evaluate(() => State.currentView === 'weekSummary' && !!State.currentParams.start), '지난주 이동이 동작하지 않음');
     noNewErrors('주간 업무 요약');
+  });
+
+  await step('새 기능과 사용법 화면에 현재 기능과 업데이트 내역이 있고, 없어진 기능은 나오지 않는다', async () => {
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('tour', {}); });
+    await page.waitForTimeout(250);
+    const txt = await page.evaluate(() => document.getElementById('appMain').textContent);
+    for (const must of ['디브리핑', '자동 백업', '빠른 이동', '화면 구성', '주간 업무 요약', '데이터 건강검진', '업데이트 내역', '일정 제안']){
+      assert(txt.includes(must), '사용법 화면에 "' + must + '" 안내가 없음');
+    }
+    for (const gone of ['상용구', '자동작성', '초안 생성']){
+      assert(!txt.replace('상용구와 A 자동작성 기능 제거', '').includes(gone), '없어진 기능이 안내에 남아 있음: ' + gone);
+    }
+    // 안내에 적힌 화면 이름이 빠른 이동에서 실제로 열리는지(안내와 앱이 어긋나지 않도록)
+    const missing = await page.evaluate(() => ['디브리핑', '주간 업무 요약', '연말 활동 요약', '새 기능과 사용법'].filter(l => !UI.quickSwitchItems(l).some(i => i.label.includes(l))));
+    assert(missing.length === 0, '빠른 이동에 없는 화면: ' + missing.join(','));
+    noNewErrors('사용법 화면');
   });
 
   await step('주요 화면이 모두 오류 없이 그려진다', async () => {
