@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>원주 자원 지도</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+  /* 레이아웃: 왼쪽 필터 + 오른쪽 자원 카드 목록(좁은 화면에서는 위아래). 이동 난이도와 부담도를 색 점으로 한눈에 보이게 한다. */
+  :root{
+    --brand:#0f766e; --brand-d:#0b5a54; --on-brand:#fff; --bg:#f3f3f1; --card:#fff; --line:#d8d8d2;
+    --ink:#1d2327; --mute:#5b6570; --soft:#e8f3f1; --danger:#b42318;
+    --ok:#15803d; --mid:#b45309; --hard:#b91c1c; --ok-bg:#e3f4e8; --mid-bg:#fdf0dc; --hard-bg:#fbe4e2;
+    --example:#6b5bbd; --example-bg:#ece9fa; --deep:#10282a; --on-deep:#e8fffb;
+    --font:"Noto Sans KR","Malgun Gothic","맑은 고딕",system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+    --brand:#2dd4bf; --brand-d:#5eead4; --on-brand:#06302c; --bg:#14181a; --card:#1c2224; --line:#344044;
+    --ink:#e8edee; --mute:#9aa7ac; --soft:#1b3733; --danger:#fca5a5;
+    --ok:#86efac; --mid:#fcd34d; --hard:#fca5a5; --ok-bg:#16301f; --mid-bg:#38290f; --hard-bg:#3d1b19;
+    --example:#c4b8ff; --example-bg:#2a2548; --deep:#0b1f21; color-scheme:dark}}
+  :root[data-theme="dark"]{
+    --brand:#2dd4bf; --brand-d:#5eead4; --on-brand:#06302c; --bg:#14181a; --card:#1c2224; --line:#344044;
+    --ink:#e8edee; --mute:#9aa7ac; --soft:#1b3733; --danger:#fca5a5;
+    --ok:#86efac; --mid:#fcd34d; --hard:#fca5a5; --ok-bg:#16301f; --mid-bg:#38290f; --hard-bg:#3d1b19;
+    --example:#c4b8ff; --example-bg:#2a2548; --deep:#0b1f21; color-scheme:dark}
+
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.55;padding-inline:16px;padding-block:0 40px}
+  .wrap{max-width:1100px;margin:0 auto}
+  header{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:flex-end;justify-content:space-between;padding-block:20px 14px}
+  h1{margin:0;font-size:22px}
+  .lead{margin:2px 0 0;color:var(--mute);font-size:14px}
+  .count{font-size:14px;color:var(--mute)}
+  .count b{color:var(--brand-d);font-size:20px;font-variant-numeric:tabular-nums}
+  .layout{display:grid;grid-template-columns:290px minmax(0,1fr);gap:18px;align-items:start}
+  @media(max-width:820px){.layout{grid-template-columns:minmax(0,1fr)}}
+  aside{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;position:sticky;top:12px}
+  @media(max-width:820px){aside{position:static}}
+  aside h2{font-size:14px;margin:14px 0 6px;color:var(--brand-d)}
+  aside h2:first-of-type{margin-top:0}
+  label{display:block;font-size:13px;color:var(--mute);margin:10px 0 3px}
+  input[type=text],input[type=search],textarea,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:15px;background:var(--card);color:var(--ink)}
+  textarea{min-height:70px;resize:vertical}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{padding:6px 11px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;font:inherit;font-size:14px;cursor:pointer}
+  .chip[aria-pressed="true"]{background:var(--brand);color:var(--on-brand);border-color:var(--brand)}
+  .btn{padding:9px 16px;border:1px solid var(--brand);background:var(--brand);color:var(--on-brand);border-radius:8px;font:inherit;font-size:15px;cursor:pointer}
+  .btn.ghost{background:var(--card);color:var(--brand-d)}
+  .btn.small{padding:5px 10px;font-size:13px}
+  .btn.danger{background:var(--card);color:var(--danger);border-color:var(--danger)}
+  button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #f59e0b;outline-offset:2px}
+  .check{display:flex;align-items:center;gap:8px;font-size:14px;margin:8px 0;color:var(--ink)}
+  .check input{width:18px;height:18px;flex:none}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .list{display:grid;gap:12px}
+  .res{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+  .res h3{margin:0;font-size:17px;overflow-wrap:anywhere}
+  .res .top{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;justify-content:space-between}
+  .badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:13px;border:1px solid var(--line);color:var(--mute);background:var(--card)}
+  .pill i{width:9px;height:9px;border-radius:50%;display:inline-block;background:currentColor}
+  .t1{color:var(--ok);background:var(--ok-bg);border-color:transparent}
+  .t2{color:var(--mid);background:var(--mid-bg);border-color:transparent}
+  .t3{color:var(--hard);background:var(--hard-bg);border-color:transparent}
+  .ex{color:var(--example);background:var(--example-bg);border-color:transparent}
+  .kv{display:grid;grid-template-columns:84px minmax(0,1fr);gap:3px 10px;margin:10px 0 0;font-size:14.5px}
+  .kv dt{color:var(--mute)}
+  .kv dd{margin:0;overflow-wrap:anywhere}
+  .kv dd.empty{color:var(--mute);font-style:italic}
+  .res .act{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .res a.btn{text-decoration:none;display:inline-block}
+  .empty-state{background:var(--card);border:1px dashed var(--line);border-radius:12px;padding:28px 22px}
+  .empty-state h2{margin:0 0 6px;font-size:18px}
+  .empty-state ul{margin:8px 0 14px;padding-left:20px;color:var(--mute)}
+  .note{font-size:13px;color:var(--mute);margin:10px 0 0}
+  .banner{background:var(--mid-bg);color:var(--mid);border-radius:10px;padding:8px 12px;font-size:14px;margin-bottom:12px}
+  #editor{background:var(--card);border:2px solid var(--brand);border-radius:12px;padding:16px;margin-bottom:14px}
+  #editor h2{margin:0 0 4px;font-size:18px}
+  .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px}
+  @media(max-width:560px){.grid2{grid-template-columns:minmax(0,1fr)}}
+  .seg{display:flex;flex-wrap:wrap;gap:6px}
+  .seg .chip{flex:none}
+  details.more{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+  details.more summary{cursor:pointer;color:var(--brand-d);font-size:14px}
+  .toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--deep);color:var(--on-deep);padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:90vw;text-align:center}
+  .toast.on{opacity:1}
+  @media (prefers-reduced-motion: reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>원주 자원 지도</h1>
+      <p class="lead">당사자를 연결할 수 있는 곳을 모으고, 이동과 부담이 맞는 곳부터 찾습니다. 기관 정보만 담고, 당사자 정보는 넣지 않습니다.</p>
+    </div>
+    <div class="count" aria-live="polite"><b id="cntShown">0</b> / <span id="cntAll">0</span>곳</div>
+  </header>
+
+  <div id="banner"></div>
+
+  <div class="layout">
+    <aside aria-label="찾기">
+      <h2>이름·메모 검색</h2>
+      <input type="search" id="q" placeholder="예: 요리, 버스, 직업">
+
+      <h2>이 분의 사다리 단계</h2>
+      <select id="fStage" aria-label="사다리 단계">
+        <option value="">전체</option>
+        <option value="0">0 · 집 안에서 연결</option>
+        <option value="1">1 · 문밖 한 걸음</option>
+        <option value="2">2 · 집 근처 혼자</option>
+        <option value="3">3 · 사람 곁에 머물기</option>
+        <option value="4">4 · 함께 하기</option>
+        <option value="5">5 · 역할 갖기</option>
+      </select>
+
+      <h2>좋아하는 것</h2>
+      <div class="chips" id="fCues"></div>
+
+      <h2>이동</h2>
+      <select id="fTravel" aria-label="이동 난이도">
+        <option value="3">전체</option>
+        <option value="1">걸어서 갈 수 있는 곳만</option>
+        <option value="2">버스 한 번까지</option>
+      </select>
+
+      <h2>부담도</h2>
+      <select id="fBurden" aria-label="부담도">
+        <option value="3">전체</option>
+        <option value="1">낮은 곳만</option>
+        <option value="2">보통까지</option>
+      </select>
+
+      <h2>종류</h2>
+      <div class="chips" id="fKinds"></div>
+
+      <label class="check"><input type="checkbox" id="fCompanion"> 동행 가능한 곳만</label>
+      <label class="check"><input type="checkbox" id="fConnected"> 연결해 본 적 있는 곳만</label>
+
+      <div class="bar" style="margin-top:10px"><button type="button" class="btn ghost small" id="btnClear">조건 지우기</button></div>
+    </aside>
+
+    <main style="min-width:0">
+      <div class="bar" style="margin-bottom:12px">
+        <button type="button" class="btn" id="btnNew">+ 자원 추가</button>
+        <label style="margin:0;display:flex;align-items:center;gap:6px">정렬
+          <select id="sort" style="width:auto">
+            <option value="easy">가기 쉬운 순</option>
+            <option value="name">이름 순</option>
+            <option value="new">최근 추가 순</option>
+          </select>
+        </label>
+      </div>
+
+      <section id="editor" hidden aria-labelledby="edTitle">
+        <h2 id="edTitle">자원 추가</h2>
+        <p class="note" style="margin:0 0 6px">모르는 칸은 비워 두세요. 이름과 종류만 있어도 저장됩니다.</p>
+        <form id="form" autocomplete="off">
+          <label for="eName">이름 *</label>
+          <input type="text" id="eName" required placeholder="예: ○○복지관 요리모임">
+          <div class="grid2">
+            <div><label for="eKind">종류</label><select id="eKind"></select></div>
+            <div><label for="eArea">동네·위치</label><input type="text" id="eArea" placeholder="예: 단구동, 시청 근처"></div>
+          </div>
+          <label for="eHow">가는 법</label>
+          <input type="text" id="eHow" placeholder="예: 시내버스 12번 → ○○정류장 하차, 도보 5분">
+          <label>이동 난이도</label>
+          <div class="seg" id="eTravel" role="group" aria-label="이동 난이도"></div>
+          <label>부담도 <span style="font-weight:normal">(처음 가는 사람 기준)</span></label>
+          <div class="seg" id="eBurden" role="group" aria-label="부담도"></div>
+          <div class="grid2">
+            <div><label for="eMin">사다리 단계 시작</label><select id="eMin"></select></div>
+            <div><label for="eMax">사다리 단계 끝</label><select id="eMax"></select></div>
+          </div>
+          <label>이런 것을 좋아하는 분께</label>
+          <div class="chips" id="eCues"></div>
+          <div class="grid2">
+            <div><label for="eCost">비용</label><input type="text" id="eCost" placeholder="예: 무료, 회당 2,000원"></div>
+            <div><label for="eHours">운영 시간</label><input type="text" id="eHours" placeholder="예: 화·목 14~16시"></div>
+          </div>
+          <label for="eTarget">대상 조건</label>
+          <input type="text" id="eTarget" placeholder="예: 등록 정신장애인, 만 19세 이상">
+          <label for="eContact">담당·연락처</label>
+          <input type="text" id="eContact" placeholder="예: 김○○ 선생님 033-000-0000">
+          <label class="check"><input type="checkbox" id="eCompanion"> 센터 직원이 동행할 수 있음</label>
+          <label class="check"><input type="checkbox" id="eConnected"> 당사자를 연결해 본 적 있음</label>
+          <label for="eMemo">메모</label>
+          <textarea id="eMemo" placeholder="예: 첫 방문에는 담당자가 입구에서 맞이해 줌. 소음이 적은 오전이 좋음"></textarea>
+          <div class="bar" style="margin-top:14px">
+            <button type="submit" class="btn" id="btnSave">저장</button>
+            <button type="button" class="btn ghost" id="btnCancel">취소</button>
+          </div>
+        </form>
+      </section>
+
+      <div id="list" class="list" aria-live="polite"></div>
+
+      <details class="more">
+        <summary>목록 옮기기 · 백업</summary>
+        <p class="note">이 목록은 이 페이지에 저장되어 새로고침해도 남습니다. 다른 곳에 보관하려면 복사해 두세요.</p>
+        <div class="bar" style="margin:8px 0"><button type="button" class="btn ghost small" id="btnExport">목록 전체 복사</button><button type="button" class="btn ghost small" id="btnSample">예시 3곳 넣어 보기</button></div>
+        <label for="importText">복사해 둔 목록 붙여넣기</label>
+        <textarea id="importText" placeholder="복사해 둔 목록을 여기에 붙여넣고 아래 버튼을 누르세요"></textarea>
+        <div class="bar" style="margin-top:8px"><button type="button" class="btn ghost small" id="btnImport">붙여넣은 목록 불러오기</button></div>
+      </details>
+    </main>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const KINDS = ['모임·프로그램','직업·일자리','쉼터·카페·공간','운동·산책','상담·치료','학습·문화','행정·복지','기타'];
+const CUES = ['게임','음악·영상','먹기·요리','동물·식물','걷기·운동','만들기·그리기','돈·일','사람(가족·친구)'];
+const STAGE_NAMES = ['집 안','문밖','집 근처 혼자','사람 곁','함께','역할'];
+const TRAVEL = { 1:'걸어서 가능', 2:'버스 한 번', 3:'환승·차 필요' };
+const BURDEN = { 1:'부담 낮음', 2:'부담 보통', 3:'부담 높음' };
+
+/* ---------- 저장소: db(있으면) → 없으면 이 브라우저 localStorage ---------- */
+let db = null, canWrite = true, items = [], ready = false, localMode = false;
+const LS_KEY = 'wonju-resources-v1';
+function lsRead(){ try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch(e){ return []; } }
+function lsWrite(){ try { localStorage.setItem(LS_KEY, JSON.stringify(items)); } catch(e){} }
+const newId = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+async function saveItem(it){
+  it.updatedAt = Date.now();
+  if (db) { await db.doc('resources/' + it.id).set(it); }
+  else { const i = items.findIndex(x => x.id === it.id); i >= 0 ? items[i] = it : items.push(it); lsWrite(); render(); }
+}
+async function removeItem(id){
+  if (db) { await db.doc('resources/' + id).delete(); }
+  else { items = items.filter(x => x.id !== id); lsWrite(); render(); }
+}
+
+async function init(){
+  render();
+  try {
+    db = window.claude && claude.use ? await claude.use('db') : null;
+    const user = window.claude && claude.use ? await claude.use('user') : null;
+    if (user && typeof user.canEdit === 'function') canWrite = user.canEdit() !== false;
+  } catch(e){ db = null; }
+  if (db) {
+    db.collection('resources').onSnapshot(
+      (snap) => { items = snap.docs.map(d => ({ ...d.data(), id: d.id })); ready = true; render(); },
+      () => { fallbackLocal(); }
+    );
+  } else { fallbackLocal(); }
+}
+function fallbackLocal(){
+  db = null; localMode = true; items = lsRead(); ready = true;
+  $('banner').innerHTML = '<div class="banner">이 목록은 지금 쓰는 컴퓨터의 이 브라우저에 저장됩니다. 다른 컴퓨터나 휴대폰에서는 보이지 않고 브라우저 데이터를 지우면 사라지니, 가끔 아래 "목록 옮기기"에서 복사해 두세요.</div>';
+  render();
+}
+
+/* ---------- 필터 ---------- */
+const F = { q:'', stage:'', cues:new Set(), travel:3, burden:3, kinds:new Set(), companion:false, connected:false, sort:'easy' };
+function matches(r){
+  const hay = [r.name, r.area, r.how, r.memo, r.kind, r.target, r.contact].join(' ').toLowerCase();
+  if (F.q && !hay.includes(F.q.toLowerCase())) return false;
+  if (F.stage !== '') { const s = +F.stage; if (!(s >= (r.stageMin ?? 0) && s <= (r.stageMax ?? 5))) return false; }
+  if (F.cues.size && !(r.cues || []).some(c => F.cues.has(c))) return false;
+  if ((r.travel || 2) > F.travel) return false;
+  if ((r.burden || 2) > F.burden) return false;
+  if (F.kinds.size && !F.kinds.has(r.kind)) return false;
+  if (F.companion && !r.companion) return false;
+  if (F.connected && !r.connected) return false;
+  return true;
+}
+function sorted(list){
+  const a = list.slice();
+  if (F.sort === 'name') a.sort((x,y) => x.name.localeCompare(y.name, 'ko'));
+  else if (F.sort === 'new') a.sort((x,y) => (y.updatedAt||0) - (x.updatedAt||0));
+  else a.sort((x,y) => ((x.travel||2) - (y.travel||2)) || ((x.burden||2) - (y.burden||2)) || x.name.localeCompare(y.name, 'ko'));
+  return a;
+}
+
+/* ---------- 그리기 ---------- */
+function field(label, v){ return `<dt>${esc(label)}</dt><dd${v ? '' : ' class="empty"'}>${v ? esc(v) : '아직 모름'}</dd>`; }
+function card(r){
+  const t = r.travel || 2, b = r.burden || 2;
+  const range = (r.stageMin ?? 0) === (r.stageMax ?? 5) ? `${r.stageMin}단계` : `${r.stageMin ?? 0}~${r.stageMax ?? 5}단계`;
+  const map = 'https://map.naver.com/p/search/' + encodeURIComponent('원주 ' + r.name);
+  return `<article class="res" data-id="${esc(r.id)}">
+    <div class="top"><h3>${esc(r.name)}</h3>
+      <div class="badges" style="margin:0">${r.example ? '<span class="pill ex">예시</span>' : ''}${r.connected ? '<span class="pill">연결해 본 곳</span>' : ''}</div></div>
+    <div class="badges">
+      <span class="pill">${esc(r.kind || '기타')}</span>
+      <span class="pill t${t}"><i></i>${esc(TRAVEL[t])}</span>
+      <span class="pill t${b}"><i></i>${esc(BURDEN[b])}</span>
+      <span class="pill">사다리 ${esc(range)}</span>
+      ${r.companion ? '<span class="pill">동행 가능</span>' : ''}
+      ${(r.cues || []).map(c => `<span class="pill">${esc(c)}</span>`).join('')}
+    </div>
+    <dl class="kv">
+      ${field('동네', r.area)}${field('가는 법', r.how)}${field('비용', r.cost)}${field('운영 시간', r.hours)}
+      ${field('대상', r.target)}${field('담당·연락', r.contact)}${r.memo ? field('메모', r.memo) : ''}
+    </dl>
+    <div class="act">
+      <a class="btn ghost small" href="${map}" target="_blank" rel="noopener noreferrer">지도에서 찾기</a>
+      ${canWrite ? `<button type="button" class="btn ghost small" data-act="edit">고치기</button>
+      <button type="button" class="btn ghost small" data-act="dup">복제</button>
+      <button type="button" class="btn danger small" data-act="del">삭제</button>` : ''}
+    </div>
+  </article>`;
+}
+function render(){
+  const shown = sorted(items.filter(matches));
+  $('cntShown').textContent = shown.length; $('cntAll').textContent = items.length;
+  const list = $('list');
+  if (!ready) { list.innerHTML = '<p class="note">불러오는 중…</p>'; return; }
+  if (!items.length) {
+    list.innerHTML = `<div class="empty-state"><h2>아직 등록된 자원이 없습니다</h2>
+      <p style="margin:0">머릿속에 있는 곳부터 하나씩 적어 보세요. 한 곳에 다음 정도면 충분합니다.</p>
+      <ul><li>이름, 종류, 어느 동네인지</li><li>어떻게 가는지(버스 번호나 도보)와 이동이 얼마나 힘든지</li><li>처음 가는 사람에게 부담이 얼마나 큰지</li><li>사다리의 어느 단계 분께 맞는지, 어떤 것을 좋아하는 분께 맞는지</li></ul>
+      <p class="note" style="margin:0 0 14px">"당사자를 실제로 연결해 본 곳" 5곳만 먼저 넣어도 시작할 수 있습니다.</p>
+      <div class="bar">${canWrite ? '<button type="button" class="btn" data-act="new2">+ 첫 자원 추가</button><button type="button" class="btn ghost" data-act="sample2">예시 3곳으로 먼저 살펴보기</button>' : ''}</div></div>`;
+    return;
+  }
+  if (!shown.length) { list.innerHTML = '<div class="empty-state"><h2>조건에 맞는 곳이 없습니다</h2><p style="margin:0">조건을 줄여 보세요. 이동이나 부담도 조건을 풀면 가까운 후보가 나올 수 있습니다. 비어 있는 단계에는 새 자원을 찾아볼 필요가 있다는 뜻이기도 합니다.</p></div>'; return; }
+  list.innerHTML = shown.map(card).join('');
+}
+function chips(el, arr, set, key){
+  el.innerHTML = arr.map(v => `<button type="button" class="chip" aria-pressed="${set.has(v)}" data-${key}="${esc(v)}">${esc(v)}</button>`).join('');
+}
+
+/* ---------- 필터 이벤트 ---------- */
+chips($('fCues'), CUES, F.cues, 'cue'); chips($('fKinds'), KINDS, F.kinds, 'kind');
+$('fCues').addEventListener('click', e => { const b = e.target.closest('[data-cue]'); if (!b) return; const v = b.dataset.cue; F.cues.has(v) ? F.cues.delete(v) : F.cues.add(v); chips($('fCues'), CUES, F.cues, 'cue'); render(); });
+$('fKinds').addEventListener('click', e => { const b = e.target.closest('[data-kind]'); if (!b) return; const v = b.dataset.kind; F.kinds.has(v) ? F.kinds.delete(v) : F.kinds.add(v); chips($('fKinds'), KINDS, F.kinds, 'kind'); render(); });
+$('q').addEventListener('input', e => { F.q = e.target.value.trim(); render(); });
+$('fStage').addEventListener('change', e => { F.stage = e.target.value; render(); });
+$('fTravel').addEventListener('change', e => { F.travel = +e.target.value; render(); });
+$('fBurden').addEventListener('change', e => { F.burden = +e.target.value; render(); });
+$('fCompanion').addEventListener('change', e => { F.companion = e.target.checked; render(); });
+$('fConnected').addEventListener('change', e => { F.connected = e.target.checked; render(); });
+$('sort').addEventListener('change', e => { F.sort = e.target.value; render(); });
+$('btnClear').addEventListener('click', () => {
+  Object.assign(F, { q:'', stage:'', travel:3, burden:3, companion:false, connected:false });
+  F.cues.clear(); F.kinds.clear();
+  $('q').value=''; $('fStage').value=''; $('fTravel').value='3'; $('fBurden').value='3'; $('fCompanion').checked=false; $('fConnected').checked=false;
+  chips($('fCues'), CUES, F.cues, 'cue'); chips($('fKinds'), KINDS, F.kinds, 'kind'); render();
+});
+
+/* ---------- 편집 폼 ---------- */
+let editing = null, eTravel = 2, eBurden = 2; const eCuesSet = new Set();
+$('eKind').innerHTML = KINDS.map(k => `<option>${esc(k)}</option>`).join('');
+const stageOpts = STAGE_NAMES.map((n,i) => `<option value="${i}">${i} · ${esc(n)}</option>`).join('');
+$('eMin').innerHTML = stageOpts; $('eMax').innerHTML = stageOpts;
+function segs(){
+  $('eTravel').innerHTML = [1,2,3].map(v => `<button type="button" class="chip" aria-pressed="${eTravel===v}" data-travel="${v}">${esc(TRAVEL[v])}</button>`).join('');
+  $('eBurden').innerHTML = [1,2,3].map(v => `<button type="button" class="chip" aria-pressed="${eBurden===v}" data-burden="${v}">${esc(BURDEN[v])}</button>`).join('');
+  chips($('eCues'), CUES, eCuesSet, 'ecue');
+}
+$('eTravel').addEventListener('click', e => { const b = e.target.closest('[data-travel]'); if (!b) return; eTravel = +b.dataset.travel; segs(); });
+$('eBurden').addEventListener('click', e => { const b = e.target.closest('[data-burden]'); if (!b) return; eBurden = +b.dataset.burden; segs(); });
+$('eCues').addEventListener('click', e => { const b = e.target.closest('[data-ecue]'); if (!b) return; const v = b.dataset.ecue; eCuesSet.has(v) ? eCuesSet.delete(v) : eCuesSet.add(v); segs(); });
+
+const FIELDS = { eName:'name', eArea:'area', eHow:'how', eCost:'cost', eHours:'hours', eTarget:'target', eContact:'contact', eMemo:'memo' };
+function openEditor(r){
+  editing = r ? r.id : null;
+  $('edTitle').textContent = r && r.id && !r._dup ? '자원 고치기' : '자원 추가';
+  r = r || {};
+  Object.entries(FIELDS).forEach(([id, k]) => { $(id).value = r[k] || ''; });
+  $('eKind').value = r.kind || KINDS[0];
+  $('eMin').value = r.stageMin ?? 0; $('eMax').value = r.stageMax ?? 5;
+  $('eCompanion').checked = !!r.companion; $('eConnected').checked = !!r.connected;
+  eTravel = r.travel || 2; eBurden = r.burden || 2;
+  eCuesSet.clear(); (r.cues || []).forEach(c => eCuesSet.add(c));
+  segs(); $('editor').hidden = false; $('eName').focus(); $('editor').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+function closeEditor(){ $('editor').hidden = true; editing = null; }
+$('btnNew').addEventListener('click', () => canWrite ? openEditor(null) : toast('이 페이지는 보기만 가능합니다.'));
+$('btnCancel').addEventListener('click', closeEditor);
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('eName').value.trim(); if (!name) { $('eName').focus(); return; }
+  let lo = +$('eMin').value, hi = +$('eMax').value; if (lo > hi) [lo, hi] = [hi, lo];
+  const base = editing ? (items.find(x => x.id === editing) || {}) : {};
+  const it = { ...base, id: editing || newId(), name, kind: $('eKind').value, travel: eTravel, burden: eBurden,
+    stageMin: lo, stageMax: hi, cues: [...eCuesSet], companion: $('eCompanion').checked, connected: $('eConnected').checked };
+  Object.entries(FIELDS).forEach(([id, k]) => { if (k !== 'name') it[k] = $(id).value.trim(); });
+  delete it.example;
+  $('btnSave').disabled = true;
+  try { await saveItem(it); closeEditor(); toast('저장했습니다.'); }
+  catch(err){ toast(err && err.code === 'quota_exceeded' ? '저장 공간이 가득 찼습니다. 안 쓰는 항목을 지워 주세요.' : '저장하지 못했습니다. 잠시 뒤 다시 눌러 주세요.'); }
+  $('btnSave').disabled = false;
+});
+
+/* ---------- 카드 버튼 ---------- */
+let pendingDel = null;
+$('list').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const act = b.dataset.act;
+  if (act === 'new2') return openEditor(null);
+  if (act === 'sample2') return addSamples();
+  const id = b.closest('.res')?.dataset.id; const r = items.find(x => x.id === id); if (!r) return;
+  if (act === 'edit') openEditor(r);
+  if (act === 'dup') openEditor({ ...r, id: null, name: r.name + ' (복제)', connected: false, example: false, _dup: true });
+  if (act === 'del') {
+    // 삭제는 한 번 더 눌러야 실행 (이 화면은 confirm 대화상자를 못 씀)
+    if (pendingDel === id) { pendingDel = null; try { await removeItem(id); toast('삭제했습니다.'); } catch(err){ toast('삭제하지 못했습니다.'); } }
+    else { pendingDel = id; b.textContent = '정말 삭제'; setTimeout(() => { if (pendingDel === id) { pendingDel = null; b.textContent = '삭제'; } }, 3500); }
+  }
+});
+
+/* ---------- 예시·복사·불러오기 ---------- */
+async function addSamples(){
+  const S = [
+    { name:'(예시) ○○복지관 요리모임', kind:'모임·프로그램', area:'예시 동네', how:'시내버스 ○번, 정류장에서 도보 5분', travel:2, burden:1, stageMin:3, stageMax:4, cues:['먹기·요리','사람(가족·친구)'], cost:'무료', hours:'매주 목 14시', target:'등록 정신장애인', contact:'예시 담당자', companion:true, memo:'가상의 예시입니다. 지우고 실제 자원을 넣으세요.' },
+    { name:'(예시) 동네 보드게임카페', kind:'쉼터·카페·공간', area:'예시 동네', how:'집에서 도보 10분', travel:1, burden:2, stageMin:2, stageMax:3, cues:['게임'], cost:'1인 시간당 약 4,000원', hours:'12~22시', target:'', contact:'', companion:true, memo:'가상의 예시입니다.' },
+    { name:'(예시) 직업재활시설 체험', kind:'직업·일자리', area:'예시 동네', how:'버스 환승 1회 또는 차량 지원', travel:3, burden:3, stageMin:4, stageMax:5, cues:['돈·일'], cost:'무료', hours:'평일 오전', target:'등록 정신장애인', contact:'예시 담당자', companion:true, memo:'가상의 예시입니다.' },
+  ];
+  try { for (const s of S) await saveItem({ ...s, id:newId(), example:true }); toast('예시 3곳을 넣었습니다. 확인 후 지워 주세요.'); } catch(e){ toast('예시를 넣지 못했습니다.'); }
+}
+$('btnSample').addEventListener('click', addSamples);
+
+async function copyText(t, okMsg){
+  try { await navigator.clipboard.writeText(t); toast(okMsg); }
+  catch(e){ $('importText').value = t; $('importText').select(); toast('복사가 막혀 아래 칸에 넣어 두었습니다. Ctrl+C로 복사하세요.'); }
+}
+$('btnExport').addEventListener('click', () => {
+  const real = items.filter(x => !x.example);
+  if (!real.length) return toast('복사할 자원이 없습니다.');
+  copyText(JSON.stringify(real.map(({ id, ...rest }) => rest)), `${real.length}곳을 복사했습니다.`);
+});
+$('btnImport').addEventListener('click', async () => {
+  let arr; try { arr = JSON.parse($('importText').value); if (!Array.isArray(arr)) throw 0; } catch(e){ return toast('복사해 둔 목록 형식이 아닙니다.'); }
+  let n = 0;
+  try { for (const r of arr) { if (r && r.name) { await saveItem({ ...r, id:newId() }); n++; } } toast(`${n}곳을 불러왔습니다.`); $('importText').value = ''; }
+  catch(e){ toast(`${n}곳까지 불러오고 멈췄습니다.`); }
+});
+
+let tt; function toast(m){ const t = $('toast'); t.textContent = m; t.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('on'), 2600); }
+init();
+</script>
+
+</body>
+</html>

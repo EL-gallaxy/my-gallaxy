@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>회복 도구함</title>
+<!--
+  회복 도구함 — 작업치료사가 상담 옆에 켜 두는 도구. 당사자는 화면을 쓰지 않고, 종이 카드만 받습니다.
+  - ① 회복 사다리: 당사자의 흥미 단서(게임 등) + 현재 단계 → 이번 주 작은 걸음 → 큰 글씨 카드 인쇄
+  - ② 위기 대화 가이드: 상황별로 "뭐라고 말할지", 빠뜨린 확인 항목, 기록 초안(평가 A는 직접 작성)
+  - 파일 하나로 동작합니다. 서버·AI·로그인 없음. 입력한 내용은 어디에도 저장·전송되지 않고,
+    창을 닫거나 새로고침하면 사라집니다. 이름·생년월일 대신 "A씨" 같은 임시 표기만 쓰세요.
+  - 위험도를 판정하지 않습니다. 센터 위기 대응 절차와 슈퍼바이저의 지시가 항상 우선합니다.
+-->
+<style>
+  :root{
+    --brand:#0f766e; --brand-d:#0b5a54; --bg:#f3f3f1; --card:#fff; --line:#d8d8d2;
+    --ink:#1d2327; --mute:#5b6570; --soft:#e8f3f1; --warn:#9a3412; --warn-bg:#fff4ec; --danger:#b42318;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:16px;line-height:1.55}
+  header{background:var(--brand);color:#fff;padding:14px 20px}
+  header h1{margin:0;font-size:20px}
+  header p{margin:2px 0 0;font-size:13px;opacity:.9}
+  nav{display:flex;gap:6px;max-width:1000px;margin:0 auto;padding:12px 16px 0}
+  nav button{flex:1;padding:12px 10px;border:1px solid var(--line);border-bottom:none;background:#e9e9e4;border-radius:10px 10px 0 0;font:inherit;font-size:15px;cursor:pointer;color:var(--mute)}
+  nav button[aria-selected="true"]{background:var(--card);color:var(--brand-d);font-weight:700}
+  main{max-width:1000px;margin:0 auto;padding:0 16px 40px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:0 0 12px 12px;padding:18px}
+  h2{font-size:18px;margin:0 0 4px}
+  h3{font-size:16px;margin:18px 0 6px}
+  .sub{color:var(--mute);font-size:14px;margin:0 0 12px}
+  .step{margin:18px 0 0;padding-top:14px;border-top:1px dashed var(--line)}
+  .step:first-of-type{border-top:none;padding-top:0;margin-top:8px}
+  .num{display:inline-block;background:var(--brand);color:#fff;border-radius:50%;width:24px;height:24px;line-height:24px;text-align:center;font-size:13px;margin-right:6px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .chip{padding:9px 14px;border:1px solid var(--line);background:#fff;border-radius:999px;font:inherit;font-size:15px;cursor:pointer}
+  .chip[aria-pressed="true"],.chip.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .stage{display:block;width:100%;text-align:left;padding:10px 14px;margin-top:6px;border:1px solid var(--line);background:#fff;border-radius:10px;font:inherit;cursor:pointer}
+  .stage[aria-pressed="true"]{background:var(--soft);border-color:var(--brand);box-shadow:inset 4px 0 0 var(--brand)}
+  .stage b{display:block}
+  .stage span{color:var(--mute);font-size:13px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .box{background:var(--soft);border-radius:10px;padding:12px 14px;margin-top:8px}
+  .box.warn{background:var(--warn-bg);color:var(--warn)}
+  .box ul{margin:6px 0 0;padding-left:20px}
+  .box li{margin:3px 0}
+  .say{background:#fff;border-left:4px solid var(--brand);padding:7px 12px;margin:6px 0;border-radius:0 8px 8px 0;border-top:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .avoid{background:var(--warn-bg);border-left:4px solid var(--warn);padding:7px 12px;margin:6px 0;border-radius:0 8px 8px 0;color:var(--warn)}
+  .opt{display:block;width:100%;text-align:left;padding:10px 12px;margin-top:6px;border:1px solid var(--line);background:#fff;border-radius:8px;font:inherit;cursor:pointer}
+  .opt[aria-pressed="true"]{border-color:var(--brand);background:var(--soft);font-weight:700}
+  label{display:block;font-size:14px;color:var(--mute);margin:10px 0 3px}
+  input[type=text],textarea,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff;color:var(--ink)}
+  textarea{min-height:64px;resize:vertical}
+  .btn{padding:10px 18px;border:1px solid var(--brand);background:var(--brand);color:#fff;border-radius:8px;font:inherit;cursor:pointer}
+  .btn.ghost{background:#fff;color:var(--brand-d)}
+  .btn:focus-visible,.chip:focus-visible,.stage:focus-visible,.opt:focus-visible,nav button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #f59e0b;outline-offset:2px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .rules{background:#10282a;color:#e8fffb;border-radius:10px;padding:12px 16px;margin-bottom:12px}
+  .rules b{color:#7ee0d3}
+  .check{display:flex;gap:8px;align-items:flex-start;margin:5px 0;font-size:15px}
+  .check input{margin-top:5px;width:18px;height:18px;flex:none}
+  .grp{border:1px solid var(--line);border-radius:10px;padding:8px 14px 10px;margin-top:10px}
+  .grp>b{font-size:14px;color:var(--brand-d)}
+  .tel{font-size:14px;color:var(--mute);margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#10282a;color:#fff;padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;transition:.25s;pointer-events:none}
+  .toast.on{opacity:1}
+  .hide{display:none!important}
+
+  /* 인쇄용 카드: 당사자에게 줄 종이. 큰 글씨, 한 장 */
+  #card{border:3px solid var(--brand);border-radius:16px;padding:26px 30px;margin-top:10px;background:#fff;color:#000}
+  #card .ct{font-size:15px;color:#444;margin:0}
+  #card h2.big{font-size:30px;margin:4px 0 14px;line-height:1.3}
+  #card .row{display:flex;gap:10px;font-size:22px;margin:10px 0;align-items:baseline}
+  #card .row b{flex:none;width:180px;color:var(--brand-d)}
+  #card .row span{flex:1;border-bottom:2px solid #bbb;min-height:34px}
+  #card .ok{margin-top:18px;border:2px dashed var(--brand);border-radius:12px;padding:12px 16px;font-size:22px}
+  #card .easy{margin-top:12px;font-size:19px;color:#333}
+  #card .boxes{margin-top:18px;font-size:24px;letter-spacing:6px}
+  #card .foot{margin-top:16px;font-size:16px;color:#444}
+  @media print{
+    @page{size:A4;margin:14mm}
+    body{background:#fff}
+    header,nav,.noprint,.toast{display:none!important}
+    main{padding:0;max-width:none}
+    .panel{border:none;padding:0}
+    #card{border-width:4px;margin:0}
+    .only-ladder-print .crisis-only{display:none!important}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>회복 도구함</h1>
+  <p>선생님이 상담 옆에 켜 두는 도구 · 입력한 내용은 저장·전송되지 않고 창을 닫으면 사라집니다</p>
+</header>
+
+<nav role="tablist" aria-label="도구 선택" class="noprint">
+  <button role="tab" id="tab-ladder" aria-selected="true" aria-controls="view-ladder">① 회복 사다리</button>
+  <button role="tab" id="tab-crisis" aria-selected="false" aria-controls="view-crisis">② 위기 대화 가이드</button>
+</nav>
+
+<main>
+  <!-- ============ ① 회복 사다리 ============ -->
+  <section class="panel" id="view-ladder" role="tabpanel" aria-labelledby="tab-ladder">
+    <h2>회복 사다리</h2>
+    <p class="sub noprint">"동기를 높인다"가 아니라 "시작 문턱을 아주 낮춘다". 당사자가 이미 좋아하는 것에서 출발해 한 칸씩 올라갑니다.</p>
+
+    <div class="step noprint">
+      <h3><span class="num">1</span>이 분이 이미 좋아하거나 잘하는 것은? <small style="font-weight:normal;color:var(--mute)">(1~2개 고르세요)</small></h3>
+      <div class="chips" id="cues"></div>
+      <div class="box" id="cueNote"></div>
+    </div>
+
+    <div class="step noprint">
+      <h3><span class="num">2</span>지금 어디쯤 있나요? <small style="font-weight:normal;color:var(--mute)">(가장 가까운 칸 하나)</small></h3>
+      <div id="stages"></div>
+    </div>
+
+    <div class="step noprint">
+      <h3><span class="num">3</span>이번 주 한 걸음 고르기</h3>
+      <div id="ideas"><p class="sub">1, 2번을 고르면 제안이 나옵니다.</p></div>
+    </div>
+
+    <div class="step noprint">
+      <h3><span class="num">4</span>말 꺼내는 법 <small style="font-weight:normal;color:var(--mute)">(권유하지 말고 묻기)</small></h3>
+      <div id="talk"></div>
+    </div>
+
+    <div class="step">
+      <h3 class="noprint"><span class="num">5</span>종이 카드 만들기</h3>
+      <div class="grid2 noprint">
+        <div><label for="fWhat">이번 주 한 걸음</label><textarea id="fWhat" placeholder="위에서 고르면 자동으로 채워집니다. 고쳐 쓸 수 있어요."></textarea></div>
+        <div>
+          <label for="fWho">이름(임시 표기)</label><input type="text" id="fWho" placeholder="예: A님">
+          <label for="fWhen">언제</label><input type="text" id="fWhen" placeholder="예: 목요일 오후">
+          <label for="fWhere">어디서 · 누구와</label><input type="text" id="fWhere" placeholder="예: 집 앞 편의점 · 혼자">
+          <label for="fNext">다음에 만날 날</label><input type="text" id="fNext" placeholder="예: 다음 주 화요일">
+        </div>
+      </div>
+      <div class="bar noprint"><button class="btn" id="btnPrint">카드 인쇄</button><button class="btn ghost" id="btnReset">처음부터</button></div>
+      <div id="card" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- ============ ② 위기 대화 가이드 ============ -->
+  <section class="panel crisis-only hide" id="view-crisis" role="tabpanel" aria-labelledby="tab-crisis">
+    <h2>위기 대화 가이드</h2>
+    <p class="sub">"뭐라고 말하지?"가 막힐 때 소리 내어 읽을 수 있는 문장과, 빠뜨린 확인 항목을 보여 줍니다. <b>위험도는 판정하지 않습니다.</b></p>
+
+    <div class="rules">
+      <b>세 가지만 기억</b> · ① 짧게, 천천히, 먼저 듣기 · ② 자살·자해·타해는 돌려 말하지 말고 <b>직접</b> 묻기(물어본다고 생각을 심지 않습니다) · ③ <b>혼자 결정하지 않기</b> — 센터 절차와 슈퍼바이저가 먼저
+    </div>
+
+    <div class="step">
+      <h3><span class="num">1</span>지금 상황</h3>
+      <div class="chips" id="sit"></div>
+    </div>
+
+    <div class="step">
+      <h3><span class="num">2</span>대화 순서</h3>
+      <div class="chips" id="phases"></div>
+      <div id="phaseBody"></div>
+    </div>
+
+    <div class="step">
+      <h3><span class="num">3</span>확인한 것 <small style="font-weight:normal;color:var(--mute)">(한 일만 체크 — 점수는 없습니다)</small></h3>
+      <div id="checks"></div>
+    </div>
+
+    <div class="step">
+      <h3><span class="num">4</span>기록 초안 <small style="font-weight:normal;color:var(--mute)">(MHIS에 붙여넣기용)</small></h3>
+      <div class="grid2">
+        <div>
+          <label for="cS">S · 당사자가 한 말 (그대로)</label><textarea id="cS"></textarea>
+          <label for="cO">O · 내가 본 것 (표정, 목소리, 환경 등)</label><textarea id="cO"></textarea>
+        </div>
+        <div>
+          <label for="cA">A · 나의 판단 <b style="color:var(--danger)">(직접 쓰세요 — 도구는 쓰지 않습니다)</b></label>
+          <textarea id="cA" placeholder="떠올려 볼 질문&#10;· 내가 가장 걱정하는 점은 무엇인가&#10;· 지금 안전하다고 볼 근거 2가지 / 아니라고 볼 근거 2가지&#10;· 혼자 정하기 어렵다면 누구에게 물을까"></textarea>
+          <label for="cP">P · 다음 행동 · 약속한 후속 연락</label><textarea id="cP" placeholder="예: 오늘 18시 전화 / 보호자에게 안내 / 팀장 보고"></textarea>
+        </div>
+      </div>
+      <div class="bar"><button class="btn" id="btnCopy">기록 초안 복사</button></div>
+      <pre class="box" id="draft" style="white-space:pre-wrap;font-family:inherit;margin-top:10px"></pre>
+    </div>
+
+    <p class="tel">참고 번호(센터 기준과 최신 번호는 직접 확인): 긴급 119 · 112 / 자살예방 상담전화 109 / 정신건강위기상담 1577-0199. 이 도구의 문장은 일반적인 위기 면담 원칙을 정리한 것이며 센터 위기 대응 매뉴얼을 대체하지 않습니다.</p>
+  </section>
+</main>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+/* ===================== 데이터 ===================== */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// 단계: 집 안 → 문밖 → 집 근처 → 사람 곁 → 함께 하기 → 역할
+const STAGES = [
+  { t:'0단계 · 집 안에서 연결', d:'하루 대부분 집 안. 선생님과의 대화가 유일한 바깥 접점', ok:'선생님과 이야기를 나눴으면 성공' },
+  { t:'1단계 · 문밖 한 걸음', d:'집 밖이 낯설고 부담. 현관·우편함·집 앞까지', ok:'문 밖에 서서 1분 있었으면 성공' },
+  { t:'2단계 · 집 근처 혼자', d:'혼자 5~10분 근처에 다녀올 수 있음', ok:'다녀온 것만으로 성공 (다 못 해도 괜찮아요)' },
+  { t:'3단계 · 사람 곁에 머물기', d:'말하지 않아도, 사람 있는 곳에 있어 보기', ok:'30분 안에 돌아와도 성공' },
+  { t:'4단계 · 함께 하기', d:'동행이 있으면 모임·활동 1회 가능', ok:'한 번 앉아 있었으면 성공' },
+  { t:'5단계 · 역할 갖기', d:'정기 참여 가능. 작은 역할·일을 시작할 때', ok:'약속한 날에 나타났으면 성공' },
+];
+
+// 단서 × 단계별 제안. 각 배열의 인덱스 = 단계(0~5)
+const CUES = {
+  '게임': { note:'게임은 전략·끈기·팀워크·빠른 판단을 쓰는 활동입니다. "그만하라"가 아니라 "게임 + 한 걸음"으로 접근합니다. 어떤 게임인지, 혼자인지 함께인지, 길드·팀이 있는지 먼저 물어보세요.', ideas:[
+    '선생님께 요즘 하는 게임을 10분간 가르쳐 주기',
+    '게임 한 판 끝나고 현관문을 열어 바깥 공기 1분 마시기',
+    '게임 충전카드·간식을 집 앞 편의점에서 직접 사 오기',
+    '동행과 함께 PC방·보드게임카페에 가서 30분 구경하기',
+    '센터 보드게임·게임 이야기 모임에 1회 참여하기',
+    '내가 잘하는 게임을 다른 사람에게 알려 주는 역할 맡기'] },
+  '음악·영상': { note:'듣기·보기를 "받아들이는 시간"에서 "고르고 나누는 시간"으로 바꿔 봅니다.', ideas:[
+    '요즘 즐겨 듣는 곡·보는 영상 3개를 선생님께 알려 주기',
+    '이어폰을 끼고 현관 앞에서 노래 한 곡 듣고 들어오기',
+    '좋아하는 노래를 들으며 집 앞 한 바퀴 걷기',
+    '동네 도서관·카페에서 음악이나 영상을 한 편 보고 오기',
+    '센터 노래·영화 모임에 1회 참여하기',
+    '모임에서 들을 곡 하나 추천해 오는 역할 맡기'] },
+  '먹기·요리': { note:'먹는 것은 가장 안전한 사회적 활동입니다. 맛 취향을 묻는 것만으로도 대화가 열립니다.', ideas:[
+    '가장 좋아하는 음식과 못 먹는 음식 말해 주기',
+    '배달 음식을 현관 앞에서 직접 받아 보기',
+    '집 근처 가게에서 좋아하는 간식 하나 사 오기',
+    '동행과 분식집·카페에서 30분 앉아 있어 보기',
+    '센터 요리·간식 모임에 1회 참여하기',
+    '모임에서 간식 준비나 설거지 중 하나 맡기'] },
+  '동물·식물': { note:'돌볼 대상은 자연스러운 "책임"과 "역할"을 만듭니다. 키우는 것, 좋아하는 동물을 물어보세요.', ideas:[
+    '키우는 동물·식물(또는 좋아하는 동물) 이야기 들려주기',
+    '화분이나 길고양이 밥그릇 확인하러 현관 밖에 나가기',
+    '집 근처 화단·공원에서 식물이나 동물 보고 오기',
+    '동행과 동물카페·화원·공원에 가서 20분 머물기',
+    '센터 원예·산책 모임에 1회 참여하기',
+    '모임 화분에 물 주는 담당 맡기'] },
+  '걷기·운동': { note:'몸을 쓰는 활동은 말을 안 해도 함께 있을 수 있어 부담이 적습니다. 잘하는 운동보다 "해 봤던 것"을 물어보세요.', ideas:[
+    '예전에 해 본 운동이나 몸 쓰는 일을 이야기해 주기',
+    '집 안에서 스트레칭 3분 하고 현관문 열어 보기',
+    '낮 시간 집 근처 10분 걷기',
+    '동행과 공원이나 천변을 20분 걷기',
+    '센터 걷기·체조 모임에 1회 참여하기',
+    '걷기 모임 출석 체크나 물 챙기기 역할 맡기'] },
+  '만들기·그리기': { note:'결과물이 눈에 보이는 활동은 효능감을 빠르게 줍니다. 작품을 칭찬하기보다 만든 과정을 물어보세요.', ideas:[
+    '만들거나 그려 본 적 있는 것을 말해 주기',
+    '재료 하나를 집에서 꺼내 놓고 5분 만져 보기',
+    '집 근처 문구점·다이소에서 재료 하나 직접 고르기',
+    '동행과 공방·문구점에서 구경하기',
+    '센터 만들기·미술 모임에 1회 참여하기',
+    '내가 만든 것을 센터 게시판에 걸거나 다른 이에게 알려 주기'] },
+  '돈·일': { note:'"일하고 싶다"는 말이 나오면 가장 강한 동기입니다. 용돈·기술·예전 일을 물어보세요. 서두르지 말고 가장 작은 경험부터.', ideas:[
+    '예전에 해 본 일과 그때 괜찮았던 점을 이야기해 주기',
+    '이번 주 하루 정해진 시간에 일어나 보기',
+    '집 근처 은행·우체국·마트 등 일 구하기와 관련된 장소 지나가 보기',
+    '동행과 일자리 안내 장소(직업재활시설 등) 방문해 구경하기',
+    '직업재활 프로그램·체험 1회 참여하기',
+    '짧은 시간 일 체험이나 센터 내 작은 일(청소·정리) 맡기'] },
+  '사람(가족·친구)': { note:'연결하고 싶은 사람이 있는지부터 물어보세요. 관계에 대한 아쉬움이 가장 큰 동기가 되는 분도 많습니다.', ideas:[
+    '보고 싶거나 연락하고 싶은 사람이 있는지 이야기해 주기',
+    '가족이나 친구에게 짧은 문자 한 줄 보내 보기',
+    '가까운 가족과 집 앞에서 5분 대화하기',
+    '동행과 가족·친구를 만나 카페에서 30분 앉아 있기',
+    '센터 소모임에서 다른 이용자 1명과 인사 나누기',
+    '모임에서 새로 온 사람에게 안내해 주는 역할 맡기'] },
+};
+
+const TALK = [
+  { q:'게임에서 제일 재미있는 순간이 언제예요?', why:'흥미와 강점을 그 사람의 말로 확인합니다.' },
+  { q:'게임 속 나는 어떤 역할이에요? 팀에서 무슨 일을 해요?', why:'역할과 능력을 끌어냅니다. 이미 가진 역할 경험이 있다는 것을 본인이 듣게 됩니다.' },
+  { q:'요즘 하루 중 가장 좋은 때는 언제예요? 반대로 제일 지루한 때는요?', why:'일과 안에서 변화가 필요한 시간대를 찾습니다.' },
+  { q:'0점은 전혀 생각 없음, 10점은 꼭 해 보고 싶음이라면 지금 몇 점이에요?', why:'점수를 듣고 → "왜 0점이 아니라 ○점이에요?"로 이유를 묻습니다. 낮은 점수에서도 높이려 하지 말고 이유를 듣습니다.' },
+  { q:'1점만 올린다면 뭐가 있으면 될까요?', why:'한 칸의 조건을 본인이 말하게 합니다. 선생님이 정하지 않습니다.' },
+  { q:'이번 주에 해 볼 수 있는 것 중 이 셋 중에서 고른다면요?', why:'선택지를 2~3개로 주고 고르게 합니다. 선택권이 있어야 동기가 생깁니다.' },
+];
+const AVOID = ['"게임 좀 그만하세요", "나가야죠" — 변화의 압력은 저항을 키웁니다', '"왜 안 해요?" — 따지는 질문은 변명만 만듭니다 ("뭐가 있으면 될까요?"로 바꾸기)', '한 번에 큰 목표(주 3회, 취업) 제안'];
+
+/* ===================== 위기 데이터 ===================== */
+const SITS = { call:'📞 전화(당사자)', visit:'🚪 방문·대면', family:'👪 가족·보호자와 통화' };
+const PHASES = ['연결', '듣기', '안전 묻기', '다음 행동', '마무리'];
+
+const SCRIPT = {
+ call:[
+  { say:['"전화 주셔서 고맙습니다. ○○센터 ○○○예요."','"지금 이야기하실 수 있는 상태세요? 천천히 말씀하셔도 돼요. 제가 듣고 있어요."','"혹시 전화가 끊기면 이 번호로 다시 걸어도 될까요?"','"지금 어디 계세요? 혼자 계세요?"'], avoid:['"진정하세요" · "힘내세요" · "별일 아닐 거예요"'], tip:'가장 먼저 <b>위치와 재연락처</b>를 확인하세요. 끊겨도 연결할 수 있어야 합니다.' },
+  { say:['"많이 힘드셨겠어요."','"그런 상황이면 그럴 수 있어요."','"무슨 일이 있었는지 말씀해 주실 수 있어요?"','"(들은 말 반복) ~라는 말씀이시죠?"'], avoid:['해결책 제시, 설득, "왜 그러셨어요?"','침묵이 길어도 서두르지 않기 ("듣고 있어요" 정도만)'], tip:'말을 잘 못해도 괜찮습니다. <b>반복해 주기</b>만 해도 충분합니다.' },
+  { say:['"혹시 죽고 싶다는 생각이 드세요?"','(예 → ) "언제부터요? 오늘도 그런 생각이 있었어요?"','"어떻게 하려는 생각이나 계획이 있으세요?"','"그걸 할 수 있는 약이나 물건이 지금 곁에 있어요?"','"오늘 약이나 술을 평소보다 많이 드셨어요?"','"누군가를 해치고 싶은 생각도 있으세요?"'], avoid:['"설마 그런 건 아니죠?" — 부정 답을 유도하는 질문','"그런 생각 하면 안 돼요"'], tip:'<b>직접, 담담하게</b> 물으세요. 물어본다고 생각을 심지 않고, 대부분 안도합니다.' },
+  { say:['"지금 곁에 있어 줄 수 있는 분이 누구예요?"','"위험한 물건은 잠시 다른 방에 둘 수 있을까요?"','"제가 지금 방문해도 될까요, 아니면 응급실에 같이 가는 게 나을까요?" (선택지 2개)','"지금 이 상태에서 혼자 계시게 되는 게 걱정돼요."'], avoid:['지킬 수 없는 약속 ("다 괜찮아질 거예요")','혼자 결정하고 끝내기 — 팀장·슈퍼바이저에게 바로 연결'], tip:'위험이 높아 보이면 <b>전화를 끊지 않은 채</b> 다른 사람이 119·112·팀장에게 연락하도록 도움을 요청하세요.' },
+  { say:['"오늘 이야기해 줘서 고맙습니다."','"○시에 제가 다시 전화드릴게요."','"그 사이에 힘들어지면 이 번호(○○)나 109, 119로 바로 전화하세요."'], avoid:['후속 연락 시각을 모호하게 두기'], tip:'약속한 <b>후속 연락 시각</b>은 반드시 지키고, P에 적어 두세요.' },
+ ],
+ visit:[
+  { say:['(문 앞) "○○ 씨, ○○센터 ○○○예요. 걱정돼서 왔어요. 잠깐 얘기할 수 있을까요?"','"들어가도 될까요? 불편하시면 문 앞에서 해도 좋아요."'], avoid:['혼자 방문, 위치를 센터에 알리지 않기','출입구를 등지고 서기'], tip:'출발 전 <b>센터에 위치·예상 시간 공유</b>, 가능하면 2인 방문. 출입구 쪽에 서세요.' },
+  { say:['"어떻게 지내셨어요?"','"많이 힘들어 보여요. 무슨 일이 있었어요?"','"(들은 말 반복) ~하셨군요."'], avoid:['방 상태·음식 등 환경 비판','질문 연달아 하기 (하나 묻고 기다리기)'], tip:'<b>눈높이를 맞추고</b> 천천히. 표정·목소리·환경은 O에 적을 소재입니다.' },
+  { say:['"혹시 죽고 싶다는 생각이 드세요?"','"어떻게 하려는 생각이나 계획이 있으세요?"','"방 안에 약이나 위험한 물건이 있나요?"','"누군가를 해치고 싶은 생각도 있으세요?"'], avoid:['돌려 말하기','주변 물건을 허락 없이 치우기'], tip:'수단 접근 가능성은 <b>눈으로도</b> 확인하세요(O 항목).' },
+  { say:['"오늘은 혼자 계시지 않았으면 좋겠어요. 같이 있어 줄 분이 있을까요?"','"지금 병원에 같이 가는 방법과, 오늘 밤을 안전하게 보내는 방법 중에서 어느 쪽이 나을까요?"'], avoid:['혼자 판단해 현장 종결','설득을 오래 끌기 — 위험하면 즉시 팀장 보고·119/112'], tip:'<b>동의가 안 될 때</b>의 절차(응급입원 의뢰, 112·119)는 센터 매뉴얼을 따르세요.' },
+  { say:['"오늘 만나 줘서 고마워요."','"내일 ○시에 전화드릴게요."'], avoid:['"또 올게요" 같은 모호한 약속'], tip:'센터에 <b>귀소 보고</b>를 하세요.' },
+ ],
+ family:[
+  { say:['"많이 놀라셨죠. 연락 주셔서 고맙습니다. ○○센터 ○○○입니다."','"지금 당사자분이 곁에 계신가요?"'], avoid:['"왜 이제야 연락하셨어요?" — 보호자 탓하기'], tip:'보호자도 위기 상황입니다. 먼저 <b>안심시키고</b> 사실을 모으세요.' },
+  { say:['"언제부터, 어떤 모습을 보셨는지 말씀해 주세요."','"본인이 한 말 중에 걱정되는 말이 있었나요?"','"약은 드시고 있나요?"'], avoid:['진단·예후 단정','당사자 동의 없이 불필요한 정보를 줄줄이 공유'], tip:'보호자에게서 듣는 정보도 S가 아니라 <b>"보호자 진술"</b>로 구분해 기록하세요.' },
+  { say:['"혹시 본인이 죽고 싶다거나 해치고 싶다는 말을 한 적이 있나요?"','"약이나 위험한 물건이 집에 있나요?"','"치워 주실 수 있을까요?"'], avoid:['"별일 아닐 거예요"'], tip:'보호자가 <b>할 수 있는 안전 행동</b>(혼자 두지 않기, 위험물 치우기)을 구체적으로 안내합니다.' },
+  { say:['"오늘은 혼자 두지 않으시면 좋겠어요."','"상황이 급해지면 119에 바로 전화하세요. 저에게도 바로 연락 주세요."'], avoid:['애매한 안내'], tip:'<b>누가, 언제까지, 무엇을</b> 하는지 정리해서 말씀드리세요.' },
+  { say:['"연락 주셔서 고맙습니다."','"제가 ○시에 다시 연락드릴게요."','"제 번호는 ○○예요."'], avoid:[], tip:'보호자 연락 사실과 시각은 P에 적어 두세요.' },
+ ],
+};
+
+const CHECK_GROUPS = [
+  { g:'위치·연락', items:['현재 위치 확인','혼자인지 확인','재연락처 확인'] },
+  { g:'자살·자해', items:['자살 생각 직접 질문','계획·방법 질문','수단(약·도구) 접근 질문','최근 시도·자해 질문'] },
+  { g:'타해·물질', items:['타해 생각 질문','음주·약 과다 여부 질문'] },
+  { g:'보호요인', items:['곁에 있어 줄 사람 확인','지금 있는 장소가 안전한지 확인','센터와의 약속(후속 연락)에 동의'] },
+  { g:'내가 한 일', items:['팀장·슈퍼바이저·동료에게 공유','보호자 연락','112 요청','119 요청','응급입원 의뢰','후속 연락 시각 약속'] },
+];
+
+/* ===================== 상태 ===================== */
+const state = { cues:new Set(), stage:null, pick:null, sit:'call', phase:0, checks:new Set() };
+
+/* ===================== ① 회복 사다리 ===================== */
+function renderCues(){
+  $('cues').innerHTML = Object.keys(CUES).map(k =>
+    `<button type="button" class="chip" aria-pressed="${state.cues.has(k)}" data-cue="${esc(k)}">${esc(k)}</button>`).join('');
+  const notes = [...state.cues].map(k => `<p style="margin:0 0 6px"><b>${esc(k)}</b> — ${esc(CUES[k].note)}</p>`).join('');
+  $('cueNote').innerHTML = notes || '<span class="sub" style="margin:0">고르면 이 단서로 대화를 여는 법이 나옵니다. (예: 게임만 하는 분 → "게임")</span>';
+}
+function renderStages(){
+  $('stages').innerHTML = STAGES.map((s,i) =>
+    `<button type="button" class="stage" aria-pressed="${state.stage===i}" data-stage="${i}"><b>${esc(s.t)}</b><span>${esc(s.d)}</span></button>`).join('');
+}
+function renderIdeas(){
+  if (!state.cues.size || state.stage===null){
+    $('ideas').innerHTML = '<p class="sub">1, 2번을 고르면 제안이 나옵니다.</p>'; return;
+  }
+  const rows = [];
+  state.cues.forEach(k => rows.push({ k, text: CUES[k].ideas[state.stage], easy: state.stage>0 ? CUES[k].ideas[state.stage-1] : '' }));
+  $('ideas').innerHTML = rows.map((r,i) =>
+    `<button type="button" class="opt" aria-pressed="${state.pick===r.text}" data-idea="${i}"><small style="color:var(--mute)">${esc(r.k)}</small><br>${esc(r.text)}</button>`).join('') +
+    `<p class="sub" style="margin-top:8px">마음에 안 들면 아래 5번 칸에서 직접 고쳐 쓰세요. 아주 작을수록 성공합니다.</p>`;
+  $('ideas')._rows = rows;
+}
+function renderTalk(){
+  $('talk').innerHTML = TALK.map(t => `<div class="say">${esc(t.q)}<br><small style="color:var(--mute)">${esc(t.why)}</small></div>`).join('') +
+    `<div class="box warn"><b>피할 말</b><ul>${AVOID.map(a=>`<li>${esc(a)}</li>`).join('')}</ul></div>`;
+}
+function renderCard(){
+  const s = state.stage!==null ? STAGES[state.stage] : null;
+  const what = $('fWhat').value.trim();
+  const easyRow = ($('ideas')._rows||[]).find(r => r.text===state.pick) || ($('ideas')._rows||[])[0];
+  const easy = (state.stage>0 && easyRow) ? easyRow.easy : '';
+  const box = (id) => esc($(id).value.trim());
+  $('card').innerHTML =
+    `<p class="ct">원주시정신건강복지센터 · ${box('fWho') || '&nbsp;'}</p>
+     <h2 class="big">${what ? esc(what) : '이번 주 나의 한 걸음'}</h2>
+     <div class="row"><b>언제</b><span>${box('fWhen')}</span></div>
+     <div class="row"><b>어디서·누구와</b><span>${box('fWhere')}</span></div>
+     <div class="ok"><b>이것만 해도 성공!</b><br>${s ? esc(s.ok) : '&nbsp;'}</div>
+     ${easy ? `<div class="easy">어려우면 이것만 해도 괜찮아요: ${esc(easy)}</div>` : ''}
+     <div class="boxes" aria-hidden="true">□ □ □ □ □ □ □</div>
+     <div class="foot">다음에 만나는 날: ${box('fNext') || '____________'}</div>`;
+}
+function setWhat(text){ $('fWhat').value = text; renderCard(); }
+
+$('cues').addEventListener('click', e => {
+  const b = e.target.closest('[data-cue]'); if (!b) return;
+  const k = b.dataset.cue;
+  state.cues.has(k) ? state.cues.delete(k) : state.cues.add(k);
+  if (state.cues.size>2){ state.cues.delete([...state.cues][0]); }
+  state.pick = null; renderCues(); renderIdeas(); renderCard();
+});
+$('stages').addEventListener('click', e => {
+  const b = e.target.closest('[data-stage]'); if (!b) return;
+  state.stage = +b.dataset.stage; state.pick = null; renderStages(); renderIdeas(); renderCard();
+});
+$('ideas').addEventListener('click', e => {
+  const b = e.target.closest('[data-idea]'); if (!b) return;
+  const row = $('ideas')._rows[+b.dataset.idea];
+  state.pick = row.text; renderIdeas(); setWhat(row.text);
+});
+['fWhat','fWho','fWhen','fWhere','fNext'].forEach(id => $(id).addEventListener('input', renderCard));
+$('btnPrint').addEventListener('click', () => window.print());
+$('btnReset').addEventListener('click', () => {
+  state.cues.clear(); state.stage=null; state.pick=null;
+  ['fWhat','fWho','fWhen','fWhere','fNext'].forEach(id => $(id).value='');
+  renderCues(); renderStages(); renderIdeas(); renderCard();
+});
+
+/* ===================== ② 위기 대화 가이드 ===================== */
+function renderSit(){
+  $('sit').innerHTML = Object.entries(SITS).map(([k,v]) =>
+    `<button type="button" class="chip" aria-pressed="${state.sit===k}" data-sit="${k}">${esc(v)}</button>`).join('');
+  $('phases').innerHTML = PHASES.map((p,i) =>
+    `<button type="button" class="chip" aria-pressed="${state.phase===i}" data-phase="${i}">${i+1}. ${esc(p)}</button>`).join('');
+  const ph = SCRIPT[state.sit][state.phase];
+  $('phaseBody').innerHTML =
+    `<h3>이렇게 말해 보세요</h3>${ph.say.map(s=>`<div class="say">${esc(s)}</div>`).join('')}` +
+    (ph.avoid.length ? `<h3>이런 말은 피하세요</h3>${ph.avoid.map(s=>`<div class="avoid">${esc(s)}</div>`).join('')}` : '') +
+    `<div class="box"><b>포인트</b> · ${ph.tip}</div>` +
+    `<div class="bar"><button type="button" class="btn ghost" data-nav="-1" ${state.phase===0?'disabled':''}>← 이전</button>` +
+    `<button type="button" class="btn" data-nav="1" ${state.phase===PHASES.length-1?'disabled':''}>다음 →</button></div>`;
+}
+function renderChecks(){
+  $('checks').innerHTML = CHECK_GROUPS.map(g =>
+    `<div class="grp"><b>${esc(g.g)}</b>${g.items.map(it =>
+      `<label class="check"><input type="checkbox" data-chk="${esc(it)}" ${state.checks.has(it)?'checked':''}><span>${esc(it)}</span></label>`).join('')}</div>`).join('');
+}
+function buildDraft(){
+  const val = (id) => $(id).value.trim();
+  const done = [], undone = [];
+  CHECK_GROUPS.forEach(g => g.items.forEach(it => (state.checks.has(it) ? done : undone).push(it)));
+  // 확인하지 못한 "질문" 항목만 따로 보여 준다 (내가 한 일 항목은 안 한 게 정상일 수 있음)
+  const askedGroups = CHECK_GROUPS.slice(0,4).flatMap(g => g.items);
+  const missing = askedGroups.filter(it => !state.checks.has(it));
+  const did = CHECK_GROUPS[4].items.filter(it => state.checks.has(it));
+  const askedDone = askedGroups.filter(it => state.checks.has(it));
+  return [
+    'S) ' + (val('cS') || '(당사자 발언을 그대로 적기)'),
+    'O) ' + (val('cO') || '(관찰 내용)') + (askedDone.length ? '\n   확인함: ' + askedDone.join(', ') : ''),
+    (missing.length ? '   ※ 이번에 확인하지 못함: ' + missing.join(', ') + '\n' : '') + 'A) ' + (val('cA') || '(직접 작성)'),
+    'P) ' + (val('cP') || '(다음 행동)') + (did.length ? '\n   실시: ' + did.join(', ') : ''),
+  ].join('\n');
+}
+function refreshDraft(){ $('draft').textContent = buildDraft(); }
+
+$('sit').addEventListener('click', e => { const b = e.target.closest('[data-sit]'); if (!b) return; state.sit = b.dataset.sit; renderSit(); });
+$('phases').addEventListener('click', e => { const b = e.target.closest('[data-phase]'); if (!b) return; state.phase = +b.dataset.phase; renderSit(); });
+$('phaseBody').addEventListener('click', e => { const b = e.target.closest('[data-nav]'); if (!b) return; state.phase = Math.min(PHASES.length-1, Math.max(0, state.phase + +b.dataset.nav)); renderSit(); });
+$('checks').addEventListener('change', e => {
+  const c = e.target.closest('[data-chk]'); if (!c) return;
+  c.checked ? state.checks.add(c.dataset.chk) : state.checks.delete(c.dataset.chk);
+  refreshDraft();
+});
+['cS','cO','cA','cP'].forEach(id => $(id).addEventListener('input', refreshDraft));
+$('btnCopy').addEventListener('click', async () => {
+  const text = buildDraft();
+  try { await navigator.clipboard.writeText(text); toast('복사했습니다. MHIS에 붙여넣으세요.'); }
+  catch(e){
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch(_){}
+    ta.remove(); toast(ok ? '복사했습니다.' : '복사 실패 — 아래 초안을 직접 선택해 복사하세요.');
+  }
+});
+
+/* ===================== 공통 ===================== */
+let toastTimer;
+function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 2400); }
+
+function showTab(which){
+  const ladder = which === 'ladder';
+  $('view-ladder').classList.toggle('hide', !ladder);
+  $('view-crisis').classList.toggle('hide', ladder);
+  $('tab-ladder').setAttribute('aria-selected', ladder);
+  $('tab-crisis').setAttribute('aria-selected', !ladder);
+}
+$('tab-ladder').addEventListener('click', () => showTab('ladder'));
+$('tab-crisis').addEventListener('click', () => showTab('crisis'));
+
+renderCues(); renderStages(); renderIdeas(); renderTalk(); renderCard();
+renderSit(); renderChecks(); refreshDraft();
+</script>
+</body>
+</html>

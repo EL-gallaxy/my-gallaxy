@@ -14,6 +14,9 @@
 | `case_management_on.html` | 앱 전체(스타일, 마크업, 스크립트). 약 1만 줄 |
 | `sw.js` | 오프라인용 서비스 워커(캐시 우선, 새 버전이 있으면 화면에 "새로고침" 안내) |
 | `manifest.json`, `icon.svg` | 설치(PWA)용 |
+| `recovery_toolbox.html` | 회복 도구함: 회복 사다리(종이 카드 인쇄)와 위기 대화 가이드. 저장·전송 없는 독립 파일 |
+| `resource_map.html` | 원주 자원 지도: 이동·부담도·사다리 단계로 찾는 자원 목록(이 브라우저의 localStorage에 저장) |
+| `index.html` | 도구 모음 첫 화면(회복 도구함·자원 지도·사례관리 ON 링크) |
 | `first.html` | 이 앱과 무관한 별도 예제 페이지(예산 산출 계산기) |
 | `tests/static.js` | 스크립트·서비스 워커 구문, manifest 점검 |
 | `tests/smoke.js` | 실제 크롬으로 앱을 열어 전 흐름을 점검(Playwright + axe-core) |
