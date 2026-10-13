@@ -83,6 +83,10 @@
   .seg .chip{flex:none}
   details.more{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
   details.more summary{cursor:pointer;color:var(--brand-d);font-size:14px}
+  .syncbox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:12px}
+  .sync-top{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;justify-content:space-between}
+  .sync-ok{color:var(--ok);background:var(--ok-bg);border-color:transparent}
+  .sync-warn{color:var(--mid);background:var(--mid-bg);border-color:transparent}
   .toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--deep);color:var(--on-deep);padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:90vw;text-align:center}
   .toast.on{opacity:1}
   @media (prefers-reduced-motion: reduce){.toast{transition:none}}
@@ -144,6 +148,12 @@
     </aside>
 
     <main style="min-width:0">
+      <section class="syncbox" id="syncbox" aria-label="다른 컴퓨터와 맞추기">
+        <div class="sync-top"><b>다른 컴퓨터와 맞추기</b><span class="pill" id="syncStatus">연결 안 됨</span></div>
+        <p class="note" id="syncHelp" style="margin:6px 0 8px"></p>
+        <div class="bar" id="syncBtns"></div>
+      </section>
+
       <div class="bar" style="margin-bottom:12px">
         <button type="button" class="btn" id="btnNew">+ 자원 추가</button>
         <label style="margin:0;display:flex;align-items:center;gap:6px">정렬
@@ -226,16 +236,19 @@ let db = null, canWrite = true, items = [], ready = false, localMode = false;
 const LS_KEY = 'wonju-resources-v1';
 function lsRead(){ try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch(e){ return []; } }
 function lsWrite(){ try { localStorage.setItem(LS_KEY, JSON.stringify(items)); } catch(e){} }
+const DEL_KEY = 'wonju-resources-deleted-v1';
+let deleted = {}; try { deleted = JSON.parse(localStorage.getItem(DEL_KEY) || '{}') || {}; } catch(e){}
+function delWrite(){ try { localStorage.setItem(DEL_KEY, JSON.stringify(deleted)); } catch(e){} }
 const newId = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 async function saveItem(it){
   it.updatedAt = Date.now();
   if (db) { await db.doc('resources/' + it.id).set(it); }
-  else { const i = items.findIndex(x => x.id === it.id); i >= 0 ? items[i] = it : items.push(it); lsWrite(); render(); }
+  else { const i = items.findIndex(x => x.id === it.id); i >= 0 ? items[i] = it : items.push(it); lsWrite(); render(); queueSync(); }
 }
 async function removeItem(id){
   if (db) { await db.doc('resources/' + id).delete(); }
-  else { items = items.filter(x => x.id !== id); lsWrite(); render(); }
+  else { items = items.filter(x => x.id !== id); deleted[id] = Date.now(); delWrite(); lsWrite(); render(); queueSync(); }
 }
 
 async function init(){
@@ -254,7 +267,7 @@ async function init(){
 }
 function fallbackLocal(){
   db = null; localMode = true; items = lsRead(); ready = true;
-  $('banner').innerHTML = '<div class="banner">이 목록은 지금 쓰는 컴퓨터의 이 브라우저에 저장됩니다. 다른 컴퓨터나 휴대폰에서는 보이지 않고 브라우저 데이터를 지우면 사라지니, 가끔 아래 "목록 옮기기"에서 복사해 두세요.</div>';
+  if (!(window.showSaveFilePicker && window.showOpenFilePicker)) $('banner').innerHTML = '<div class="banner">이 목록은 지금 쓰는 컴퓨터의 이 브라우저에만 저장됩니다. 다른 컴퓨터와 맞추려면 크롬이나 엣지에서 여세요.</div>';
   render();
 }
 
@@ -436,8 +449,115 @@ $('btnImport').addEventListener('click', async () => {
   catch(e){ toast(`${n}곳까지 불러오고 멈췄습니다.`); }
 });
 
+/* ---------- 다른 컴퓨터와 맞추기: 클라우드 동기화 폴더(구글 드라이브, MYBOX 등) 안의 파일 하나 ----------
+   서버 없이 동작한다. 컴퓨터마다 같은 파일을 연결하면, 저장할 때마다 파일에 합치고 창을 다시 볼 때 파일에서 가져온다.
+   같은 항목을 두 컴퓨터에서 고쳤다면 나중에 고친 쪽이 남는다. 지운 항목은 "삭제 표식"으로 함께 전달된다. */
+const SYNC_OK = !!(window.showSaveFilePicker && window.showOpenFilePicker && window.indexedDB);
+const PICK_TYPES = [{ description: '자원 지도 파일', accept: { 'application/json': ['.json'] } }];
+let fh = null, syncing = false, syncAgain = false, syncTimer = null, lastSync = 0;
+
+function idbOpen(){ return new Promise((res, rej) => { const r = indexedDB.open('wonju-sync', 1); r.onupgradeneeded = () => r.result.createObjectStore('h'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbGet(k){ const d = await idbOpen(); return new Promise((res, rej) => { const q = d.transaction('h').objectStore('h').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+async function idbSet(k, v){ const d = await idbOpen(); return new Promise((res, rej) => { const t = d.transaction('h', 'readwrite'); v === undefined ? t.objectStore('h').delete(k) : t.objectStore('h').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); }
+
+function mergeRemote(rem){
+  let changed = false;
+  const rItems = Array.isArray(rem.items) ? rem.items : [], rDel = rem.deleted || {};
+  for (const [id, ts] of Object.entries(rDel)) if ((deleted[id] || 0) < ts) { deleted[id] = ts; changed = true; }
+  const map = new Map(items.map(x => [x.id, x]));
+  for (const r of rItems) {
+    if (!r || !r.id || !r.name) continue;
+    if (deleted[r.id] && deleted[r.id] >= (r.updatedAt || 0)) continue;
+    const l = map.get(r.id);
+    if (!l || (r.updatedAt || 0) > (l.updatedAt || 0)) { map.set(r.id, r); changed = true; }
+  }
+  for (const [id, ts] of Object.entries(deleted)) { const l = map.get(id); if (l && ts >= (l.updatedAt || 0)) { map.delete(id); changed = true; } }
+  items = [...map.values()];
+  return changed;
+}
+const byId = (a) => a.slice().sort((x, y) => x.id < y.id ? -1 : 1);
+
+function setSync(state){
+  const st = $('syncStatus'), help = $('syncHelp'), btns = $('syncBtns');
+  const b = (id, label, cls) => `<button type="button" class="btn ${cls === undefined ? 'ghost' : cls} small" id="${id}">${label}</button>`;
+  if (!SYNC_OK) {
+    st.className = 'pill sync-warn'; st.textContent = '이 브라우저는 지원 안 함';
+    help.textContent = '파일로 맞추려면 크롬이나 엣지에서 이 주소를 여세요. 그동안은 아래 "목록 옮기기"로 복사해서 옮길 수 있습니다.'; btns.innerHTML = ''; return;
+  }
+  if (!fh) {
+    st.className = 'pill'; st.textContent = '연결 안 됨';
+    help.textContent = '구글 드라이브나 네이버 MYBOX처럼 컴퓨터 사이에 동기화되는 폴더에 파일을 하나 만들어 연결하세요. 처음 컴퓨터에서는 "새 파일", 다른 컴퓨터에서는 같은 파일을 "기존 파일 연결"로 고릅니다.';
+    btns.innerHTML = b('btnSyncNew', '새 동기화 파일 만들기', '') + b('btnSyncOpen', '기존 동기화 파일 연결', ''); return;
+  }
+  if (state === 'perm') {
+    st.className = 'pill sync-warn'; st.textContent = '허용이 필요합니다';
+    help.textContent = '브라우저를 다시 열면 파일 접근을 한 번 더 허용해야 합니다.';
+    btns.innerHTML = b('btnSyncAllow', '파일 접근 허용', '') + b('btnSyncOff', '연결 끊기', 'danger'); return;
+  }
+  if (state === 'bad') {
+    st.className = 'pill sync-warn'; st.textContent = '파일을 읽을 수 없음';
+    help.textContent = '연결한 파일이 이 도구가 만든 형식이 아닙니다. 덮어쓰지 않았습니다. 다른 파일을 연결해 주세요.';
+    btns.innerHTML = b('btnSyncOff', '연결 끊기', 'danger'); return;
+  }
+  if (state === 'err') {
+    st.className = 'pill sync-warn'; st.textContent = '맞추지 못함';
+    help.textContent = '파일에 쓰지 못했습니다. 파일이 다른 프로그램에서 열려 있거나 동기화 폴더가 잠겨 있을 수 있습니다.';
+    btns.innerHTML = b('btnSyncNow', '지금 다시 맞추기', '') + b('btnSyncOff', '연결 끊기', 'danger'); return;
+  }
+  const t = lastSync ? new Date(lastSync).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '';
+  st.className = 'pill sync-ok'; st.textContent = '연결됨' + (t ? ' · ' + t + ' 맞춤' : '');
+  help.textContent = `파일: ${fh.name} · 저장할 때마다, 그리고 이 창으로 돌아올 때마다 파일과 맞춥니다. 파일이 컴퓨터 사이에 동기화되려면 몇 초에서 몇 분이 걸릴 수 있습니다.`;
+  btns.innerHTML = b('btnSyncNow', '지금 맞추기', 'ghost') + b('btnSyncOff', '연결 끊기', 'danger');
+}
+
+async function syncNow(){
+  if (!fh) return;
+  if (syncing) { syncAgain = true; return; }
+  syncing = true;
+  try {
+    if (await fh.queryPermission({ mode: 'readwrite' }) !== 'granted') { setSync('perm'); return; }
+    let rem = {};
+    try { const t = await (await fh.getFile()).text(); if (t.trim()) rem = JSON.parse(t); if (!rem || typeof rem !== 'object' || Array.isArray(rem)) throw new SyntaxError('shape'); }
+    catch(e){ if (e instanceof SyntaxError) { setSync('bad'); return; } throw e; }
+    if (mergeRemote(rem)) { lsWrite(); delWrite(); render(); }
+    const out = { version: 1, savedAt: Date.now(), items: items.filter(x => !x.example), deleted };
+    const same = JSON.stringify(byId(rem.items || [])) === JSON.stringify(byId(out.items)) && JSON.stringify(rem.deleted || {}) === JSON.stringify(deleted);
+    if (!same) { const w = await fh.createWritable(); await w.write(JSON.stringify(out)); await w.close(); }
+    lastSync = Date.now(); setSync('ok');
+  } catch(e){ setSync('err'); }
+  finally { syncing = false; if (syncAgain) { syncAgain = false; queueSync(); } }
+}
+function queueSync(){ if (!fh) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 700); }
+
+async function connectFile(mode){
+  try {
+    let h;
+    if (mode === 'new') h = await window.showSaveFilePicker({ suggestedName: '원주자원지도.json', types: PICK_TYPES });
+    else [h] = await window.showOpenFilePicker({ types: PICK_TYPES, multiple: false });
+    fh = h; await idbSet('handle', h); await syncNow();
+    if (fh) toast('동기화 파일을 연결했습니다.');
+  } catch(e){ if (!e || e.name !== 'AbortError') toast('연결하지 못했습니다. 다시 시도해 주세요.'); }
+}
+$('syncBtns').addEventListener('click', async (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'btnSyncNew') connectFile('new');
+  else if (b.id === 'btnSyncOpen') connectFile('open');
+  else if (b.id === 'btnSyncNow') syncNow();
+  else if (b.id === 'btnSyncAllow') { try { if (await fh.requestPermission({ mode: 'readwrite' }) === 'granted') await syncNow(); } catch(err){ toast('허용하지 못했습니다.'); } }
+  else if (b.id === 'btnSyncOff') { fh = null; try { await idbSet('handle', undefined); } catch(err){} setSync('off'); toast('연결을 끊었습니다. 파일은 그대로 남아 있습니다.'); }
+});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
+window.addEventListener('focus', () => syncNow());
+
+async function initSync(){
+  setSync('off');
+  if (!SYNC_OK) return;
+  try { fh = (await idbGet('handle')) || null; } catch(e){ fh = null; }
+  if (fh) { setSync('perm'); await syncNow(); } else setSync('off');
+}
+
 let tt; function toast(m){ const t = $('toast'); t.textContent = m; t.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('on'), 2600); }
-init();
+init().then(() => { if (!db) initSync(); });
 </script>
 
 </body>
