@@ -64,6 +64,7 @@
   .t2{color:var(--mid);background:var(--mid-bg);border-color:transparent}
   .t3{color:var(--hard);background:var(--hard-bg);border-color:transparent}
   .ex{color:var(--example);background:var(--example-bg);border-color:transparent}
+  .stale{color:var(--hard);background:var(--hard-bg);border-color:transparent}
   .kv{display:grid;grid-template-columns:84px minmax(0,1fr);gap:3px 10px;margin:10px 0 0;font-size:14.5px}
   .kv dt{color:var(--mute)}
   .kv dd{margin:0;overflow-wrap:anywhere}
@@ -210,6 +211,18 @@
           <input type="text" id="eContact" placeholder="예: 김○○ 선생님 033-000-0000">
           <label class="check"><input type="checkbox" id="eCompanion"> 센터 직원이 동행할 수 있음</label>
           <label class="check"><input type="checkbox" id="eConnected"> 당사자를 연결해 본 적 있음</label>
+          <label>소음·사람 수 <span style="font-weight:normal">(처음 가는 사람 기준)</span></label>
+          <div class="grid2">
+            <div><label for="eNoise">소음</label><select id="eNoise"><option value="">모름</option><option value="조용함">조용함</option><option value="보통">보통</option><option value="시끄러움">시끄러움</option></select></div>
+            <div><label for="eCrowd">사람 수</label><select id="eCrowd"><option value="">모름</option><option value="소규모">소규모(몇 명)</option><option value="보통">보통</option><option value="붐빔">붐빔</option></select></div>
+          </div>
+          <label class="check"><input type="checkbox" id="eAlone"> 혼자 가도 괜찮음</label>
+          <label class="check"><input type="checkbox" id="eLeave"> 도중에 나와도 괜찮음</label>
+          <label class="check"><input type="checkbox" id="eGreeter"> 처음 가면 맞이해 주는 담당자가 있음</label>
+          <div class="grid2">
+            <div><label for="eChecked">마지막 확인일</label><input type="date" id="eChecked"></div>
+            <div><label class="check" style="margin-top:30px"><input type="checkbox" id="ePhone"> 전화로 직접 확인함</label></div>
+          </div>
           <label for="eMemo">메모</label>
           <textarea id="eMemo" placeholder="예: 첫 방문에는 담당자가 입구에서 맞이해 줌. 소음이 적은 오전이 좋음"></textarea>
           <div class="bar" style="margin-top:14px">
@@ -307,6 +320,23 @@ function sorted(list){
 
 /* ---------- 그리기 ---------- */
 function field(label, v){ return `<dt>${esc(label)}</dt><dd${v ? '' : ' class="empty"'}>${v ? esc(v) : '아직 모름'}</dd>`; }
+const STALE_DAYS = 90;
+function daysSince(ymd){ const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || ''); if (!m) return null; return Math.floor((Date.now() - new Date(+m[1], m[2]-1, +m[3]).getTime()) / 86400000); }
+function envPills(r){
+  const p = [];
+  if (r.noise) p.push('소음 ' + r.noise);
+  if (r.crowd) p.push('사람 ' + r.crowd);
+  if (r.aloneOk) p.push('혼자 가도 됨');
+  if (r.leaveOk) p.push('중간에 나와도 됨');
+  if (r.greeter) p.push('맞이해 줌');
+  return p.map(t => `<span class="pill">${esc(t)}</span>`).join('');
+}
+function checkedPill(r){
+  const d = daysSince(r.checkedAt);
+  if (d === null) return '<span class="pill stale">확인일 없음</span>';
+  const label = '확인 ' + r.checkedAt + (r.phoneChecked ? ' · 전화 확인' : '');
+  return `<span class="pill${d > STALE_DAYS ? ' stale' : ''}">${esc(label)}${d > STALE_DAYS ? ' · 다시 확인 필요' : ''}</span>`;
+}
 function card(r){
   const t = r.travel || 2, b = r.burden || 2;
   const range = (r.stageMin ?? 0) === (r.stageMax ?? 5) ? `${r.stageMin}단계` : `${r.stageMin ?? 0}~${r.stageMax ?? 5}단계`;
@@ -314,11 +344,13 @@ function card(r){
   return `<article class="res" data-id="${esc(r.id)}">
     <div class="top"><h3>${esc(r.name)}</h3>
       <div class="badges" style="margin:0">${r.example ? '<span class="pill ex">예시</span>' : ''}${r.connected ? '<span class="pill">연결해 본 곳</span>' : ''}</div></div>
+    <div class="badges">${r.example ? '' : checkedPill(r)}</div>
     <div class="badges">
       <span class="pill">${esc(r.kind || '기타')}</span>
       <span class="pill t${t}"><i></i>${esc(TRAVEL[t])}</span>
       <span class="pill t${b}"><i></i>${esc(BURDEN[b])}</span>
       <span class="pill">사다리 ${esc(range)}</span>
+      ${envPills(r)}
       ${r.companion ? '<span class="pill">동행 가능</span>' : ''}
       ${(r.cues || []).map(c => `<span class="pill">${esc(c)}</span>`).join('')}
     </div>
@@ -394,6 +426,9 @@ function openEditor(r){
   Object.entries(FIELDS).forEach(([id, k]) => { $(id).value = r[k] || ''; });
   $('eKind').value = r.kind || KINDS[0];
   $('eMin').value = r.stageMin ?? 0; $('eMax').value = r.stageMax ?? 5;
+  $('eNoise').value = r.noise || ''; $('eCrowd').value = r.crowd || '';
+  $('eAlone').checked = !!r.aloneOk; $('eLeave').checked = !!r.leaveOk; $('eGreeter').checked = !!r.greeter;
+  $('eChecked').value = r.checkedAt || ''; $('ePhone').checked = !!r.phoneChecked;
   $('eCompanion').checked = !!r.companion; $('eConnected').checked = !!r.connected;
   eTravel = r.travel || 2; eBurden = r.burden || 2;
   eCuesSet.clear(); (r.cues || []).forEach(c => eCuesSet.add(c));
@@ -408,7 +443,9 @@ $('form').addEventListener('submit', async (e) => {
   let lo = +$('eMin').value, hi = +$('eMax').value; if (lo > hi) [lo, hi] = [hi, lo];
   const base = editing ? (items.find(x => x.id === editing) || {}) : {};
   const it = { ...base, id: editing || newId(), name, kind: $('eKind').value, travel: eTravel, burden: eBurden,
-    stageMin: lo, stageMax: hi, cues: [...eCuesSet], companion: $('eCompanion').checked, connected: $('eConnected').checked };
+    stageMin: lo, stageMax: hi, cues: [...eCuesSet], companion: $('eCompanion').checked, connected: $('eConnected').checked,
+    noise: $('eNoise').value, crowd: $('eCrowd').value, aloneOk: $('eAlone').checked, leaveOk: $('eLeave').checked, greeter: $('eGreeter').checked,
+    checkedAt: $('eChecked').value, phoneChecked: $('ePhone').checked };
   Object.entries(FIELDS).forEach(([id, k]) => { if (k !== 'name') it[k] = $(id).value.trim(); });
   delete it.example;
   $('btnSave').disabled = true;
@@ -426,7 +463,7 @@ $('list').addEventListener('click', async (e) => {
   if (act === 'sample2') return addSamples();
   const id = b.closest('.res')?.dataset.id; const r = items.find(x => x.id === id); if (!r) return;
   if (act === 'edit') openEditor(r);
-  if (act === 'dup') openEditor({ ...r, id: null, name: r.name + ' (복제)', connected: false, example: false, _dup: true });
+  if (act === 'dup') openEditor({ ...r, id: null, name: r.name + ' (복제)', connected: false, example: false, checkedAt: '', phoneChecked: false, _dup: true });
   if (act === 'del') {
     // 삭제는 한 번 더 눌러야 실행 (이 화면은 confirm 대화상자를 못 씀)
     if (pendingDel === id) { pendingDel = null; try { await removeItem(id); toast('삭제했습니다.'); } catch(err){ toast('삭제하지 못했습니다.'); } }
