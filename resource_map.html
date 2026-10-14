@@ -40,7 +40,7 @@
   aside h2{font-size:14px;margin:14px 0 6px;color:var(--brand-d)}
   aside h2:first-of-type{margin-top:0}
   label{display:block;font-size:13px;color:var(--mute);margin:10px 0 3px}
-  input[type=text],input[type=search],textarea,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:15px;background:var(--card);color:var(--ink)}
+  input[type=text],input[type=search],input[type=password],textarea,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:15px;background:var(--card);color:var(--ink)}
   textarea{min-height:70px;resize:vertical}
   .chips{display:flex;flex-wrap:wrap;gap:6px}
   .chip{padding:6px 11px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;font:inherit;font-size:14px;cursor:pointer}
@@ -85,6 +85,8 @@
   details.more summary{cursor:pointer;color:var(--brand-d);font-size:14px}
   .syncbox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:12px}
   .sync-top{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;justify-content:space-between}
+  .guide{margin:8px 0;padding-left:20px;font-size:14px}
+  .guide li{margin:6px 0}
   .sync-ok{color:var(--ok);background:var(--ok-bg);border-color:transparent}
   .sync-warn{color:var(--mid);background:var(--mid-bg);border-color:transparent}
   .toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--deep);color:var(--on-deep);padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:90vw;text-align:center}
@@ -148,10 +150,21 @@
     </aside>
 
     <main style="min-width:0">
-      <section class="syncbox" id="syncbox" aria-label="다른 컴퓨터와 맞추기">
+      <section class="syncbox" id="syncBox" aria-label="다른 컴퓨터와 맞추기">
         <div class="sync-top"><b>다른 컴퓨터와 맞추기</b><span class="pill" id="syncStatus">연결 안 됨</span></div>
         <p class="note" id="syncHelp" style="margin:6px 0 8px"></p>
-        <div class="bar" id="syncBtns"></div>
+        <div id="syncForm"></div>
+        <div class="bar" id="syncBtns" style="margin-top:8px"></div>
+        <details class="more" id="syncGuide">
+          <summary>처음 설정하는 방법 (5분)</summary>
+          <ol class="guide">
+            <li><a href="https://github.com/new" target="_blank" rel="noopener noreferrer">github.com/new</a>에서 저장소를 만듭니다. 이름은 <b>wonju-resource-data</b>, 공개 범위는 <b>Private(비공개)</b>, "Add a README file"에 체크하고 Create repository를 누릅니다.</li>
+            <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">github.com/settings/personal-access-tokens/new</a>에서 키를 만듭니다. Token name은 <b>wonju-resource</b>, Expiration은 1 year, Repository access는 <b>Only select repositories</b>에서 방금 만든 저장소만 고르고, Permissions → Repository permissions → <b>Contents</b>를 <b>Read and write</b>로 바꿉니다. Generate token을 누르면 나오는 <b>github_pat_</b>로 시작하는 키를 복사합니다.</li>
+            <li>위 칸에 저장소 이름(<b>내아이디/wonju-resource-data</b>)과 키를 붙여넣고 "저장소 연결"을 누릅니다.</li>
+            <li>다른 컴퓨터에서는 같은 주소를 열고 같은 저장소 이름과 키를 넣으면 같은 목록이 나옵니다. 키는 화면에 다시 보이지 않으니 따로 안전하게 보관해 두세요.</li>
+          </ol>
+          <p class="note">이 키는 이 저장소 하나에만 쓸 수 있지만 비밀번호처럼 다루세요. 남에게 알려 주지 말고, 여러 사람이 쓰는 컴퓨터에서는 사용 후 "연결 끊기"를 누르세요. 기관 이름과 연락처는 비공개 저장소에만 저장되고, 당사자 정보는 넣지 않습니다.</p>
+        </details>
       </section>
 
       <div class="bar" style="margin-bottom:12px">
@@ -267,7 +280,6 @@ async function init(){
 }
 function fallbackLocal(){
   db = null; localMode = true; items = lsRead(); ready = true;
-  if (!(window.showSaveFilePicker && window.showOpenFilePicker)) $('banner').innerHTML = '<div class="banner">이 목록은 지금 쓰는 컴퓨터의 이 브라우저에만 저장됩니다. 다른 컴퓨터와 맞추려면 크롬이나 엣지에서 여세요.</div>';
   render();
 }
 
@@ -449,12 +461,15 @@ $('btnImport').addEventListener('click', async () => {
   catch(e){ toast(`${n}곳까지 불러오고 멈췄습니다.`); }
 });
 
-/* ---------- 다른 컴퓨터와 맞추기: 클라우드 동기화 폴더(구글 드라이브, MYBOX 등) 안의 파일 하나 ----------
-   서버 없이 동작한다. 컴퓨터마다 같은 파일을 연결하면, 저장할 때마다 파일에 합치고 창을 다시 볼 때 파일에서 가져온다.
-   같은 항목을 두 컴퓨터에서 고쳤다면 나중에 고친 쪽이 남는다. 지운 항목은 "삭제 표식"으로 함께 전달된다. */
+/* ---------- 다른 컴퓨터와 맞추기 ----------
+   기본: 선생님 GitHub의 비공개 저장소 하나에 resources.json으로 저장한다(서버 없음).
+   컴퓨터마다 같은 저장소 이름과 키만 넣으면 같은 목록이 열린다.
+   선택: 구글 드라이브·MYBOX 같은 동기화 폴더의 파일로도 맞출 수 있다(크롬·엣지).
+   합치는 규칙은 같다: 같은 항목은 나중에 고친 쪽이 남고, 지운 항목은 "삭제 표식"으로 전달된다. */
+const GH_KEY = 'wonju-gh-v1';
 const SYNC_OK = !!(window.showSaveFilePicker && window.showOpenFilePicker && window.indexedDB);
 const PICK_TYPES = [{ description: '자원 지도 파일', accept: { 'application/json': ['.json'] } }];
-let fh = null, syncing = false, syncAgain = false, syncTimer = null, lastSync = 0;
+let fh = null, ghMem = null, syncing = false, syncAgain = false, syncTimer = null, lastSync = 0;
 
 function idbOpen(){ return new Promise((res, rej) => { const r = indexedDB.open('wonju-sync', 1); r.onupgradeneeded = () => r.result.createObjectStore('h'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
 async function idbGet(k){ const d = await idbOpen(); return new Promise((res, rej) => { const q = d.transaction('h').objectStore('h').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
@@ -477,17 +492,77 @@ function mergeRemote(rem){
 }
 const byId = (a) => a.slice().sort((x, y) => x.id < y.id ? -1 : 1);
 
+/* --- 저장 위치 1: GitHub 비공개 저장소 --- */
+const GH = {
+  cfg(){ if (ghMem) return ghMem; try { const c = JSON.parse(localStorage.getItem(GH_KEY) || 'null'); return c && c.repo && c.token ? c : null; } catch(e){ return null; } },
+  save(c){ ghMem = c; try { localStorage.setItem(GH_KEY, JSON.stringify(c)); } catch(e){} },
+  clear(){ ghMem = null; try { localStorage.removeItem(GH_KEY); } catch(e){} },
+  headers(c){ return { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + c.token, 'X-GitHub-Api-Version': '2022-11-28' }; },
+  url(c){ return 'https://api.github.com/repos/' + c.repo + '/contents/resources.json'; },
+  async read(){
+    const c = this.cfg(), h = this.headers(c);
+    let r; try { r = await fetch(this.url(c) + '?t=' + Date.now(), { headers: h, cache: 'no-store' }); } catch(e){ throw { code: 'net' }; }
+    if (r.status === 404) { // 파일이 아직 없는 것인지, 저장소·키가 틀린 것인지 구분
+      let rr; try { rr = await fetch('https://api.github.com/repos/' + c.repo, { headers: h, cache: 'no-store' }); } catch(e){ throw { code: 'net' }; }
+      if (rr.ok) return { data: {}, ver: null };
+      throw { code: 'auth' };
+    }
+    if (r.status === 401 || r.status === 403) throw { code: 'auth' };
+    if (!r.ok) throw { code: 'net' };
+    const j = await r.json();
+    const txt = new TextDecoder().decode(Uint8Array.from(atob(String(j.content || '').replace(/\s/g, '')), ch => ch.charCodeAt(0)));
+    let data = {}; try { data = txt.trim() ? JSON.parse(txt) : {}; } catch(e){ throw { code: 'bad' }; }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw { code: 'bad' };
+    return { data, ver: j.sha };
+  },
+  async write(out, sha){
+    const c = this.cfg(); const bytes = new TextEncoder().encode(JSON.stringify(out)); let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b); });
+    const body = { message: '자원 지도 갱신', content: btoa(bin) }; if (sha) body.sha = sha;
+    let r; try { r = await fetch(this.url(c), { method: 'PUT', headers: { ...this.headers(c), 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); } catch(e){ throw { code: 'net' }; }
+    if (r.status === 409 || r.status === 422) throw { code: 'conflict' };
+    if (r.status === 401 || r.status === 403 || r.status === 404) throw { code: 'auth' };
+    if (!r.ok) throw { code: 'net' };
+  },
+};
+
+/* --- 저장 위치 2: 동기화 폴더의 파일 --- */
+const FILE = {
+  async read(){
+    if (await fh.queryPermission({ mode: 'readwrite' }) !== 'granted') throw { code: 'perm' };
+    let data = {};
+    try { const t = await (await fh.getFile()).text(); if (t.trim()) data = JSON.parse(t); if (!data || typeof data !== 'object' || Array.isArray(data)) throw new SyntaxError('shape'); }
+    catch(e){ if (e instanceof SyntaxError) throw { code: 'bad' }; throw e; }
+    return { data, ver: null };
+  },
+  async write(out){ const w = await fh.createWritable(); await w.write(JSON.stringify(out)); await w.close(); },
+};
+const adapter = () => GH.cfg() ? GH : (fh ? FILE : null);
+
+/* --- 화면 --- */
 function setSync(state){
-  const st = $('syncStatus'), help = $('syncHelp'), btns = $('syncBtns');
-  const b = (id, label, cls) => `<button type="button" class="btn ${cls === undefined ? 'ghost' : cls} small" id="${id}">${label}</button>`;
-  if (!SYNC_OK) {
-    st.className = 'pill sync-warn'; st.textContent = '이 브라우저는 지원 안 함';
-    help.textContent = '파일로 맞추려면 크롬이나 엣지에서 이 주소를 여세요. 그동안은 아래 "목록 옮기기"로 복사해서 옮길 수 있습니다.'; btns.innerHTML = ''; return;
+  const st = $('syncStatus'), help = $('syncHelp'), btns = $('syncBtns'), form = $('syncForm');
+  const b = (id, label, cls) => `<button type="button" class="btn ${cls} small" id="${id}">${label}</button>`;
+  const c = GH.cfg(), mode = c ? 'gh' : (fh ? 'file' : null);
+  const formHtml = () => `<div class="grid2"><div><label for="ghRepo">저장소 이름</label><input type="text" id="ghRepo" placeholder="내아이디/wonju-resource-data" value="${esc(c ? c.repo : '')}" autocomplete="off"></div>
+    <div><label for="ghToken">연결 키</label><input type="password" id="ghToken" placeholder="github_pat_로 시작하는 키" autocomplete="off"></div></div>
+    <div class="bar" style="margin-top:8px">${b('btnGhConnect', '저장소 연결', '')}</div>`;
+  const fileBtns = () => SYNC_OK ? b('btnSyncNew', '동기화 폴더에 새 파일', 'ghost') + b('btnSyncOpen', '동기화 폴더의 기존 파일', 'ghost') : '';
+  form.innerHTML = ''; btns.innerHTML = '';
+  if (state === 'ok') {
+    const t = lastSync ? new Date(lastSync).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '';
+    st.className = 'pill sync-ok'; st.textContent = '연결됨' + (t ? ' · ' + t + ' 맞춤' : '');
+    help.textContent = mode === 'gh' ? `저장소: ${c.repo} · 저장할 때마다, 그리고 이 창으로 돌아올 때마다 저장소와 맞춥니다.` : `파일: ${fh.name} · 저장할 때마다, 그리고 이 창으로 돌아올 때마다 파일과 맞춥니다. 파일이 컴퓨터 사이에 옮겨지는 데는 몇 초에서 몇 분이 걸립니다.`;
+    btns.innerHTML = b('btnSyncNow', '지금 맞추기', 'ghost') + b('btnSyncOff', '연결 끊기', 'danger'); return;
   }
-  if (!fh) {
-    st.className = 'pill'; st.textContent = '연결 안 됨';
-    help.textContent = '구글 드라이브나 네이버 MYBOX처럼 컴퓨터 사이에 동기화되는 폴더에 파일을 하나 만들어 연결하세요. 처음 컴퓨터에서는 "새 파일", 다른 컴퓨터에서는 같은 파일을 "기존 파일 연결"로 고릅니다.';
-    btns.innerHTML = b('btnSyncNew', '새 동기화 파일 만들기', '') + b('btnSyncOpen', '기존 동기화 파일 연결', ''); return;
+  if (state === 'auth') {
+    st.className = 'pill sync-warn'; st.textContent = '연결 정보를 확인해 주세요';
+    help.textContent = '저장소 이름이나 키가 맞지 않거나, 키의 권한·기한이 맞지 않습니다. 저장소 이름은 "아이디/저장소명" 형식이고, 키는 이 저장소의 Contents 권한(읽기와 쓰기)이 있어야 합니다.';
+    form.innerHTML = formHtml(); btns.innerHTML = b('btnSyncOff', '연결 끊기', 'danger'); return;
+  }
+  if (state === 'net') {
+    st.className = 'pill sync-warn'; st.textContent = '맞추지 못함';
+    help.textContent = '인터넷에 연결되지 않았거나 GitHub가 응답하지 않습니다. 이 컴퓨터에는 저장되어 있고, 연결되면 다시 맞춥니다.';
+    btns.innerHTML = b('btnSyncNow', '지금 다시 맞추기', 'ghost') + b('btnSyncOff', '연결 끊기', 'danger'); return;
   }
   if (state === 'perm') {
     st.className = 'pill sync-warn'; st.textContent = '허용이 필요합니다';
@@ -496,38 +571,42 @@ function setSync(state){
   }
   if (state === 'bad') {
     st.className = 'pill sync-warn'; st.textContent = '파일을 읽을 수 없음';
-    help.textContent = '연결한 파일이 이 도구가 만든 형식이 아닙니다. 덮어쓰지 않았습니다. 다른 파일을 연결해 주세요.';
+    help.textContent = '연결한 파일이 이 도구가 만든 형식이 아닙니다. 덮어쓰지 않았습니다. 다른 파일이나 저장소를 연결해 주세요.';
     btns.innerHTML = b('btnSyncOff', '연결 끊기', 'danger'); return;
   }
   if (state === 'err') {
     st.className = 'pill sync-warn'; st.textContent = '맞추지 못함';
-    help.textContent = '파일에 쓰지 못했습니다. 파일이 다른 프로그램에서 열려 있거나 동기화 폴더가 잠겨 있을 수 있습니다.';
-    btns.innerHTML = b('btnSyncNow', '지금 다시 맞추기', '') + b('btnSyncOff', '연결 끊기', 'danger'); return;
+    help.textContent = '저장하지 못했습니다. 잠시 뒤 다시 시도해 주세요.';
+    btns.innerHTML = b('btnSyncNow', '지금 다시 맞추기', 'ghost') + b('btnSyncOff', '연결 끊기', 'danger'); return;
   }
-  const t = lastSync ? new Date(lastSync).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '';
-  st.className = 'pill sync-ok'; st.textContent = '연결됨' + (t ? ' · ' + t + ' 맞춤' : '');
-  help.textContent = `파일: ${fh.name} · 저장할 때마다, 그리고 이 창으로 돌아올 때마다 파일과 맞춥니다. 파일이 컴퓨터 사이에 동기화되려면 몇 초에서 몇 분이 걸릴 수 있습니다.`;
-  btns.innerHTML = b('btnSyncNow', '지금 맞추기', 'ghost') + b('btnSyncOff', '연결 끊기', 'danger');
+  // 연결 안 됨
+  st.className = 'pill'; st.textContent = '연결 안 됨';
+  help.textContent = '다른 컴퓨터에서도 같은 목록을 쓰려면 비공개 저장소를 하나 연결하세요. 처음 한 번만 설정하고, 다른 컴퓨터에서는 같은 저장소 이름과 키만 넣으면 됩니다.';
+  form.innerHTML = formHtml();
+  if (fileBtns()) btns.innerHTML = '<span class="note" style="margin:0">동기화 폴더를 쓰신다면:</span>' + fileBtns();
 }
 
 async function syncNow(){
-  if (!fh) return;
+  const ad = adapter(); if (!ad) return;
   if (syncing) { syncAgain = true; return; }
   syncing = true;
   try {
-    if (await fh.queryPermission({ mode: 'readwrite' }) !== 'granted') { setSync('perm'); return; }
-    let rem = {};
-    try { const t = await (await fh.getFile()).text(); if (t.trim()) rem = JSON.parse(t); if (!rem || typeof rem !== 'object' || Array.isArray(rem)) throw new SyntaxError('shape'); }
-    catch(e){ if (e instanceof SyntaxError) { setSync('bad'); return; } throw e; }
-    if (mergeRemote(rem)) { lsWrite(); delWrite(); render(); }
-    const out = { version: 1, savedAt: Date.now(), items: items.filter(x => !x.example), deleted };
-    const same = JSON.stringify(byId(rem.items || [])) === JSON.stringify(byId(out.items)) && JSON.stringify(rem.deleted || {}) === JSON.stringify(deleted);
-    if (!same) { const w = await fh.createWritable(); await w.write(JSON.stringify(out)); await w.close(); }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data: rem, ver } = await ad.read();
+      if (mergeRemote(rem)) { lsWrite(); delWrite(); render(); }
+      const out = { version: 1, savedAt: Date.now(), items: items.filter(x => !x.example), deleted };
+      const same = JSON.stringify(byId(rem.items || [])) === JSON.stringify(byId(out.items)) && JSON.stringify(rem.deleted || {}) === JSON.stringify(deleted);
+      if (same) break;
+      try { await ad.write(out, ver); break; }
+      catch(e){ if (e && e.code === 'conflict' && attempt < 2) continue; throw e; }
+    }
     lastSync = Date.now(); setSync('ok');
-  } catch(e){ setSync('err'); }
+  } catch(e){ setSync(e && e.code === 'conflict' ? 'err' : (e && e.code) || 'err'); }
   finally { syncing = false; if (syncAgain) { syncAgain = false; queueSync(); } }
 }
-function queueSync(){ if (!fh) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 700); }
+function queueSync(){ if (!adapter()) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 700); }
+let lastPull = 0;
+function pullSoon(){ if (!adapter() || Date.now() - lastPull < 30000) return; lastPull = Date.now(); syncNow(); }
 
 async function connectFile(mode){
   try {
@@ -538,22 +617,32 @@ async function connectFile(mode){
     if (fh) toast('동기화 파일을 연결했습니다.');
   } catch(e){ if (!e || e.name !== 'AbortError') toast('연결하지 못했습니다. 다시 시도해 주세요.'); }
 }
-$('syncBtns').addEventListener('click', async (e) => {
+async function connectGh(){
+  const repo = $('ghRepo').value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/$/, '');
+  const token = $('ghToken').value.trim() || (GH.cfg() && GH.cfg().repo === repo ? GH.cfg().token : '');
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return toast('저장소 이름을 "아이디/저장소명" 형식으로 적어 주세요.');
+  if (!token) return toast('연결 키를 붙여넣어 주세요.');
+  GH.save({ repo, token }); $('ghToken') && ($('ghToken').value = '');
+  await syncNow();
+  if (GH.cfg() && $('syncStatus').className.includes('sync-ok')) toast('저장소를 연결했습니다.');
+}
+$('syncBox').addEventListener('click', async (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.id === 'btnSyncNew') connectFile('new');
+  if (b.id === 'btnGhConnect') connectGh();
+  else if (b.id === 'btnSyncNew') connectFile('new');
   else if (b.id === 'btnSyncOpen') connectFile('open');
   else if (b.id === 'btnSyncNow') syncNow();
   else if (b.id === 'btnSyncAllow') { try { if (await fh.requestPermission({ mode: 'readwrite' }) === 'granted') await syncNow(); } catch(err){ toast('허용하지 못했습니다.'); } }
-  else if (b.id === 'btnSyncOff') { fh = null; try { await idbSet('handle', undefined); } catch(err){} setSync('off'); toast('연결을 끊었습니다. 파일은 그대로 남아 있습니다.'); }
+  else if (b.id === 'btnSyncOff') { GH.clear(); fh = null; try { await idbSet('handle', undefined); } catch(err){} setSync('off'); toast('연결을 끊었습니다. 저장된 목록은 그대로 남아 있습니다.'); }
 });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
-window.addEventListener('focus', () => syncNow());
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pullSoon(); });
+window.addEventListener('focus', pullSoon);
 
 async function initSync(){
   setSync('off');
-  if (!SYNC_OK) return;
-  try { fh = (await idbGet('handle')) || null; } catch(e){ fh = null; }
-  if (fh) { setSync('perm'); await syncNow(); } else setSync('off');
+  if (!GH.cfg() && SYNC_OK) { try { fh = (await idbGet('handle')) || null; } catch(e){ fh = null; } }
+  if (GH.cfg()) { await syncNow(); }
+  else if (fh) { setSync('perm'); await syncNow(); }
 }
 
 let tt; function toast(m){ const t = $('toast'); t.textContent = m; t.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('on'), 2600); }
