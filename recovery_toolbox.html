@@ -67,6 +67,16 @@
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#10282a;color:#fff;padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;transition:.25s;pointer-events:none}
   .toast.on{opacity:1}
   .hide{display:none!important}
+  .sheet{border:2px solid var(--brand);border-radius:14px;padding:18px 20px;background:#fff;color:#000;margin-top:10px}
+  .sheet h2{font-size:24px;margin:0 0 10px}
+  .sheet .ln{display:flex;gap:10px;align-items:baseline;margin:8px 0;font-size:17px}
+  .sheet .ln b{flex:none;width:210px;color:var(--brand-d)}
+  .sheet .ln input{border:none;border-bottom:2px solid #bbb;border-radius:0;padding:4px 2px}
+  .wk{width:100%;border-collapse:collapse;margin-top:10px;table-layout:fixed}
+  .wk th,.wk td{border:1px solid #999;padding:0;font-size:14px;text-align:center}
+  .wk th{background:var(--soft);padding:6px 2px}
+  .wk th.rh{width:84px}
+  .wk td input{border:none;border-radius:0;padding:10px 4px;text-align:center;font-size:14px;height:56px}
 
   /* 인쇄용 카드: 당사자에게 줄 종이. 큰 글씨, 한 장 */
   #card{border:3px solid var(--brand);border-radius:16px;padding:26px 30px;margin-top:10px;background:#fff;color:#000}
@@ -86,6 +96,8 @@
     main{padding:0;max-width:none}
     .panel{border:none;padding:0}
     #card{border-width:4px;margin:0}
+    .sheet{border-width:3px;margin:0}
+    .sheet .ln input,.wk td input{background:transparent}
     .only-ladder-print .crisis-only{display:none!important}
   }
 </style>
@@ -99,6 +111,7 @@
 <nav role="tablist" aria-label="도구 선택" class="noprint">
   <button role="tab" id="tab-ladder" aria-selected="true" aria-controls="view-ladder">① 회복 사다리</button>
   <button role="tab" id="tab-crisis" aria-selected="false" aria-controls="view-crisis">② 위기 대화 가이드</button>
+  <button role="tab" id="tab-week" aria-selected="false" aria-controls="view-week">③ 일과·강점 카드</button>
 </nav>
 
 <main>
@@ -189,6 +202,24 @@
     <p class="tel">참고 번호(센터 기준과 최신 번호는 직접 확인): 긴급 119 · 112 / 자살예방 상담전화 109 / 정신건강위기상담 1577-0199. 이 도구의 문장은 일반적인 위기 면담 원칙을 정리한 것이며 센터 위기 대응 매뉴얼을 대체하지 않습니다.</p>
   </section>
 </main>
+  <!-- ============ ③ 일과·강점 카드 ============ -->
+  <section class="panel crisis-only hide" id="view-week" role="tabpanel" aria-labelledby="tab-week">
+    <h2>일과·강점 카드</h2>
+    <p class="sub noprint">당사자와 함께 채우는 종이입니다. 못하는 것보다 하고 싶은 것, 잘했던 것을 먼저 적어요. 이름은 임시 표기만 쓰고, 입력 내용은 저장되지 않으며 인쇄 후 창을 닫으면 사라집니다.</p>
+    <div class="bar noprint"><button class="btn" id="btnWeekPrint">이 카드 인쇄</button><button class="btn ghost" id="btnWeekClear">모두 비우기</button></div>
+    <div class="sheet" id="weekSheet">
+      <h2>나의 한 주와 나의 강점</h2>
+      <div class="ln"><b>이름(임시 표기)</b><input type="text" id="wWho" aria-label="이름(임시 표기)"></div>
+      <div class="ln"><b>예전에 잘했던 것</b><input type="text" id="wPast" aria-label="예전에 잘했던 것"></div>
+      <div class="ln"><b>지금 하고 싶은 것</b><input type="text" id="wWant" aria-label="지금 하고 싶은 것"></div>
+      <div class="ln"><b>내가 맡고 싶은 역할</b><input type="text" id="wRole" aria-label="내가 맡고 싶은 역할"></div>
+      <div class="ln"><b>도움이 되는 사람·것</b><input type="text" id="wHelp" aria-label="도움이 되는 사람이나 것"></div>
+      <p class="sub" style="margin:14px 0 0">이번 주 하루를 어떻게 보내는지 적어 보세요. 잠·식사·밖에 나가기·하고 싶은 일·쉬기를 한 칸에 한 가지씩 적으면 됩니다.</p>
+      <table class="wk" id="weekTable"></table>
+      <div class="ln" style="margin-top:14px"><b>이번 주 바꿔 보고 싶은 한 가지</b><input type="text" id="wChange" aria-label="이번 주 바꿔 보고 싶은 한 가지"></div>
+    </div>
+  </section>
+
 <div class="toast" id="toast" role="status"></div>
 
 <script>
@@ -444,16 +475,30 @@ let toastTimer;
 function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 2400); }
 
 function showTab(which){
-  const ladder = which === 'ladder';
-  $('view-ladder').classList.toggle('hide', !ladder);
-  $('view-crisis').classList.toggle('hide', ladder);
-  $('tab-ladder').setAttribute('aria-selected', ladder);
-  $('tab-crisis').setAttribute('aria-selected', !ladder);
+  ['ladder', 'crisis', 'week'].forEach(k => {
+    $('view-' + k).classList.toggle('hide', k !== which);
+    $('tab-' + k).setAttribute('aria-selected', k === which);
+  });
 }
 $('tab-ladder').addEventListener('click', () => showTab('ladder'));
 $('tab-crisis').addEventListener('click', () => showTab('crisis'));
+$('tab-week').addEventListener('click', () => showTab('week'));
 
-renderCues(); renderStages(); renderIdeas(); renderTalk(); renderCard();
+/* ===================== ③ 일과·강점 카드 ===================== */
+const WEEK_DAYS = ['월', '화', '수', '목', '금', '토', '일'];
+const WEEK_SLOTS = ['아침', '오전', '오후', '저녁', '밤'];
+function renderWeek(){
+  $('weekTable').innerHTML = '<tr><th class="rh" scope="col"></th>' + WEEK_DAYS.map(d => `<th scope="col">${d}</th>`).join('') + '</tr>' +
+    WEEK_SLOTS.map(sl => `<tr><th class="rh" scope="row">${sl}</th>` +
+      WEEK_DAYS.map(d => `<td><input type="text" aria-label="${d}요일 ${sl}"></td>`).join('') + '</tr>').join('');
+}
+$('btnWeekPrint').addEventListener('click', () => window.print());
+$('btnWeekClear').addEventListener('click', () => {
+  $('weekSheet').querySelectorAll('input').forEach(i => { i.value = ''; });
+  toast('모두 비웠습니다.');
+});
+
+renderWeek(); renderCues(); renderStages(); renderIdeas(); renderTalk(); renderCard();
 renderSit(); renderChecks(); refreshDraft();
 </script>
 </body>
