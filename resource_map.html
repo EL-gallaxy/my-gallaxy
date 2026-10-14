@@ -223,6 +223,15 @@
             <div><label for="eChecked">마지막 확인일</label><input type="date" id="eChecked"></div>
             <div><label class="check" style="margin-top:30px"><input type="checkbox" id="ePhone"> 전화로 직접 확인함</label></div>
           </div>
+          <label>연계 뒤 확인 기록 <span style="font-weight:normal">(사람 이름 없이 건수만)</span></label>
+          <div class="grid2">
+            <div><label for="rSent">소개함</label><input type="number" id="rSent" min="0" inputmode="numeric"></div>
+            <div><label for="rWent">가 봄</label><input type="number" id="rWent" min="0" inputmode="numeric"></div>
+            <div><label for="rStay">계속 감</label><input type="number" id="rStay" min="0" inputmode="numeric"></div>
+            <div><label for="rQuit">그만둠</label><input type="number" id="rQuit" min="0" inputmode="numeric"></div>
+          </div>
+          <label for="rWhy">그만둔 이유 <span style="font-weight:normal">(예: 소음 때문에, 거리가 멀어서. 당사자 이름은 쓰지 않기)</span></label>
+          <input type="text" id="rWhy" placeholder="예: 오후반이 붐벼서, 버스 환승이 부담돼서">
           <label for="eMemo">메모</label>
           <textarea id="eMemo" placeholder="예: 첫 방문에는 담당자가 입구에서 맞이해 줌. 소음이 적은 오전이 좋음"></textarea>
           <div class="bar" style="margin-top:14px">
@@ -337,6 +346,12 @@ function checkedPill(r){
   const label = '확인 ' + r.checkedAt + (r.phoneChecked ? ' · 전화 확인' : '');
   return `<span class="pill${d > STALE_DAYS ? ' stale' : ''}">${esc(label)}${d > STALE_DAYS ? ' · 다시 확인 필요' : ''}</span>`;
 }
+const REF = [['sent','소개함'], ['went','가 봄'], ['stay','계속 감'], ['quit','그만둠']];
+function refLine(r){
+  const ref = r.ref || {};
+  if (!REF.some(([k]) => ref[k])) return '';
+  return `<div class="badges">${REF.map(([k, l]) => `<span class="pill">${l} ${ref[k] || 0}</span>`).join('')}</div>`;
+}
 function card(r){
   const t = r.travel || 2, b = r.burden || 2;
   const range = (r.stageMin ?? 0) === (r.stageMax ?? 5) ? `${r.stageMin}단계` : `${r.stageMin ?? 0}~${r.stageMax ?? 5}단계`;
@@ -358,6 +373,8 @@ function card(r){
       ${field('동네', r.area)}${field('가는 법', r.how)}${field('비용', r.cost)}${field('운영 시간', r.hours)}
       ${field('대상', r.target)}${field('담당·연락', r.contact)}${r.memo ? field('메모', r.memo) : ''}
     </dl>
+    ${refLine(r)}${r.quitWhy ? `<dl class="kv">${field('그만둔 이유', r.quitWhy)}</dl>` : ''}
+    ${canWrite ? `<div class="act"><span class="note" style="margin:0">연계 기록 +1:</span>${REF.map(([k, l]) => `<button type="button" class="btn ghost small" data-act="ref-${k}">${l}</button>`).join('')}</div>` : ''}
     <div class="act">
       <a class="btn ghost small" href="${map}" target="_blank" rel="noopener noreferrer">지도에서 찾기</a>
       ${canWrite ? `<button type="button" class="btn ghost small" data-act="edit">고치기</button>
@@ -429,6 +446,9 @@ function openEditor(r){
   $('eNoise').value = r.noise || ''; $('eCrowd').value = r.crowd || '';
   $('eAlone').checked = !!r.aloneOk; $('eLeave').checked = !!r.leaveOk; $('eGreeter').checked = !!r.greeter;
   $('eChecked').value = r.checkedAt || ''; $('ePhone').checked = !!r.phoneChecked;
+  const rf = r.ref || {};
+  $('rSent').value = rf.sent || ''; $('rWent').value = rf.went || ''; $('rStay').value = rf.stay || ''; $('rQuit').value = rf.quit || '';
+  $('rWhy').value = r.quitWhy || '';
   $('eCompanion').checked = !!r.companion; $('eConnected').checked = !!r.connected;
   eTravel = r.travel || 2; eBurden = r.burden || 2;
   eCuesSet.clear(); (r.cues || []).forEach(c => eCuesSet.add(c));
@@ -437,6 +457,7 @@ function openEditor(r){
 function closeEditor(){ $('editor').hidden = true; editing = null; }
 $('btnNew').addEventListener('click', () => canWrite ? openEditor(null) : toast('이 페이지는 보기만 가능합니다.'));
 $('btnCancel').addEventListener('click', closeEditor);
+function refNum(id){ const n = parseInt($(id).value, 10); return n > 0 ? n : 0; }
 $('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const name = $('eName').value.trim(); if (!name) { $('eName').focus(); return; }
@@ -445,7 +466,8 @@ $('form').addEventListener('submit', async (e) => {
   const it = { ...base, id: editing || newId(), name, kind: $('eKind').value, travel: eTravel, burden: eBurden,
     stageMin: lo, stageMax: hi, cues: [...eCuesSet], companion: $('eCompanion').checked, connected: $('eConnected').checked,
     noise: $('eNoise').value, crowd: $('eCrowd').value, aloneOk: $('eAlone').checked, leaveOk: $('eLeave').checked, greeter: $('eGreeter').checked,
-    checkedAt: $('eChecked').value, phoneChecked: $('ePhone').checked };
+    checkedAt: $('eChecked').value, phoneChecked: $('ePhone').checked,
+    ref: { sent: refNum('rSent'), went: refNum('rWent'), stay: refNum('rStay'), quit: refNum('rQuit') }, quitWhy: $('rWhy').value.trim() };
   Object.entries(FIELDS).forEach(([id, k]) => { if (k !== 'name') it[k] = $(id).value.trim(); });
   delete it.example;
   $('btnSave').disabled = true;
@@ -462,8 +484,14 @@ $('list').addEventListener('click', async (e) => {
   if (act === 'new2') return openEditor(null);
   if (act === 'sample2') return addSamples();
   const id = b.closest('.res')?.dataset.id; const r = items.find(x => x.id === id); if (!r) return;
+  if (act.startsWith('ref-')) {
+    const k = act.slice(4);
+    try { await saveItem({ ...r, ref: { ...(r.ref || {}), [k]: ((r.ref || {})[k] || 0) + 1 } }); toast('기록했습니다.'); }
+    catch(err){ toast('저장하지 못했습니다. 잠시 뒤 다시 눌러 주세요.'); }
+    return;
+  }
   if (act === 'edit') openEditor(r);
-  if (act === 'dup') openEditor({ ...r, id: null, name: r.name + ' (복제)', connected: false, example: false, checkedAt: '', phoneChecked: false, _dup: true });
+  if (act === 'dup') openEditor({ ...r, id: null, name: r.name + ' (복제)', connected: false, example: false, checkedAt: '', phoneChecked: false, ref: {}, quitWhy: '', _dup: true });
   if (act === 'del') {
     // 삭제는 한 번 더 눌러야 실행 (이 화면은 confirm 대화상자를 못 씀)
     if (pendingDel === id) { pendingDel = null; try { await removeItem(id); toast('삭제했습니다.'); } catch(err){ toast('삭제하지 못했습니다.'); } }
