@@ -660,6 +660,62 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('작업치료 요약·알림·가져오기');
   });
 
+  await step('일상생활 변화 표, 주간 일과 저장·비교, 자원 지도 맞는 곳 찾기 링크가 동작한다', async () => {
+    await page.evaluate(() => { Views._clientDetailTabClientId = null; });
+    await page.evaluate(() => UI.navigate('clientDetail', { id: 'CI1' }));
+    await page.waitForTimeout(250);
+    await show();
+    const grid = await page.evaluate(() => {
+      const t = Array.from(document.querySelectorAll('table caption')).find(x => x.textContent.includes('변화 한눈에 보기'));
+      return t ? t.closest('table').textContent : '';
+    });
+    assert(grid.includes('씻기·위생') && grid.includes('○') && grid.includes('×'), '일상생활 변화 표가 없거나 내용이 다름: ' + grid.slice(0, 120));
+    await page.fill('#rout_0_0', '7시 기상');
+    await page.fill('#rout_0_2', '산책');
+    await click('#addRoutineBtn');
+    await page.waitForTimeout(300);
+    await show();
+    await page.click('#copyRoutineBtn');
+    await page.fill('#rout_1_1', '프로그램 참여');
+    await click('#addRoutineBtn');
+    await page.waitForTimeout(300);
+    await show();
+    const r = await page.evaluate(() => ({ list: Clients.get('CI1').weeklyRoutines, change: Clients.routineChange(Clients.get('CI1').weeklyRoutines), text: document.body.textContent }));
+    assert(r.list.length === 2 && r.list.some(x => x.cells['월-아침'] === '7시 기상' && x.cells['화-오전'] === '프로그램 참여'), '주간 일과 저장 오류: ' + JSON.stringify(r.list));
+    assert(r.change && r.change.changed === 1 && r.change.filledDiff === 1, '주간 일과 비교 오류: ' + JSON.stringify(r.change));
+    assert(r.text.includes('내용이 달라진 칸 1개'), '주간 일과 비교 문구가 없음');
+    await click('[data-edit-routine]');
+    await page.fill('#rout_1_1', '');
+    await click('#addRoutineBtn');
+    await page.waitForTimeout(300);
+    assert(await page.evaluate(() => Object.keys(Clients.latestRecord(Clients.get('CI1').weeklyRoutines).cells).length === 2), '주간 일과 수정 오류');
+    // 자원 지도 링크: 감각 메모에서 소음 민감함이 있으면 조건만 담긴 주소가 만들어진다.
+    const link = await page.evaluate(async () => {
+      await Clients.addListRecord('CI1', 'sensoryNotes', 'sens', { sens: { '소음': '민감함', '사람이 많은 곳': '민감함' } });
+      return Clients.resourceMapLink(Clients.get('CI1'));
+    });
+    assert(link === 'resource_map.html?quiet=1&few=1' && !link.includes('CI1'), '자원 지도 링크 오류: ' + link);
+    noNewErrors('일상생활 변화 표·주간 일과');
+  });
+
+  await step('자원 지도: 주소 조건으로 시끄럽거나 붐비는 곳을 빼고 보여 준다', async () => {
+    const p2 = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+    const errs = [];
+    p2.on('pageerror', (e) => errs.push(e.message));
+    await p2.addInitScript(() => {
+      const mk = (id, name, noise, crowd) => ({ id, name, kind: '기타', noise, crowd, travel: 1, burden: 1, updatedAt: 1 });
+      try { localStorage.setItem('wonju-resources-v1', JSON.stringify([mk('a', '조용한곳', '조용함', '소규모'), mk('b', '시끄러운곳', '시끄러움', '보통'), mk('c', '붐비는곳', '보통', '붐빔'), mk('d', '모르는곳', '', '')])); } catch (e) {}
+    });
+    await p2.goto(url + '/resource_map.html?quiet=1&few=1');
+    await p2.waitForFunction(() => document.getElementById('cntAll').textContent === '4');
+    const shown = await p2.evaluate(() => ({ n: document.getElementById('cntShown').textContent, text: document.getElementById('list').textContent, q: document.getElementById('fQuiet').checked }));
+    assert(shown.n === '2' && shown.q && shown.text.includes('조용한곳') && shown.text.includes('모르는곳') && !shown.text.includes('시끄러운곳') && !shown.text.includes('붐비는곳'), '자원 지도 조건 필터 오류: ' + JSON.stringify(shown));
+    await p2.click('#btnClear');
+    assert(await p2.evaluate(() => document.getElementById('cntShown').textContent === '4'), '조건 지우기 후 전체가 보이지 않음');
+    assert(errs.length === 0, '자원 지도 화면 오류: ' + errs.join(' | '));
+    await p2.close();
+  });
+
   await step('대상자 요약 탭, 빠른 이동(Ctrl+K), 통합검색 필터가 동작한다', async () => {
     // 요약 탭: 대상자를 처음 열면 요약이 보이고 핵심 정보가 모여 있다
     await page.evaluate(() => { Views._clientDetailTabClientId = null; });
