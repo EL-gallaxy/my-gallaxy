@@ -9578,6 +9578,9 @@ const Views = {
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('bookOpen', { size: 22 }) + ' 교육·슈퍼비전 기록</h1></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">교육·연수 내용, 슈퍼비전·자문에서 나온 조언 등 실무 역량과 관련된 개인 기록을 남기는 공간입니다. 통계나 리포트 어디에도 집계되지 않고, 오직 본인만 확인합니다.</p>';
 
+    // 입력란을 맨 위에 두어 목록이 길어져도 바로 적을 수 있게 한다.
+    html += Views._noteFormHtml(cfg, editing);
+
     html += '<div class="panel" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">' +
       '<div class="field" style="margin:0;max-width:220px;"><label>내용 검색</label>' +
       '<input type="text" id="trKeywordFilter" placeholder="기록 내용 검색"></div>' +
@@ -9587,7 +9590,6 @@ const Views = {
       '</select></div></div>';
 
     html += Views._noteListHtml(notes, editing, cfg, categoryFilter === 'all' ? '작성된 기록이 없습니다.' : '해당 구분의 기록이 없습니다.');
-    html += Views._noteFormHtml(cfg, editing);
     return html;
   },
   bindTrainingPage(){
