@@ -576,6 +576,57 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('일상생활·관심사 기록');
   });
 
+  await step('일 준비도·활동 시도·감각 메모·전환기 점검을 화면에서 저장·수정·삭제한다', async () => {
+    await page.evaluate(() => { Views._clientDetailTabClientId = null; });
+    await page.evaluate(() => UI.navigate('clientDetail', { id: 'CI1' }));
+    await page.waitForTimeout(250);
+    await show();
+    await page.selectOption('#work0', '어려움');
+    await page.selectOption('#work1', '잘 됨');
+    await click('#addWorkBtn');
+    await page.waitForTimeout(300);
+    await show();
+    await page.fill('#trialActivity', '직업재활 체험');
+    await page.fill('#trialMinutes', '90');
+    await page.selectOption('#trialResult', '조정해서 다시');
+    await page.fill('#trialHard', '오후 집중');
+    await click('#addTrialBtn');
+    await page.waitForTimeout(300);
+    await show();
+    await page.selectOption('#sens0', '민감함');
+    await page.selectOption('#sensBest', '오전');
+    await click('#addSensoryBtn');
+    await page.waitForTimeout(300);
+    await show();
+    await page.check('#trans0');
+    await page.check('#trans2');
+    await click('#addTransitionBtn');
+    await page.waitForTimeout(300);
+    await show();
+    const d = await page.evaluate(() => { const c = Clients.get('CI1'); return { w: c.workReadiness, t: c.activityTrials, s: c.sensoryNotes, x: c.transitionChecks, text: document.body.textContent }; });
+    assert(d.w.length === 1 && d.w[0].levels['정해진 시간에 나오기'] === '어려움', '일 준비도 저장 오류');
+    assert(d.t.length === 1 && d.t[0].activity === '직업재활 체험' && d.t[0].result === '조정해서 다시', '활동 시도 저장 오류');
+    assert(d.s.length === 1 && d.s[0].bestTime === '오전' && d.s[0].sens['소음'] === '민감함', '감각 메모 저장 오류');
+    assert(d.x.length === 1 && Object.keys(d.x[0].checked).length === 2, '전환기 점검 저장 오류');
+    assert(d.text.includes('2/9개 확인') && d.text.includes('아직 안 된 것'), '전환기 점검 표시 오류');
+    // 수정
+    await click('[data-edit-trial]');
+    await page.fill('#trialMinutes', '120');
+    await click('#addTrialBtn');
+    await page.waitForTimeout(300);
+    assert(await page.evaluate(() => Clients.get('CI1').activityTrials[0].minutes === '120'), '활동 시도 수정 오류');
+    await show();
+    await click('[data-edit-transition]');
+    await page.check('#trans1');
+    await click('#addTransitionBtn');
+    await page.waitForTimeout(300);
+    assert(await page.evaluate(() => Object.keys(Clients.get('CI1').transitionChecks[0].checked).length === 3), '전환기 점검 수정 오류');
+    // 삭제
+    await page.evaluate(async () => { await Clients.removeListItem('CI1', 'sensoryNotes', Clients.get('CI1').sensoryNotes[0].id); });
+    assert(await page.evaluate(() => Clients.get('CI1').sensoryNotes.length === 0), '삭제 오류');
+    noNewErrors('일 준비도·활동 시도 기록');
+  });
+
   await step('대상자 요약 탭, 빠른 이동(Ctrl+K), 통합검색 필터가 동작한다', async () => {
     // 요약 탭: 대상자를 처음 열면 요약이 보이고 핵심 정보가 모여 있다
     await page.evaluate(() => { Views._clientDetailTabClientId = null; });
