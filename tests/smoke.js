@@ -627,6 +627,39 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('일 준비도·활동 시도 기록');
   });
 
+  await step('요약 탭의 작업치료 메모, 퇴원 후 전환기 점검 알림, 서비스계획 가져오기가 동작한다', async () => {
+    const r = await page.evaluate(async () => {
+      const today = Utils.todayStr();
+      await Clients.addAdlCheck('PL1', { date: today, levels: { med: '대신 함', wash: '혼자 함' } });
+      await Clients.addListRecord('PL1', 'workReadiness', 'work', { levels: { '정해진 시간에 나오기': '어려움' } });
+      await Clients.addListRecord('PL1', 'sensoryNotes', 'sens', { sens: { '소음': '민감함' }, bestTime: '오전' });
+      await Clients.addInterestCheck('PL1', { interests: { '요리': '해 보고 싶음' }, roles: { '친구': '맡고 싶음' } });
+      await Clients.addAdmission('PL1', { type: '퇴원', date: Utils.addDaysStr(today, -3) });
+      const due = Clients.getTransitionDue().some(t => t.clientId === 'PL1');
+      UI.navigate('dashboard', {});
+      await new Promise(res => setTimeout(res, 250));
+      const dash = !!document.getElementById('transitionSection');
+      await Clients.addListRecord('PL1', 'transitionChecks', 'trans', { checked: { '약 챙기는 방법을 정함': true } });
+      const dueAfter = Clients.getTransitionDue().some(t => t.clientId === 'PL1');
+      Views._clientDetailTabClientId = null;
+      UI.navigate('clientDetail', { id: 'PL1' });
+      await new Promise(res => setTimeout(res, 250));
+      const sum = document.querySelector('.detail-tab-group[data-tab-group="summary"]').textContent;
+      UI.navigate('servicePlanEditor', { clientId: 'PL1' });
+      await new Promise(res => setTimeout(res, 250));
+      const sugBtns = document.querySelectorAll('[data-plan-sug]').length;
+      document.querySelector('[data-plan-sug]').click();
+      const goals = Array.from(document.querySelectorAll('.piGoal')).map(x => x.value);
+      return { due, dash, dueAfter, sum, sugBtns, goals };
+    });
+    assert(r.due && r.dash, '퇴원 후 전환기 점검 알림이 대시보드에 없음: ' + JSON.stringify({ due: r.due, dash: r.dash }));
+    assert(!r.dueAfter, '전환기 점검표를 기록해도 알림이 남음');
+    assert(r.sum.includes('작업치료 메모') && r.sum.includes('약 챙겨 먹기(대신 함)') && r.sum.includes('소음') && r.sum.includes('요리'), '요약 탭에 작업치료 메모가 없음: ' + r.sum.slice(0, 200));
+    assert(r.sugBtns >= 4 && r.goals.length >= 1 && r.goals.some(g => g.includes('스스로 해 보기')), '서비스계획 가져오기 오류: ' + JSON.stringify(r));
+    await page.evaluate(() => { Views._dirty = false; UI.navigate('dashboard', {}); });
+    noNewErrors('작업치료 요약·알림·가져오기');
+  });
+
   await step('대상자 요약 탭, 빠른 이동(Ctrl+K), 통합검색 필터가 동작한다', async () => {
     // 요약 탭: 대상자를 처음 열면 요약이 보이고 핵심 정보가 모여 있다
     await page.evaluate(() => { Views._clientDetailTabClientId = null; });
