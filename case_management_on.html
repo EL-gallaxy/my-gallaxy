@@ -1403,6 +1403,9 @@ const CONSTANTS = {
   ROLE_ITEMS: ['가족 구성원(부모·자녀·배우자 등)', '친구', '일하는 사람(직장·알바)', '학생·배우는 사람', '모임 회원', '이웃', '돌보는 사람', '자원봉사자'],
   // 일 준비도 체크 / 활동 시도 기록 / 감각·에너지 메모 / 퇴원·전환기 점검표 — 점수·판정 없이 상황만 남긴다.
   TRANSITION_ALERT_DAYS: 30,
+  ROUTINE_DAYS: ['월', '화', '수', '목', '금', '토', '일'],
+  ROUTINE_SLOTS: ['아침', '오전', '오후', '저녁', '밤'],
+  ADL_SYMBOLS: { '혼자 함': '○', '말로 도움': '△', '같이 함': '◇', '대신 함': '×' },
   WORK_LEVELS: ['잘 됨', '보통', '어려움'],
   WORK_ITEMS: ['정해진 시간에 나오기', '한 가지 일에 집중 유지', '지시 듣고 따르기', '동료와 어울리기', '피로·휴식 조절', '실수했을 때 대처', '출퇴근 이동', '규칙적인 생활 리듬'],
   TRIAL_RESULTS: ['계속 해 봄', '조정해서 다시', '그만둠', '아직 모름'],
@@ -2685,8 +2688,12 @@ const Clients = {
     client[listKey].push(Object.assign({ id: Utils.uid(prefix) }, rec, { date: rec.date || Utils.todayStr() }));
     await Storage.saveEncrypted('clients', client);
   },
+  // 날짜가 같으면 나중에 입력한 기록이 더 최근이다.
+  recentFirst(list){
+    return (list || []).map((x, i) => [x, i]).sort((a, b) => b[0].date.localeCompare(a[0].date) || b[1] - a[1]).map(p => p[0]);
+  },
   latestRecord(list){
-    return (list || []).slice().sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+    return this.recentFirst(list)[0] || null;
   },
   // 요약·서비스계획 가져오기에서 쓰는, 가장 최근 작업치료 기록에서 뽑은 "눈여겨볼 것" 모음.
   otHighlights(c){
@@ -2702,6 +2709,14 @@ const Clients = {
       wantRoles: inter ? pick(inter.roles, '맡고 싶음') : [],
       dates: [adl, work, sens, inter].filter(Boolean).map(r => r.date).sort().slice(-1)[0] || ''
     };
+  },
+  // 감각·에너지 메모에서 자원 지도로 넘길 조건(소음·사람 수)만 주소로 만든다. 대상자 정보는 담지 않는다.
+  resourceMapLink(c){
+    const sens = (this.otHighlights(c).sensitive) || [];
+    const qs = [];
+    if (sens.includes('소음')) qs.push('quiet=1');
+    if (sens.includes('사람이 많은 곳')) qs.push('few=1');
+    return qs.length ? 'resource_map.html?' + qs.join('&') : '';
   },
   // 퇴원 후 전환기 점검 대상 — 가장 최근 입퇴원 기록이 "퇴원"이고, 그 뒤로 전환기 점검표 기록이 없으며,
   // 퇴원한 지 TRANSITION_ALERT_DAYS일 이내인 대상자.
@@ -2720,6 +2735,25 @@ const Clients = {
     });
     return out.sort((x, y) => y.days - x.days);
   },
+  // 주간 일과 — 요일×시간대 칸에 짧은 글을 적는다. 허용된 칸만 남기고 길이를 줄인다.
+  routineClean(cells){
+    const out = {};
+    CONSTANTS.ROUTINE_DAYS.forEach(d => CONSTANTS.ROUTINE_SLOTS.forEach(sl => {
+      const v = String((cells || {})[d + '-' + sl] || '').trim().slice(0, 60);
+      if (v) out[d + '-' + sl] = v;
+    }));
+    return out;
+  },
+  // 가장 최근 주간 일과와 그 직전 기록을 비교한다(채운 칸 수와 내용이 바뀐 칸 수).
+  routineChange(list){
+    const l = this.recentFirst(list);
+    if (l.length < 2) return null;
+    const cur = l[0].cells, prev = l[1].cells;
+    const keys = new Set(Object.keys(cur).concat(Object.keys(prev)));
+    let changed = 0;
+    keys.forEach(k => { if ((cur[k] || '') !== (prev[k] || '')) changed++; });
+    return { prevDate: l[1].date, filledDiff: Object.keys(cur).length - Object.keys(prev).length, changed };
+  },
   async removeListItem(id, listKey, itemId){
     const client = State.clients.get(id);
     if (!client) return;
@@ -2728,7 +2762,7 @@ const Clients = {
   },
   // 가장 최근 기록과 그 직전 기록을 비교해 "혼자 하게 된 것 / 도움이 더 필요해진 것"을 말로 돌려준다.
   adlChange(checks){
-    const list = (checks || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    const list = this.recentFirst(checks);
     if (list.length < 2) return null;
     const cur = list[0], prev = list[1];
     const better = [], worse = [];
@@ -3909,6 +3943,7 @@ const Search = {
       (c.activityTrials || []).forEach(r => push(c, '활동 시도', [r.activity, r.result, r.hard, r.support].filter(Boolean).join(' · '), r.date));
       (c.sensoryNotes || []).forEach(r => push(c, '감각·에너지 메모', [Object.keys(r.sens).map(k => k + ' ' + r.sens[k]).join(', '), r.bestTime, r.note].filter(Boolean).join(' · '), r.date));
       (c.transitionChecks || []).forEach(r => push(c, '퇴원·전환기 점검', [Object.keys(r.checked).join(', '), r.note].filter(Boolean).join(' · '), r.date));
+      (c.weeklyRoutines || []).forEach(r => push(c, '주간 일과', [Object.values(r.cells).join(', '), r.note].filter(Boolean).join(' · '), r.date));
       (c.interestChecks || []).forEach(r => push(c, '관심사·역할', [Object.keys(r.interests).concat(Object.keys(r.roles)).join(', '), r.note].filter(Boolean).join(' · '), r.date));
       (c.servicePlans || []).forEach(pl => (pl.items || []).forEach(i => push(c, '서비스계획', [i.area, i.goal, i.service, i.provider].filter(Boolean).join(' · '), pl.date)));
       (c.familySessions || []).forEach(fs => push(c, '가족 상담', [Clients.familySessionParticipants(fs), (fs.topics || []).join('·'), fs.concerns, fs.intervention, fs.agreement].filter(Boolean).join(' · '), fs.date));
@@ -5214,6 +5249,7 @@ const Views = {
     (c.activityTrials || []).forEach(r => push(r.date, '', '🧪', '활동 시도: ' + r.activity, r.result || ''));
     (c.sensoryNotes || []).forEach(r => push(r.date, '', '🎧', '감각·에너지 메모', r.note || ''));
     (c.transitionChecks || []).forEach(r => push(r.date, '', '🚪', '퇴원·전환기 점검', Object.keys(r.checked).length + '/' + CONSTANTS.TRANSITION_ITEMS.length + '개 확인'));
+    (c.weeklyRoutines || []).forEach(r => push(r.date, '', '🗓', '주간 일과', Object.keys(r.cells).length + '칸 기록' + (r.note ? ' · ' + r.note : '')));
     (c.interestChecks || []).forEach(r => push(r.date, '', '🎨', '관심사·역할 점검', r.note || ''));
     (c.documents || []).forEach(d => { if (d.receivedDate) push(d.receivedDate, '', '📄', '서류 수령', d.name); });
     (c.consents || []).forEach(cs => push(cs.date, '', '🤝', '정보공유 동의: ' + (cs.granted ? '동의' : '미동의'), cs.agency));
@@ -6135,6 +6171,17 @@ const Views = {
           (chg.worse.length ? '<b>도움이 더 필요해진 것</b> ' + Utils.escapeHtml(chg.worse.join(', ')) + '. ' : '') +
           (!chg.better.length && !chg.worse.length ? '달라진 항목이 없습니다.' : '') + '</div>';
       }
+      if (adls.length >= 2){
+        const cols = adls.slice(0, 6).reverse();
+        const rows = CONSTANTS.ADL_ITEMS.filter(it => cols.some(a => a.levels[it.key]));
+        historyHtml += '<div style="overflow-x:auto;margin-bottom:12px;"><table><caption class="help-text" style="text-align:left;">변화 한눈에 보기 (최근 ' + cols.length + '번, 왼쪽이 오래된 기록)</caption><thead><tr><th scope="col">항목</th>' +
+          cols.map(a => '<th scope="col">' + a.date.slice(2) + '</th>').join('') + '</tr></thead><tbody>' +
+          rows.map(it => '<tr><th scope="row" style="text-align:left;white-space:nowrap;">' + it.label + '</th>' + cols.map(a => {
+            const lv = a.levels[it.key];
+            return '<td style="text-align:center;">' + (lv ? '<span aria-hidden="true">' + CONSTANTS.ADL_SYMBOLS[lv] + '</span><span class="sr-only">' + lv + '</span>' : '<span aria-hidden="true">-</span><span class="sr-only">기록 없음</span>') + '</td>';
+          }).join('') + '</tr>').join('') + '</tbody></table></div>' +
+          '<p class="help-text" style="margin-bottom:12px;">○ 혼자 함 · △ 말로 도움 · ◇ 같이 함 · × 대신 함 · - 기록 없음</p>';
+      }
       if (adls.length === 0){
         historyHtml += '<div class="empty-msg">등록된 일상생활 수행 체크가 없습니다.</div>';
       } else {
@@ -6228,7 +6275,8 @@ const Views = {
         CONSTANTS.SENSORY_ITEMS.map((n, i) => '<div class="field"><label for="sens' + i + '">' + n + '</label><select id="sens' + i + '">' + optHtml(CONSTANTS.SENSORY_LEVELS, '') + '</select></div>').join('') +
         '<div class="field"><label for="sensBest">컨디션 좋은 때</label><select id="sensBest">' + optHtml(CONSTANTS.BEST_TIMES, '') + '</select></div>' +
         '<div class="field full"><label for="sensNote">메모(선택)</label><input type="text" id="sensNote" placeholder="예: 오후 3시 이후 급격히 지침"></div></div>' +
-        '<button class="btn btn-sm" id="addSensoryBtn">＋ 감각·에너지 기록</button></details>';
+        '<button class="btn btn-sm" id="addSensoryBtn">＋ 감각·에너지 기록</button>' +
+        (Clients.resourceMapLink(c) ? ' <a class="btn btn-sm" href="' + Clients.resourceMapLink(c) + '" target="_blank" rel="noopener">자원 지도에서 맞는 곳 찾기</a><p class="help-text">소음·사람이 많은 곳에 민감하다고 기록한 경우, 자원 지도에서 시끄럽거나 붐비는 곳을 빼고 보여 줍니다. 대상자 정보는 전달되지 않습니다.</p>' : '') + '</details>';
 
       // 퇴원·전환기 점검표 — 입원 후 집으로 돌아가는 첫 2주에 챙길 것을 확인한다.
       const trans = (c.transitionChecks || []).slice().sort((x, y) => y.date.localeCompare(x.date));
@@ -6246,6 +6294,33 @@ const Views = {
         '<div class="field full">' + CONSTANTS.TRANSITION_ITEMS.map((n, i) => '<label class="chip-check"><input type="checkbox" id="trans' + i + '">' + Utils.escapeHtml(n) + '</label>').join(' ') + '</div>' +
         '<div class="field full"><label for="transNote">메모(선택)</label><input type="text" id="transNote"></div></div>' +
         '<button class="btn btn-sm" id="addTransitionBtn">＋ 전환기 점검 기록</button></details>';
+
+      // 주간 일과 — 한 주를 어떻게 보내는지 요일·시간대별로 남기고 지난 기록과 비교한다.
+      const routines = Clients.recentFirst(c.weeklyRoutines);
+      const rchg = Clients.routineChange(routines);
+      historyHtml += '<details class="panel"' + (routines.length ? ' open' : '') + '><summary class="panel-title">' + icon('calendar') + ' 주간 일과</summary>' +
+        '<p class="help-text" style="margin-bottom:12px;">당사자와 함께 한 주의 일과(잠, 식사, 밖에 나가기, 하고 싶은 일, 쉬기)를 칸마다 한 가지씩 적습니다. 일과·강점 카드(회복 도구함)로 함께 적은 내용을 여기에 옮겨 두면 지난 기록과 비교할 수 있습니다.</p>';
+      if (rchg) historyHtml += '<div class="help-text" style="margin-bottom:12px;">지난 기록(' + rchg.prevDate + ')과 비교: 내용이 달라진 칸 ' + rchg.changed + '개, 채운 칸 ' +
+        (rchg.filledDiff > 0 ? rchg.filledDiff + '개 늘어남' : rchg.filledDiff < 0 ? (-rchg.filledDiff) + '개 줄어듦' : '수 변화 없음') + '.</div>';
+      if (routines.length === 0) historyHtml += '<div class="empty-msg">등록된 주간 일과가 없습니다.</div>';
+      routines.forEach(r => {
+        const lines = CONSTANTS.ROUTINE_DAYS.map(d => {
+          const parts = CONSTANTS.ROUTINE_SLOTS.filter(sl => r.cells[d + '-' + sl]).map(sl => sl + ' ' + r.cells[d + '-' + sl]);
+          return parts.length ? d + ': ' + parts.join(', ') : '';
+        }).filter(Boolean);
+        historyHtml += '<div class="list-row"><div class="list-row-main"><div class="row-title">' + r.date + ' · ' + Object.keys(r.cells).length + '/' + (CONSTANTS.ROUTINE_DAYS.length * CONSTANTS.ROUTINE_SLOTS.length) + '칸 기록</div>' +
+          lines.map(l => '<div class="row-sub">' + Utils.escapeHtml(l) + '</div>').join('') +
+          (r.note ? '<div class="row-sub">' + Utils.escapeHtml(r.note) + '</div>' : '') +
+          '</div><div class="row-actions"><button class="btn btn-sm" data-edit-routine="' + r.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-list="weeklyRoutines:' + r.id + '">삭제</button></div></div>';
+      });
+      historyHtml += '<div class="divider"></div><div class="field" style="max-width:220px;"><label for="routDate">기록한 날</label><input type="date" id="routDate" value="' + Utils.todayStr() + '"></div>' +
+        '<div style="overflow-x:auto;margin:10px 0;"><table><thead><tr><th scope="col"></th>' + CONSTANTS.ROUTINE_DAYS.map(d => '<th scope="col">' + d + '</th>').join('') + '</tr></thead><tbody>' +
+        CONSTANTS.ROUTINE_SLOTS.map((sl, si) => '<tr><th scope="row">' + sl + '</th>' + CONSTANTS.ROUTINE_DAYS.map((d, di) =>
+          '<td><input type="text" maxlength="60" style="min-width:90px;" id="rout_' + di + '_' + si + '" aria-label="' + d + '요일 ' + sl + '"></td>').join('') + '</tr>').join('') +
+        '</tbody></table></div>' +
+        '<div class="field full"><label for="routNote">메모(선택)</label><input type="text" id="routNote" placeholder="예: 오후에는 지쳐서 누워 있는 시간이 많음"></div>' +
+        '<button class="btn btn-sm" id="addRoutineBtn">＋ 주간 일과 기록</button>' +
+        (routines.length ? ' <button class="btn btn-sm" type="button" id="copyRoutineBtn">지난 기록 불러오기</button>' : '') + '</details>';
     }
 
     if (c.managementHistory && c.managementHistory.length){
@@ -6933,6 +7008,14 @@ const Views = {
     const best = document.getElementById('sensBest').value;
     return { date: document.getElementById('sensDate').value || Utils.todayStr(), sens: Clients.mapClean(sens, CONSTANTS.SENSORY_ITEMS, CONSTANTS.SENSORY_LEVELS), bestTime: CONSTANTS.BEST_TIMES.includes(best) ? best : '', note: document.getElementById('sensNote').value.trim() };
   },
+  _readRoutine(){
+    const cells = {};
+    CONSTANTS.ROUTINE_DAYS.forEach((d, di) => CONSTANTS.ROUTINE_SLOTS.forEach((sl, si) => { cells[d + '-' + sl] = document.getElementById('rout_' + di + '_' + si).value; }));
+    return Clients.routineClean(cells);
+  },
+  _fillRoutine(cells){
+    CONSTANTS.ROUTINE_DAYS.forEach((d, di) => CONSTANTS.ROUTINE_SLOTS.forEach((sl, si) => { document.getElementById('rout_' + di + '_' + si).value = (cells || {})[d + '-' + sl] || ''; }));
+  },
   _readTransition(){
     const checked = {};
     CONSTANTS.TRANSITION_ITEMS.forEach((n, i) => { checked[n] = document.getElementById('trans' + i).checked; });
@@ -7035,6 +7118,9 @@ const Views = {
       { attr: 'data-edit-sensory', list: 'sensoryNotes', btn: 'addSensoryBtn', done: '감각·에너지 기록을 수정했습니다.',
         fill: r => { set('sensDate', r.date); set('sensNote', r.note); set('sensBest', r.bestTime); CONSTANTS.SENSORY_ITEMS.forEach((n, i) => set('sens' + i, r.sens[n])); },
         read: () => Views._readSensory() },
+      { attr: 'data-edit-routine', list: 'weeklyRoutines', btn: 'addRoutineBtn', done: '주간 일과를 수정했습니다.',
+        fill: r => { set('routDate', r.date); set('routNote', r.note); Views._fillRoutine(r.cells); },
+        read: () => ({ date: val('routDate') || Utils.todayStr(), cells: Views._readRoutine(), note: val('routNote').trim() }) },
       { attr: 'data-edit-transition', list: 'transitionChecks', btn: 'addTransitionBtn', done: '전환기 점검을 수정했습니다.',
         fill: r => { set('transDate', r.date); set('transNote', r.note); CONSTANTS.TRANSITION_ITEMS.forEach((n, i) => { document.getElementById('trans' + i).checked = !!r.checked[n]; }); },
         read: () => ({ date: val('transDate') || Utils.todayStr(), checked: Views._readTransition(), note: val('transNote').trim() }) },
@@ -7613,6 +7699,19 @@ const Views = {
       await Clients.addListRecord(id, 'sensoryNotes', 'sens', r);
       toast('감각·에너지를 기록했습니다.');
       UI.renderCurrentView();
+    };
+    const addRoutineBtn = document.getElementById('addRoutineBtn');
+    if (addRoutineBtn) addRoutineBtn.onclick = async () => {
+      const cells = Views._readRoutine();
+      if (!Object.keys(cells).length) return toast('하나 이상의 칸에 적어 주세요.', 'error');
+      await Clients.addListRecord(id, 'weeklyRoutines', 'rout', { date: document.getElementById('routDate').value, cells, note: document.getElementById('routNote').value.trim() });
+      toast('주간 일과를 기록했습니다.');
+      UI.renderCurrentView();
+    };
+    const copyRoutineBtn = document.getElementById('copyRoutineBtn');
+    if (copyRoutineBtn) copyRoutineBtn.onclick = () => {
+      const last = Clients.latestRecord(Clients.get(id).weeklyRoutines);
+      if (last) Views._fillRoutine(last.cells);
     };
     const addTransitionBtn = document.getElementById('addTransitionBtn');
     if (addTransitionBtn) addTransitionBtn.onclick = async () => {
@@ -8451,7 +8550,7 @@ const Views = {
     if (plan && plan.nextReviewDate && plan.nextReviewDate < today) flags.push('서비스계획 점검일 경과');
     gaps.forEach(g => flags.push(g));
     const more = (tab, label) => ' <button class="btn-link" data-summary-tab="' + tab + '">' + label + '</button>';
-    const ot = Clients.otHighlights(c), adlChg = Clients.adlChange(c.adlChecks);
+    const ot = Clients.otHighlights(c), adlChg = Clients.adlChange(c.adlChecks), mapLink = Clients.resourceMapLink(c);
     const otText = [
       ot.adlHelp.length && '도움이 필요한 일상생활: ' + ot.adlHelp.map(x => x.label + '(' + x.level + ')').join(', '),
       adlChg && (adlChg.better.length || adlChg.worse.length) && '지난 기록 대비 ' + [adlChg.better.length && '도움이 줄어든 것 ' + adlChg.better.join(', '), adlChg.worse.length && '도움이 더 필요해진 것 ' + adlChg.worse.join(', ')].filter(Boolean).join(' / '),
@@ -8476,7 +8575,7 @@ const Views = {
       row('복약', curMeds.length ? e(curMeds.map(m => [m.name, m.dose].filter(Boolean).join(' ')).join(', ')) + (nextRx ? ' · 다음 처방일 ' + e(nextRx) : '') + more('history', '이력관리 보기') : '') +
       row('서비스계획', plan ? e((plan.periodStart || '?') + ' ~ ' + (plan.periodEnd || '?')) + (plan.nextReviewDate ? ' · 다음 점검일 ' + e(plan.nextReviewDate) : '') + more('plan', '서비스계획 보기') : '') +
       row('미완료 후속조치', pend.length ? pend.map(f => e(f.dueDate + ' · ' + f.type + (f.text ? ' ' + f.text : ''))).join('\n') + more('soap', 'SOAP·후속조치 보기') : '') +
-      row('작업치료 메모', otText ? e(otText) + more('history', '이력관리 보기') : '') +
+      row('작업치료 메모', otText ? e(otText) + more('history', '이력관리 보기') + (mapLink ? ' <a class="btn-link" href="' + mapLink + '" target="_blank" rel="noopener">자원 지도에서 맞는 곳 찾기</a>' : '') : '') +
       row('예정된 일정', sch.length ? sch.map(x => e(x.date + (x.time ? ' ' + x.time : '') + ' · ' + x.contactType)).join('\n') : '') +
       '</tbody></table>';
     if (!sp.warningSigns && !cp.helpful && !cp.unwanted) html += '<p class="help-text" style="margin-top:8px;">경고신호나 위기 시 선호가 아직 입력되지 않았습니다.' + more('safety', '위기·안전 탭에서 입력') + '</p>';
@@ -10716,6 +10815,7 @@ const Views = {
   // 업데이트 내역 — 앱을 고칠 때마다 맨 위에 새 항목을 추가한다.
   CHANGELOG: [
     { date: '2026-10-29', items: [
+      '일상생활 수행 변화 표, 주간 일과 기록(지난 기록과 비교), 감각 메모에서 자원 지도의 맞는 곳 찾기(시끄럽거나 붐비는 곳 빼기)',
       '대상자 요약에 작업치료 메모(도움이 필요한 일상생활, 어려운 것, 민감한 자극, 하고 싶은 일), 퇴원 후 전환기 점검 알림, 서비스계획에서 작업치료 기록 가져오기',
       '이력관리에 "일 준비도 체크", "활동 시도 기록", "감각·에너지 메모", "퇴원·전환기 점검표" 추가',
       '이력관리에 "일상생활 수행 체크"(씻기·식사·약·장보기 등을 도움 정도로 기록, 지난 기록과 비교)와 "관심사·역할 점검" 추가'

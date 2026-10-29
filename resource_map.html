@@ -184,6 +184,8 @@
 
       <label class="check"><input type="checkbox" id="fCompanion"> 동행 가능한 곳만</label>
       <label class="check"><input type="checkbox" id="fConnected"> 연결해 본 적 있는 곳만</label>
+      <label class="check"><input type="checkbox" id="fQuiet"> 시끄러운 곳 빼기 (소음을 모르는 곳은 남김)</label>
+      <label class="check"><input type="checkbox" id="fFew"> 붐비는 곳 빼기 (사람 수를 모르는 곳은 남김)</label>
 
       <div class="bar" style="margin-top:10px"><button type="button" class="btn ghost small" id="btnClear">조건 지우기</button></div>
     </aside>
@@ -344,7 +346,7 @@ function fallbackLocal(){
 }
 
 /* ---------- 필터 ---------- */
-const F = { q:'', stage:'', cues:new Set(), travel:3, burden:3, kinds:new Set(), companion:false, connected:false, sort:'easy' };
+const F = { q:'', stage:'', cues:new Set(), travel:3, burden:3, kinds:new Set(), companion:false, connected:false, quiet:false, few:false, sort:'easy' };
 function matches(r){
   const hay = [r.name, r.area, r.how, r.memo, r.kind, r.target, r.contact].join(' ').toLowerCase();
   if (F.q && !hay.includes(F.q.toLowerCase())) return false;
@@ -355,6 +357,8 @@ function matches(r){
   if (F.kinds.size && !F.kinds.has(r.kind)) return false;
   if (F.companion && !r.companion) return false;
   if (F.connected && !r.connected) return false;
+  if (F.quiet && r.noise === '시끄러움') return false;
+  if (F.few && r.crowd === '붐빔') return false;
   return true;
 }
 function sorted(list){
@@ -451,11 +455,13 @@ $('fTravel').addEventListener('change', e => { F.travel = +e.target.value; rende
 $('fBurden').addEventListener('change', e => { F.burden = +e.target.value; render(); });
 $('fCompanion').addEventListener('change', e => { F.companion = e.target.checked; render(); });
 $('fConnected').addEventListener('change', e => { F.connected = e.target.checked; render(); });
+$('fQuiet').addEventListener('change', e => { F.quiet = e.target.checked; render(); });
+$('fFew').addEventListener('change', e => { F.few = e.target.checked; render(); });
 $('sort').addEventListener('change', e => { F.sort = e.target.value; render(); });
 $('btnClear').addEventListener('click', () => {
-  Object.assign(F, { q:'', stage:'', travel:3, burden:3, companion:false, connected:false });
+  Object.assign(F, { q:'', stage:'', travel:3, burden:3, companion:false, connected:false, quiet:false, few:false });
   F.cues.clear(); F.kinds.clear();
-  $('q').value=''; $('fStage').value=''; $('fTravel').value='3'; $('fBurden').value='3'; $('fCompanion').checked=false; $('fConnected').checked=false;
+  $('q').value=''; $('fStage').value=''; $('fTravel').value='3'; $('fBurden').value='3'; $('fCompanion').checked=false; $('fConnected').checked=false; $('fQuiet').checked=false; $('fFew').checked=false;
   chips($('fCues'), CUES, F.cues, 'cue'); chips($('fKinds'), KINDS, F.kinds, 'kind'); render();
 });
 
@@ -752,6 +758,12 @@ async function initSync(){
 }
 
 let tt; function toast(m){ const t = $('toast'); t.textContent = m; t.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('on'), 2600); }
+// 주소에 ?quiet=1&few=1이 있으면(사례관리 ON의 "맞는 곳 찾기" 링크) 조건만 미리 켠다. 당사자 정보는 주소에 담기지 않는다.
+(function(){
+  var q = new URLSearchParams(location.search);
+  if (q.get('quiet') === '1') { F.quiet = true; $('fQuiet').checked = true; }
+  if (q.get('few') === '1') { F.few = true; $('fFew').checked = true; }
+})();
 init().then(() => { if (!db) initSync(); });
 </script>
 
