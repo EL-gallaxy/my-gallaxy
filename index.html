@@ -21,6 +21,44 @@
 </style>
 </head>
 <body>
+<style>
+  #crisisBar{position:sticky;top:0;z-index:50;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;justify-content:center;padding:6px 12px;background:#fff4ec;color:#7c2d12;border-bottom:1px solid #f0c9a8;font-size:14px;line-height:1.5}
+  #crisisBar a{color:#7c2d12;font-weight:700;text-decoration:underline;white-space:nowrap}
+  #crisisBar button{font:inherit;font-size:13px;color:#7c2d12;background:transparent;border:1px solid #d9a77e;border-radius:999px;padding:1px 10px;cursor:pointer}
+  @media (prefers-color-scheme: dark){#crisisBar{background:#3a2418;color:#ffd9bd;border-color:#6b4430}#crisisBar a,#crisisBar button{color:#ffd9bd}#crisisBar button{border-color:#8a5a40}}
+  @media print{#crisisBar{display:none!important}}
+</style>
+<div id="crisisBar" role="region" aria-label="위기 연락처">
+  <span>위기 시 연락처</span>
+  <a href="tel:119">긴급 119</a>
+  <a href="tel:112">경찰 112</a>
+  <a href="tel:109">자살예방 109</a>
+  <a href="tel:15770199">정신건강위기상담 1577-0199</a>
+  <span id="crisisBarCenter"></span>
+  <button type="button" id="crisisBarEdit">센터 번호 설정</button>
+</div>
+<script>
+(function(){
+  var KEY = 'crisisBar.centerPhone', box = document.getElementById('crisisBarCenter');
+  function load(){ try{ return localStorage.getItem(KEY) || ''; }catch(e){ return ''; } }
+  function render(){
+    var v = load();
+    box.textContent = '';
+    if (!v) return;
+    var a = document.createElement('a');
+    a.href = 'tel:' + v.replace(/[^0-9+]/g, '');
+    a.textContent = '센터 ' + v;
+    box.appendChild(a);
+  }
+  document.getElementById('crisisBarEdit').onclick = function(){
+    var v = window.prompt('우리 센터 대표(위기) 번호를 적어 주세요. 비우면 지웁니다.\n※ 기관 번호만 적고 당사자 정보는 넣지 마세요.', load());
+    if (v === null) return;
+    try{ if (v.trim()) localStorage.setItem(KEY, v.trim()); else localStorage.removeItem(KEY); }catch(e){}
+    render();
+  };
+  render();
+})();
+</script>
 <main>
   <h1>원주 정신건강 도구함</h1>
   <p class="lead">작업치료사 한 사람이 업무에 쓰는 도구 모음입니다. 서버에 올라가는 내용은 없고, 입력한 내용은 쓰는 브라우저에만 저장됩니다.</p>
