@@ -1385,6 +1385,22 @@ const CONSTANTS = {
   // (정신건강 사례관리 목표는 수치화가 어렵고 자칫 오해를 부를 수 있음).
   // 당사자 강점·선호 — 선호하는 연락 방식 선택지.
   CONTACT_PREF_METHODS: ['전화', '문자', '방문', '보호자 경유'],
+  // 일상생활 수행 체크 — 항목마다 "어느 정도 도움이 필요한가"만 기록한다(점수·판정 없음).
+  // 도움 정도는 앞쪽일수록 스스로 하는 쪽이라 지난 기록과 방향만 비교할 수 있다.
+  ADL_LEVELS: ['혼자 함', '말로 도움', '같이 함', '대신 함'],
+  ADL_ITEMS: [
+    { key: 'wash', label: '씻기·위생' }, { key: 'dress', label: '옷 입기·단정함' },
+    { key: 'meal', label: '식사 챙기기' }, { key: 'med', label: '약 챙겨 먹기' },
+    { key: 'clean', label: '집 정리·청소' }, { key: 'laundry', label: '빨래' },
+    { key: 'shop', label: '장보기' }, { key: 'transport', label: '교통 이용' },
+    { key: 'money', label: '돈 관리' }, { key: 'phone', label: '전화·연락하기' },
+    { key: 'appt', label: '약속·일정 지키기' }, { key: 'sleep', label: '잠자는 시간 지키기' }
+  ],
+  // 관심사·역할 점검 — 같은 선택지를 항목별로 고른다.
+  INTEREST_LEVELS: ['예전에 했음', '지금도 함', '해 보고 싶음'],
+  INTEREST_ITEMS: ['걷기·운동', '요리', '음악 듣기·연주', '그림·만들기', '게임', '책·글쓰기', '텃밭·식물', '반려동물', '영화·방송 보기', '쇼핑·구경', '종교·모임 활동', '봉사', '컴퓨터·휴대폰 활용', '여행·나들이'],
+  ROLE_LEVELS: ['맡고 있음', '예전에 맡았음', '맡고 싶음'],
+  ROLE_ITEMS: ['가족 구성원(부모·자녀·배우자 등)', '친구', '일하는 사람(직장·알바)', '학생·배우는 사람', '모임 회원', '이웃', '돌보는 사람', '자원봉사자'],
   // 개인별 서비스계획서 — 욕구사정 영역, 계획 항목 상태, 계획서 상태, 동의 방법.
   PLAN_NEED_AREAS: ['정신건강·증상관리', '신체건강', '일상생활·자기관리', '경제·주거', '가족·사회관계', '직업·교육·여가', '법률·권익', '기타'],
   PLAN_ITEM_STATUSES: {
@@ -2609,6 +2625,58 @@ const Clients = {
     client.reassessments = (client.reassessments || []).filter(r => r.id !== reassessId);
     await Storage.saveEncrypted('clients', client);
   },
+  // 일상생활 수행 체크 / 관심사·역할 점검 — 날짜별 기록을 쌓아 지난 기록과 비교한다.
+  // 허용된 항목 키·선택지 밖의 값은 버린다.
+  adlClean(levels){
+    const out = {};
+    CONSTANTS.ADL_ITEMS.forEach(it => { if (CONSTANTS.ADL_LEVELS.includes((levels || {})[it.key])) out[it.key] = levels[it.key]; });
+    return out;
+  },
+  interestClean(map, items, levels){
+    const out = {};
+    items.forEach(n => { if (levels.includes((map || {})[n])) out[n] = map[n]; });
+    return out;
+  },
+  interestClean2({ interests, roles }){
+    return { interests: this.interestClean(interests, CONSTANTS.INTEREST_ITEMS, CONSTANTS.INTEREST_LEVELS), roles: this.interestClean(roles, CONSTANTS.ROLE_ITEMS, CONSTANTS.ROLE_LEVELS) };
+  },
+  async addAdlCheck(id, { date, levels, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.adlChecks = client.adlChecks || [];
+    client.adlChecks.push({ id: Utils.uid('adl'), date: date || Utils.todayStr(), levels: this.adlClean(levels), note: (note || '').trim() });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async addInterestCheck(id, { date, interests, roles, note }){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client.interestChecks = client.interestChecks || [];
+    client.interestChecks.push({
+      id: Utils.uid('int'), date: date || Utils.todayStr(),
+      interests: this.interestClean(interests, CONSTANTS.INTEREST_ITEMS, CONSTANTS.INTEREST_LEVELS),
+      roles: this.interestClean(roles, CONSTANTS.ROLE_ITEMS, CONSTANTS.ROLE_LEVELS), note: (note || '').trim()
+    });
+    await Storage.saveEncrypted('clients', client);
+  },
+  async removeListItem(id, listKey, itemId){
+    const client = State.clients.get(id);
+    if (!client) return;
+    client[listKey] = (client[listKey] || []).filter(x => x.id !== itemId);
+    await Storage.saveEncrypted('clients', client);
+  },
+  // 가장 최근 기록과 그 직전 기록을 비교해 "혼자 하게 된 것 / 도움이 더 필요해진 것"을 말로 돌려준다.
+  adlChange(checks){
+    const list = (checks || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    if (list.length < 2) return null;
+    const cur = list[0], prev = list[1];
+    const better = [], worse = [];
+    CONSTANTS.ADL_ITEMS.forEach(it => {
+      const a = CONSTANTS.ADL_LEVELS.indexOf(cur.levels[it.key]), b = CONSTANTS.ADL_LEVELS.indexOf(prev.levels[it.key]);
+      if (a < 0 || b < 0 || a === b) return;
+      (a < b ? better : worse).push(it.label);
+    });
+    return { prevDate: prev.date, better, worse };
+  },
   lastReassessmentDate(id){
     const client = State.clients.get(id);
     if (!client) return null;
@@ -3774,6 +3842,8 @@ const Search = {
       (c.assessments || []).forEach(a => push(c, '사정도구 점수', [a.scale, Clients.assessmentSummary(a).text, a.note].filter(Boolean).join(' · '), a.date));
       (c.riskAssessments || []).forEach(r => push(c, '위험도 평가', [(CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note].filter(Boolean).join(' · '), r.date));
       (c.reassessments || []).forEach(r => push(c, '정기 재사정', r.note, r.date));
+      (c.adlChecks || []).forEach(a => push(c, '일상생활 수행', [Object.keys(a.levels).map(k => ((CONSTANTS.ADL_ITEMS.find(it => it.key === k) || {}).label || k) + ' ' + a.levels[k]).join(', '), a.note].filter(Boolean).join(' · '), a.date));
+      (c.interestChecks || []).forEach(r => push(c, '관심사·역할', [Object.keys(r.interests).concat(Object.keys(r.roles)).join(', '), r.note].filter(Boolean).join(' · '), r.date));
       (c.servicePlans || []).forEach(pl => (pl.items || []).forEach(i => push(c, '서비스계획', [i.area, i.goal, i.service, i.provider].filter(Boolean).join(' · '), pl.date)));
       (c.familySessions || []).forEach(fs => push(c, '가족 상담', [Clients.familySessionParticipants(fs), (fs.topics || []).join('·'), fs.concerns, fs.intervention, fs.agreement].filter(Boolean).join(' · '), fs.date));
       if (c.recoveryProfile){ const rp = c.recoveryProfile, cp = rp.crisis || {}; push(c, '당사자 강점·선호', Clients.RECOVERY_FIELDS.map(k => rp[k]).concat((rp.contactPref || []), Clients.CRISIS_PREF_FIELDS.map(k => cp[k])).filter(Boolean).join(' · ')); }
@@ -5073,6 +5143,8 @@ const Views = {
     (c.assessments || []).forEach(a => { const sm = Clients.assessmentSummary(a); push(a.date, '', '📊', '사정도구: ' + a.scale, [sm.text].concat(sm.flags).filter(Boolean).join(' · ')); });
     (c.riskAssessments || []).forEach(r => push(r.date, '', '🎯', '위험도 평가: ' + (CONSTANTS.RISK_LEVELS[r.level] || {}).label, r.note || ''));
     (c.reassessments || []).forEach(r => push(r.date, '', '📋', '정기 재사정 완료', r.note || ''));
+    (c.adlChecks || []).forEach(a => push(a.date, '', '🏠', '일상생활 수행 체크', Object.keys(a.levels).length + '개 항목' + (a.note ? ' · ' + a.note : '')));
+    (c.interestChecks || []).forEach(r => push(r.date, '', '🎨', '관심사·역할 점검', r.note || ''));
     (c.documents || []).forEach(d => { if (d.receivedDate) push(d.receivedDate, '', '📄', '서류 수령', d.name); });
     (c.consents || []).forEach(cs => push(cs.date, '', '🤝', '정보공유 동의: ' + (cs.granted ? '동의' : '미동의'), cs.agency));
     (c.managementHistory || []).forEach(h => {
@@ -5967,6 +6039,62 @@ const Views = {
         '<button class="btn btn-sm" id="addReassessBtn">＋ 재사정 완료 기록</button></details>';
     }
 
+    // 일상생활 수행 체크 — 도움이 얼마나 필요한지만 기록하고 점수나 판정은 내지 않는다.
+    // 지난 기록과 달라진 항목만 말로 보여 주어, 일과 회복 상황을 대화로 이어 가는 자료로 쓴다.
+    const optHtml = (levels, cur) => '<option value="">(해당 없음·모름)</option>' + levels.map(l => '<option' + (l === cur ? ' selected' : '') + '>' + l + '</option>').join('');
+    {
+      const adls = (c.adlChecks || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+      const chg = Clients.adlChange(adls);
+      historyHtml += '<details class="panel"' + (adls.length ? ' open' : '') + '><summary class="panel-title">' + icon('clipboardList') + ' 일상생활 수행 체크</summary>' +
+        '<p class="help-text" style="margin-bottom:12px;">씻기·식사·약·장보기·돈 관리 등을 "혼자 함 / 말로 도움 / 같이 함 / 대신 함"으로 기록합니다. 점수나 판정은 하지 않고, 지난 기록과 달라진 점만 보여 드립니다.</p>';
+      if (chg){
+        historyHtml += '<div class="help-text" style="margin-bottom:12px;">지난 기록(' + chg.prevDate + ')과 비교: ' +
+          (chg.better.length ? '<b>도움이 줄어든 것</b> ' + Utils.escapeHtml(chg.better.join(', ')) + '. ' : '') +
+          (chg.worse.length ? '<b>도움이 더 필요해진 것</b> ' + Utils.escapeHtml(chg.worse.join(', ')) + '. ' : '') +
+          (!chg.better.length && !chg.worse.length ? '달라진 항목이 없습니다.' : '') + '</div>';
+      }
+      if (adls.length === 0){
+        historyHtml += '<div class="empty-msg">등록된 일상생활 수행 체크가 없습니다.</div>';
+      } else {
+        adls.forEach(a => {
+          const done = CONSTANTS.ADL_ITEMS.filter(it => a.levels[it.key]);
+          historyHtml += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + a.date + ' · ' + done.length + '개 항목 기록</div>' +
+            '<div class="row-sub">' + Utils.escapeHtml(done.map(it => it.label + ' ' + a.levels[it.key]).join(' · ')) + '</div>' +
+            (a.note ? '<div class="row-sub">' + Utils.escapeHtml(a.note) + '</div>' : '') +
+            '</div><div class="row-actions"><button class="btn btn-sm" data-edit-adl="' + a.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-list="adlChecks:' + a.id + '">삭제</button></div></div>';
+        });
+      }
+      historyHtml += '<div class="divider"></div><div class="form-grid"><div class="field"><label for="adlDate">확인한 날</label><input type="date" id="adlDate" value="' + Utils.todayStr() + '"></div>' +
+        CONSTANTS.ADL_ITEMS.map(it => '<div class="field"><label for="adl_' + it.key + '">' + it.label + '</label><select id="adl_' + it.key + '">' + optHtml(CONSTANTS.ADL_LEVELS, '') + '</select></div>').join('') +
+        '<div class="field full"><label for="adlNote">메모(선택)</label><input type="text" id="adlNote" placeholder="예: 약은 알람을 맞춰 두면 혼자 챙김"></div></div>' +
+        '<button class="btn btn-sm" id="addAdlBtn">＋ 일상생활 수행 기록</button></details>';
+
+      // 관심사·역할 점검 — 예전에 하던 것, 지금 하는 것, 해 보고 싶은 것을 고른다.
+      const ints = (c.interestChecks || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+      historyHtml += '<details class="panel"' + (ints.length ? ' open' : '') + '><summary class="panel-title">' + icon('clipboardList') + ' 관심사·역할 점검</summary>' +
+        '<p class="help-text" style="margin-bottom:12px;">예전에 하던 일, 지금 하는 일, 해 보고 싶은 일과 맡고 싶은 역할을 고릅니다. 서비스계획과 일과·강점 카드를 만들 때 대화의 출발점으로 씁니다.</p>';
+      if (ints.length === 0){
+        historyHtml += '<div class="empty-msg">등록된 관심사·역할 점검이 없습니다.</div>';
+      } else {
+        ints.forEach(r => {
+          const group = (map, lv) => Object.keys(map).filter(k => map[k] === lv).join(', ');
+          const lines = CONSTANTS.INTEREST_LEVELS.map(lv => group(r.interests, lv) && lv + ': ' + group(r.interests, lv))
+            .concat(CONSTANTS.ROLE_LEVELS.map(lv => group(r.roles, lv) && '역할 ' + lv + ': ' + group(r.roles, lv))).filter(Boolean);
+          historyHtml += '<div class="list-row"><div class="list-row-main">' +
+            '<div class="row-title">' + r.date + '</div>' +
+            lines.map(l => '<div class="row-sub">' + Utils.escapeHtml(l) + '</div>').join('') +
+            (r.note ? '<div class="row-sub">' + Utils.escapeHtml(r.note) + '</div>' : '') +
+            '</div><div class="row-actions"><button class="btn btn-sm" data-edit-interest="' + r.id + '">수정</button><button class="btn btn-sm btn-danger" data-del-list="interestChecks:' + r.id + '">삭제</button></div></div>';
+        });
+      }
+      historyHtml += '<div class="divider"></div><div class="form-grid"><div class="field"><label for="intDate">확인한 날</label><input type="date" id="intDate" value="' + Utils.todayStr() + '"></div>' +
+        CONSTANTS.INTEREST_ITEMS.map((n, i) => '<div class="field"><label for="intA' + i + '">' + n + '</label><select id="intA' + i + '">' + optHtml(CONSTANTS.INTEREST_LEVELS, '') + '</select></div>').join('') +
+        CONSTANTS.ROLE_ITEMS.map((n, i) => '<div class="field"><label for="intR' + i + '">역할: ' + n + '</label><select id="intR' + i + '">' + optHtml(CONSTANTS.ROLE_LEVELS, '') + '</select></div>').join('') +
+        '<div class="field full"><label for="intNote">메모(선택)</label><input type="text" id="intNote" placeholder="예: 예전 요리 경험을 살려 주 1회 함께 만들기 해 보고 싶어 함"></div></div>' +
+        '<button class="btn btn-sm" id="addInterestBtn">＋ 관심사·역할 기록</button></details>';
+    }
+
     if (c.managementHistory && c.managementHistory.length){
       historyHtml += '<details class="panel" open><summary class="panel-title">관리수준 변경 이력</summary>';
       c.managementHistory.slice().reverse().forEach(h => {
@@ -6632,6 +6760,17 @@ const Views = {
   // 대상자 상세의 "수정" 버튼 공통 처리 — 항목의 수정 버튼을 누르면 아래 입력
   // 폼에 기존 값이 채워지고 추가 버튼이 "저장"으로 바뀐다(취소 버튼 포함).
   // 저장하면 그 항목만 덮어쓰고, 폼이 없는 화면(간소화 모드 등)은 건너뛴다.
+  _readAdl(){
+    const levels = {};
+    CONSTANTS.ADL_ITEMS.forEach(it => { levels[it.key] = document.getElementById('adl_' + it.key).value; });
+    return levels;
+  },
+  _readInterest(){
+    const interests = {}, roles = {};
+    CONSTANTS.INTEREST_ITEMS.forEach((n, i) => { interests[n] = document.getElementById('intA' + i).value; });
+    CONSTANTS.ROLE_ITEMS.forEach((n, i) => { roles[n] = document.getElementById('intR' + i).value; });
+    return { interests, roles };
+  },
   _bindItemEdits(id){
     const val = (el) => document.getElementById(el).value;
     const set = (el, v) => { document.getElementById(el).value = (v == null ? '' : v); };
@@ -6704,6 +6843,16 @@ const Views = {
       { attr: 'data-edit-consent', list: 'consents', btn: 'addConsentBtn', done: '정보공유 동의 이력을 수정했습니다.',
         fill: cs => { set('consentDate', cs.date); set('consentGranted', cs.granted ? 'yes' : 'no'); set('consentAgency', cs.agency); set('consentNote', cs.note); },
         read: () => { need(val('consentAgency').trim(), '공유 대상 기관·목적을 입력해 주세요.'); return { date: val('consentDate') || Utils.todayStr(), granted: val('consentGranted') !== 'no', agency: val('consentAgency').trim(), note: val('consentNote').trim() }; } },
+      { attr: 'data-edit-adl', list: 'adlChecks', btn: 'addAdlBtn', done: '일상생활 수행 기록을 수정했습니다.',
+        fill: a => { set('adlDate', a.date); set('adlNote', a.note); CONSTANTS.ADL_ITEMS.forEach(it => set('adl_' + it.key, a.levels[it.key])); },
+        read: () => ({ date: val('adlDate') || Utils.todayStr(), levels: Clients.adlClean(Views._readAdl()), note: val('adlNote').trim() }) },
+      { attr: 'data-edit-interest', list: 'interestChecks', btn: 'addInterestBtn', done: '관심사·역할 기록을 수정했습니다.',
+        fill: r => {
+          set('intDate', r.date); set('intNote', r.note);
+          CONSTANTS.INTEREST_ITEMS.forEach((n, i) => set('intA' + i, r.interests[n]));
+          CONSTANTS.ROLE_ITEMS.forEach((n, i) => set('intR' + i, r.roles[n]));
+        },
+        read: () => Object.assign(Clients.interestClean2(Views._readInterest()), { date: val('intDate') || Utils.todayStr(), note: val('intNote').trim() }) },
       { attr: 'data-edit-reassess', list: 'reassessments', btn: 'addReassessBtn', done: '재사정 기록을 수정했습니다.',
         fill: r => { set('reassessDate', r.date); set('reassessNote', r.note); },
         read: () => ({ date: val('reassessDate') || Utils.todayStr(), note: val('reassessNote').trim() }) },
@@ -7234,6 +7383,33 @@ const Views = {
       el.onclick = () => UI.confirm('이 재사정 기록을 삭제할까요?', async () => {
         const snap = Clients.snapshot(id);
         await Clients.removeReassessment(id, el.dataset.delReassess);
+        toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
+        UI.renderCurrentView();
+      });
+    });
+
+    // 일상생활 수행 체크 / 관심사·역할 점검
+    const addAdlBtn = document.getElementById('addAdlBtn');
+    if (addAdlBtn) addAdlBtn.onclick = async () => {
+      const levels = Views._readAdl();
+      if (!Object.keys(levels).length) return toast('하나 이상의 항목을 골라 주세요.', 'error');
+      await Clients.addAdlCheck(id, { date: document.getElementById('adlDate').value, levels, note: document.getElementById('adlNote').value });
+      toast('일상생활 수행을 기록했습니다.');
+      UI.renderCurrentView();
+    };
+    const addInterestBtn = document.getElementById('addInterestBtn');
+    if (addInterestBtn) addInterestBtn.onclick = async () => {
+      const r = Views._readInterest();
+      if (!Object.keys(r.interests).length && !Object.keys(r.roles).length) return toast('하나 이상의 항목을 골라 주세요.', 'error');
+      await Clients.addInterestCheck(id, Object.assign(r, { date: document.getElementById('intDate').value, note: document.getElementById('intNote').value }));
+      toast('관심사·역할을 기록했습니다.');
+      UI.renderCurrentView();
+    };
+    document.querySelectorAll('[data-del-list]').forEach(el => {
+      el.onclick = () => UI.confirm('이 기록을 삭제할까요?', async () => {
+        const [listKey, itemId] = el.dataset.delList.split(':');
+        const snap = Clients.snapshot(id);
+        await Clients.removeListItem(id, listKey, itemId);
         toastUndo('삭제했습니다.', async () => { await Clients.restoreSnapshot(snap); UI.renderCurrentView(); });
         UI.renderCurrentView();
       });
@@ -10289,6 +10465,9 @@ const Views = {
   ],
   // 업데이트 내역 — 앱을 고칠 때마다 맨 위에 새 항목을 추가한다.
   CHANGELOG: [
+    { date: '2026-10-29', items: [
+      '이력관리에 "일상생활 수행 체크"(씻기·식사·약·장보기 등을 도움 정도로 기록, 지난 기록과 비교)와 "관심사·역할 점검" 추가'
+    ] },
     { date: '2026-10-12', items: [
       '주간 업무 요약(한 장 인쇄), 대상자 목록 정렬·주의 표시 개선, SOAP 키보드 이동과 지난 기록 가져올 칸 선택',
       '대시보드를 "오늘" 중심으로 재구성, 업데이트 전 백업 안내',

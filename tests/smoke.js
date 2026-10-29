@@ -533,6 +533,49 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
     noNewErrors('자동 백업·검증·이탈 경고');
   });
 
+  await step('일상생활 수행 체크와 관심사·역할 점검을 화면에서 저장·비교·수정·삭제한다', async () => {
+    await page.evaluate(() => { Views._clientDetailTabClientId = null; });
+    await page.evaluate(() => UI.navigate('clientDetail', { id: 'CI1' }));
+    await page.waitForTimeout(250);
+    await show();
+    // 지난 기록은 모델로 넣고, 이번 기록은 화면 입력으로 저장한다.
+    await page.evaluate(async () => {
+      await Clients.addAdlCheck('CI1', { date: Utils.addDaysStr(Utils.todayStr(), -30), levels: { wash: '같이 함', med: '대신 함', shop: '혼자 함', bogus: '혼자 함' }, note: '' });
+    });
+    await page.evaluate(() => UI.renderCurrentView());
+    await page.waitForTimeout(250);
+    await show();
+    await page.selectOption('#adl_wash', '혼자 함');
+    await page.selectOption('#adl_med', '대신 함');
+    await page.selectOption('#adl_shop', '말로 도움');
+    await click('#addAdlBtn');
+    await page.waitForTimeout(300);
+    await show();
+    const adl = await page.evaluate(() => ({ n: Clients.get('CI1').adlChecks.length, bogus: JSON.stringify(Clients.get('CI1').adlChecks), text: document.body.textContent }));
+    assert(adl.n === 2 && !adl.bogus.includes('bogus'), '일상생활 수행 기록 저장 오류: ' + adl.bogus);
+    assert(adl.text.includes('도움이 줄어든 것 씻기·위생') && adl.text.includes('도움이 더 필요해진 것 장보기'), '지난 기록과의 비교 문구가 없음');
+    // 관심사·역할
+    await page.selectOption('#intA1', '해 보고 싶음');
+    await page.selectOption('#intR0', '맡고 싶음');
+    await click('#addInterestBtn');
+    await page.waitForTimeout(300);
+    await show();
+    const it = await page.evaluate(() => { const r = Clients.get('CI1').interestChecks[0]; return { r, text: document.body.textContent }; });
+    assert(it.r.interests['요리'] === '해 보고 싶음' && it.r.roles['가족 구성원(부모·자녀·배우자 등)'] === '맡고 싶음', '관심사·역할 저장 오류');
+    assert(it.text.includes('해 보고 싶음: 요리'), '관심사·역할 목록 표시 오류');
+    // 수정
+    await click('[data-edit-adl]');
+    await page.selectOption('#adl_shop', '혼자 함');
+    await click('#addAdlBtn');
+    await page.waitForTimeout(300);
+    const edited = await page.evaluate(() => Clients.get('CI1').adlChecks.some(a => a.levels.shop === '혼자 함') && Clients.get('CI1').adlChecks.length === 2);
+    assert(edited, '일상생활 수행 기록 수정 오류');
+    // 삭제
+    await page.evaluate(async () => { await Clients.removeListItem('CI1', 'interestChecks', Clients.get('CI1').interestChecks[0].id); });
+    assert(await page.evaluate(() => Clients.get('CI1').interestChecks.length === 0), '삭제 오류');
+    noNewErrors('일상생활·관심사 기록');
+  });
+
   await step('대상자 요약 탭, 빠른 이동(Ctrl+K), 통합검색 필터가 동작한다', async () => {
     // 요약 탭: 대상자를 처음 열면 요약이 보이고 핵심 정보가 모여 있다
     await page.evaluate(() => { Views._clientDetailTabClientId = null; });
