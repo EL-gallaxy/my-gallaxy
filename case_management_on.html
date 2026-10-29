@@ -9881,8 +9881,8 @@ const Views = {
 
     let html = '<div class="page-header"><h1 class="page-title" style="margin:0;">' + icon('heart', { size: 22 }) + ' 자기돌봄 메모</h1></div>';
     html += '<p class="help-text" style="margin-top:-10px;margin-bottom:14px;">대상자 관리와 무관하게, 소진·감정 상태를 스스로 기록하는 공간입니다. 교육·연수나 슈퍼비전·자문 기록은 "📚 교육·슈퍼비전" 메뉴를 이용하세요. 통계나 리포트 어디에도 집계되지 않고, 오직 본인만 확인합니다.</p>';
-    html += Views._noteListHtml(notes, editing, cfg, '작성된 기록이 없습니다.');
     html += Views._noteFormHtml(cfg, editing);
+    html += Views._noteListHtml(notes, editing, cfg, '작성된 기록이 없습니다.');
     return html;
   },
   bindSelfCarePage(){
