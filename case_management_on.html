@@ -1402,6 +1402,7 @@ const CONSTANTS = {
   ROLE_LEVELS: ['맡고 있음', '예전에 맡았음', '맡고 싶음'],
   ROLE_ITEMS: ['가족 구성원(부모·자녀·배우자 등)', '친구', '일하는 사람(직장·알바)', '학생·배우는 사람', '모임 회원', '이웃', '돌보는 사람', '자원봉사자'],
   // 일 준비도 체크 / 활동 시도 기록 / 감각·에너지 메모 / 퇴원·전환기 점검표 — 점수·판정 없이 상황만 남긴다.
+  TRANSITION_ALERT_DAYS: 30,
   WORK_LEVELS: ['잘 됨', '보통', '어려움'],
   WORK_ITEMS: ['정해진 시간에 나오기', '한 가지 일에 집중 유지', '지시 듣고 따르기', '동료와 어울리기', '피로·휴식 조절', '실수했을 때 대처', '출퇴근 이동', '규칙적인 생활 리듬'],
   TRIAL_RESULTS: ['계속 해 봄', '조정해서 다시', '그만둠', '아직 모름'],
@@ -1731,7 +1732,7 @@ const FontSize = {
 const DashboardPrefs = {
   WIDGETS: {
     crisis: icon('siren') + ' 위기관리 대상자 현황', overdue: icon('alertTriangle') + ' 기한 초과 후속조치', gap: icon('clock') + ' 미접촉 대상자',
-    referral: icon('link') + ' 연계 결과 확인', planReview: icon('clipboardList') + ' 서비스계획 점검', inpatient: icon('building') + ' 입원 중 대상자', medRenewal: icon('pill') + ' 복약 갱신 임박', reassessment: icon('clipboardList') + ' 정기 재사정 필요', safetyGap: icon('shield') + ' 안전 정보 공백 점검', debriefGap: icon('messageSquare') + ' 디브리핑 미작성', crisisLoad: icon('heart') + ' 위기 대응 부담 알림',
+    referral: icon('link') + ' 연계 결과 확인', planReview: icon('clipboardList') + ' 서비스계획 점검', inpatient: icon('building') + ' 입원 중 대상자', medRenewal: icon('pill') + ' 복약 갱신 임박', reassessment: icon('clipboardList') + ' 정기 재사정 필요', transition: icon('building') + ' 퇴원 후 전환기 점검', safetyGap: icon('shield') + ' 안전 정보 공백 점검', debriefGap: icon('messageSquare') + ' 디브리핑 미작성', crisisLoad: icon('heart') + ' 위기 대응 부담 알림',
     today: icon('clock') + ' 오늘 할 일', draft: icon('edit') + ' 미완성 SOAP', recent: '최근 기록', dataManage: '데이터 관리'
   },
   hidden: {},
@@ -2683,6 +2684,41 @@ const Clients = {
     client[listKey] = client[listKey] || [];
     client[listKey].push(Object.assign({ id: Utils.uid(prefix) }, rec, { date: rec.date || Utils.todayStr() }));
     await Storage.saveEncrypted('clients', client);
+  },
+  latestRecord(list){
+    return (list || []).slice().sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+  },
+  // 요약·서비스계획 가져오기에서 쓰는, 가장 최근 작업치료 기록에서 뽑은 "눈여겨볼 것" 모음.
+  otHighlights(c){
+    const adl = this.latestRecord(c.adlChecks), work = this.latestRecord(c.workReadiness);
+    const sens = this.latestRecord(c.sensoryNotes), inter = this.latestRecord(c.interestChecks);
+    const pick = (map, lv) => Object.keys(map || {}).filter(k => map[k] === lv);
+    return {
+      adlHelp: adl ? CONSTANTS.ADL_ITEMS.filter(it => adl.levels[it.key] && adl.levels[it.key] !== '혼자 함').map(it => ({ label: it.label, level: adl.levels[it.key] })) : [],
+      workHard: work ? pick(work.levels, '어려움') : [],
+      sensitive: sens ? pick(sens.sens, '민감함') : [],
+      bestTime: sens ? sens.bestTime || '' : '',
+      wantInterests: inter ? pick(inter.interests, '해 보고 싶음') : [],
+      wantRoles: inter ? pick(inter.roles, '맡고 싶음') : [],
+      dates: [adl, work, sens, inter].filter(Boolean).map(r => r.date).sort().slice(-1)[0] || ''
+    };
+  },
+  // 퇴원 후 전환기 점검 대상 — 가장 최근 입퇴원 기록이 "퇴원"이고, 그 뒤로 전환기 점검표 기록이 없으며,
+  // 퇴원한 지 TRANSITION_ALERT_DAYS일 이내인 대상자.
+  getTransitionDue(){
+    const today = Utils.todayStr();
+    const dayDiff = (from, to) => Math.round((new Date(to) - new Date(from)) / 86400000);
+    const out = [];
+    this.list().forEach(c => {
+      if (c.status === 'closed') return;
+      const latest = (c.admissions || []).slice().reverse().sort((a, b) => b.date.localeCompare(a.date))[0];
+      if (!latest || latest.type !== '퇴원') return;
+      const days = dayDiff(latest.date, today);
+      if (days < 0 || days > CONSTANTS.TRANSITION_ALERT_DAYS) return;
+      if ((c.transitionChecks || []).some(t => t.date >= latest.date)) return;
+      out.push({ clientId: c.id, alias: c.alias, dischargeDate: latest.date, days, late: days > 14 });
+    });
+    return out.sort((x, y) => y.days - x.days);
   },
   async removeListItem(id, listKey, itemId){
     const client = State.clients.get(id);
@@ -5321,6 +5357,7 @@ const Views = {
     const debriefGaps = Debriefings.pendingList();
     const crisisLoadN = Debriefings.crisisLoad(Utils.todayStr().slice(0, 7));
     const safetyGaps = Clients.safetyGapList();
+    const transitionDue = Clients.getTransitionDue();
 
     const hasSeed = (State.seedClientIds || []).length > 0 && (State.seedClientIds || []).some(id => State.clients.has(id));
 
@@ -5371,6 +5408,7 @@ const Views = {
       (hide('inpatient') ? '' : '<button class="summary-card gap" data-scroll="inpatientSection"><div class="num">' + inpatients.length + '</div><div class="label">' + icon('building', { size: 15 }) + ' 입원 중 대상자</div></button>') +
       (hide('medRenewal') ? '' : '<button class="summary-card overdue" data-scroll="medRenewalSection"><div class="num">' + medRenewals.length + '</div><div class="label">' + icon('pill', { size: 15 }) + ' 복약 갱신 임박</div></button>') +
       (hide('reassessment') ? '' : '<button class="summary-card gap" data-scroll="reassessmentSection"><div class="num">' + reassessGaps.length + '</div><div class="label">' + icon('clipboardList', { size: 15 }) + ' 정기 재사정 필요</div></button>') +
+      (hide('transition') ? '' : '<button class="summary-card gap" data-scroll="transitionSection"><div class="num">' + transitionDue.length + '</div><div class="label">' + icon('building', { size: 15 }) + ' 퇴원 후 전환기 점검</div></button>') +
       (hide('safetyGap') ? '' : '<button class="summary-card overdue" data-scroll="safetyGapSection"><div class="num">' + safetyGaps.length + '</div><div class="label">' + icon('shield', { size: 15 }) + ' 안전 정보 공백</div></button>') +
       '<button class="summary-card upcoming" data-goto="selfCare"><div class="num">' + SelfCare.list().filter(n => (n.category || 'selfcare') === 'selfcare').length + '</div><div class="label">' + icon('heart', { size: 15 }) + ' 자기돌봄</div></button>' +
       '<button class="summary-card upcoming" data-goto="training"><div class="num">' + SelfCare.list().filter(n => (n.category || 'selfcare') !== 'selfcare').length + '</div><div class="label">' + icon('bookOpen', { size: 15 }) + ' 교육·슈퍼비전</div></button>' +
@@ -5450,6 +5488,16 @@ const Views = {
           b += '<div class="gap-row" data-goto-debrief="' + Utils.escapeHtml(g.debriefId) + '" data-goto-debrief-client="' + Utils.escapeHtml(g.clientId || '') + '" data-goto-debrief-event="' + Utils.escapeHtml(g.eventId) + '" style="cursor:pointer;" tabindex="0" role="button">' +
             '<strong>' + Utils.escapeHtml(g.label) + '</strong>' +
             '<br><span style="font-size:0.82rem;">' + Utils.escapeHtml(g.date) + ' · ' + g.days + '일 경과 · ' + g.note + '</span></div>';
+        });
+        return b;
+      } },
+      { key: 'transition', id: 'transitionSection', title: icon('building') + ' 퇴원 후 전환기 점검 (퇴원 ' + CONSTANTS.TRANSITION_ALERT_DAYS + '일 이내, 점검표 기록 없음)', clearLabel: '퇴원 후 전환기 점검', count: transitionDue.length, body(){
+        let b = '';
+        transitionDue.forEach(t => {
+          b += '<div class="gap-row" data-goto-client="' + t.clientId + '" style="cursor:pointer;">' +
+            '<strong>' + Utils.escapeHtml(t.clientId) + '</strong>' + (t.alias ? ' (' + Utils.escapeHtml(t.alias) + ')' : '') +
+            (t.late ? ' <span class="badge badge-crisis">2주 경과</span>' : ' <span class="badge badge-pending">첫 2주</span>') +
+            '<br><span style="font-size:0.82rem;">퇴원일 ' + t.dischargeDate + ' · ' + t.days + '일 경과 · 이력관리의 "퇴원·전환기 점검표"를 기록하세요</span></div>';
         });
         return b;
       } },
@@ -5598,7 +5646,7 @@ const Views = {
         '</div></div>';
     }
 
-    const moreCount = contactGaps.length + medRenewals.length + reassessGaps.length + safetyGaps.length + pendingReferrals.length + planReviews.length + inpatients.length + crisisClients.length;
+    const moreCount = contactGaps.length + medRenewals.length + reassessGaps.length + transitionDue.length + safetyGaps.length + pendingReferrals.length + planReviews.length + inpatients.length + crisisClients.length;
     html = headHtml + quickHtml + topCards + topPanels + todayHtml +
       '<details class="panel" id="dashMore"' + (DashboardPrefs.moreOpen ? ' open' : '') + '><summary class="panel-title">' + icon('sliders') + ' 그 밖의 점검과 현황' + (moreCount ? ' (확인할 것 ' + moreCount + '건)' : '') + '</summary>' + html + '</details>';
     return html;
@@ -7914,6 +7962,19 @@ const Views = {
           '<textarea class="planNeedNote" aria-label="' + Utils.escapeHtml(area) + ' 현황·욕구" style="min-height:52px;width:100%;padding:8px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);" placeholder="현황 및 욕구">' + Utils.escapeHtml(n.note || '') + '</textarea></div>';
       }).join('') + '</div></div>';
 
+    // 작업치료 기록에서 계획 항목 후보를 뽑아 한 번에 항목으로 옮길 수 있게 한다(입력값을 그대로 옮길 뿐 판단하지 않는다).
+    const ot = Clients.otHighlights(c), sugs = [];
+    ot.adlHelp.forEach(x => sugs.push({ text: '일상생활 · ' + x.label + ' (' + x.level + ')', area: '일상생활·자기관리', goal: x.label + ' 스스로 해 보기', service: '현재 수준: ' + x.level + '. 필요한 도움을 줄여 가며 연습' }));
+    ot.workHard.forEach(n => sugs.push({ text: '일 준비 · ' + n + ' (어려움)', area: '직업·교육·여가', goal: n + ' 연습하기', service: '일 준비도 체크에서 어려움으로 기록됨. 짧은 체험으로 연습' }));
+    ot.wantInterests.forEach(n => sugs.push({ text: '하고 싶은 활동 · ' + n, area: '직업·교육·여가', goal: n + ' 해 보기', service: '본인이 해 보고 싶다고 한 활동' }));
+    ot.wantRoles.forEach(n => sugs.push({ text: '맡고 싶은 역할 · ' + n, area: '가족·사회관계', goal: n + ' 역할 맡아 보기', service: '본인이 맡고 싶다고 한 역할' }));
+    Views._planSugs = sugs;
+    if (sugs.length){
+      html += '<div class="panel"><div class="panel-title">작업치료 기록에서 가져오기</div>' +
+        '<p class="help-text" style="margin-bottom:8px;">이력관리에 기록한 일상생활 수행, 일 준비도, 관심사·역할에서 뽑은 후보입니다. 누르면 아래 계획 항목에 추가되고, 내용은 고쳐 쓸 수 있습니다.</p>' +
+        sugs.map((g, i) => '<button type="button" class="btn btn-sm" style="margin:0 6px 6px 0;" data-plan-sug="' + i + '">＋ ' + Utils.escapeHtml(g.text) + '</button>').join('') + '</div>';
+    }
+
     html += '<div class="panel"><div class="panel-title">목표 및 서비스 계획</div>' +
       '<datalist id="planProviderList">' + ResourceDirectory.list().map(r => '<option value="' + Utils.escapeHtml(r.name) + '">').join('') + '</datalist>' +
       '<div id="planItems">' + (plan.items || []).map(i => Views._planItemRowHtml(i)).join('') + '</div>' +
@@ -7956,6 +8017,14 @@ const Views = {
     };
     document.getElementById('addPlanItemBtn').onclick = () => addRow('planItems', Views._planItemRowHtml());
     document.getElementById('addPlanReviewBtn').onclick = () => addRow('planReviews', Views._planReviewRowHtml());
+    document.querySelectorAll('[data-plan-sug]').forEach(btn => {
+      btn.onclick = () => {
+        const g = (Views._planSugs || [])[Number(btn.dataset.planSug)];
+        if (!g) return;
+        addRow('planItems', Views._planItemRowHtml({ area: g.area, goal: g.goal, service: g.service }));
+        btn.disabled = true;
+      };
+    });
     main.addEventListener('click', (e) => {
       const rm = e.target.closest('.piRemove, .prRemove');
       if (rm){ rm.closest('.plan-card').remove(); dirty = true; }
@@ -8378,9 +8447,20 @@ const Views = {
     if (adm) flags.push('입원 중 (' + adm.date + '~)');
     if (contactGap) flags.push('대면 접촉 공백 ' + Utils.formatElapsedDays(contactGap.days));
     if (reGap) flags.push('정기 재사정 필요');
+    if (Clients.getTransitionDue().some(t => t.clientId === c.id)) flags.push('퇴원 후 전환기 점검 필요');
     if (plan && plan.nextReviewDate && plan.nextReviewDate < today) flags.push('서비스계획 점검일 경과');
     gaps.forEach(g => flags.push(g));
     const more = (tab, label) => ' <button class="btn-link" data-summary-tab="' + tab + '">' + label + '</button>';
+    const ot = Clients.otHighlights(c), adlChg = Clients.adlChange(c.adlChecks);
+    const otText = [
+      ot.adlHelp.length && '도움이 필요한 일상생활: ' + ot.adlHelp.map(x => x.label + '(' + x.level + ')').join(', '),
+      adlChg && (adlChg.better.length || adlChg.worse.length) && '지난 기록 대비 ' + [adlChg.better.length && '도움이 줄어든 것 ' + adlChg.better.join(', '), adlChg.worse.length && '도움이 더 필요해진 것 ' + adlChg.worse.join(', ')].filter(Boolean).join(' / '),
+      ot.workHard.length && '일 준비에서 어려운 것: ' + ot.workHard.join(', '),
+      ot.sensitive.length && '민감한 자극: ' + ot.sensitive.join(', '),
+      ot.bestTime && '컨디션 좋은 때: ' + ot.bestTime,
+      ot.wantInterests.length && '해 보고 싶은 활동: ' + ot.wantInterests.join(', '),
+      ot.wantRoles.length && '맡고 싶은 역할: ' + ot.wantRoles.join(', ')
+    ].filter(Boolean).join('\n');
     let html = '<div class="panel"><div class="panel-title">' + icon('clipboardList') + ' 한눈에 보기</div>';
     if (flags.length) html += '<div class="gap-row" style="cursor:default;">' + flags.map(f => '<span class="badge badge-pending" style="margin:2px 4px 2px 0;">' + e(f) + '</span>').join('') + '</div>';
     html += '<table><tbody>' +
@@ -8396,6 +8476,7 @@ const Views = {
       row('복약', curMeds.length ? e(curMeds.map(m => [m.name, m.dose].filter(Boolean).join(' ')).join(', ')) + (nextRx ? ' · 다음 처방일 ' + e(nextRx) : '') + more('history', '이력관리 보기') : '') +
       row('서비스계획', plan ? e((plan.periodStart || '?') + ' ~ ' + (plan.periodEnd || '?')) + (plan.nextReviewDate ? ' · 다음 점검일 ' + e(plan.nextReviewDate) : '') + more('plan', '서비스계획 보기') : '') +
       row('미완료 후속조치', pend.length ? pend.map(f => e(f.dueDate + ' · ' + f.type + (f.text ? ' ' + f.text : ''))).join('\n') + more('soap', 'SOAP·후속조치 보기') : '') +
+      row('작업치료 메모', otText ? e(otText) + more('history', '이력관리 보기') : '') +
       row('예정된 일정', sch.length ? sch.map(x => e(x.date + (x.time ? ' ' + x.time : '') + ' · ' + x.contactType)).join('\n') : '') +
       '</tbody></table>';
     if (!sp.warningSigns && !cp.helpful && !cp.unwanted) html += '<p class="help-text" style="margin-top:8px;">경고신호나 위기 시 선호가 아직 입력되지 않았습니다.' + more('safety', '위기·안전 탭에서 입력') + '</p>';
@@ -10635,6 +10716,7 @@ const Views = {
   // 업데이트 내역 — 앱을 고칠 때마다 맨 위에 새 항목을 추가한다.
   CHANGELOG: [
     { date: '2026-10-29', items: [
+      '대상자 요약에 작업치료 메모(도움이 필요한 일상생활, 어려운 것, 민감한 자극, 하고 싶은 일), 퇴원 후 전환기 점검 알림, 서비스계획에서 작업치료 기록 가져오기',
       '이력관리에 "일 준비도 체크", "활동 시도 기록", "감각·에너지 메모", "퇴원·전환기 점검표" 추가',
       '이력관리에 "일상생활 수행 체크"(씻기·식사·약·장보기 등을 도움 정도로 기록, 지난 기록과 비교)와 "관심사·역할 점검" 추가'
     ] },
